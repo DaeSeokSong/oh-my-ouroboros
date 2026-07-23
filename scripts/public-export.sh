@@ -51,10 +51,8 @@ while IFS= read -r f; do
   COPIED=$((COPIED+1))
 done < <(git ls-files -- "${ALLOW[@]}")
 
-# 공개 전용 파일 (public/ → 루트로)
-for pf in README.md LICENSE CONTRIBUTING.md; do
-  [ -f "$HARNESS/public/$pf" ] && cp "$HARNESS/public/$pf" "$STAGE/$pf"
-done
+# 공개 전용 파일 (public/ 전체 → 루트로: README·LICENSE·assets/ 등)
+cp -r "$HARNESS/public/." "$STAGE/"
 
 # ── 2) sanitize 치환 ──
 for expr in "${SEDS[@]:-}"; do

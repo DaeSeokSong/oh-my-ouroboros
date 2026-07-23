@@ -1,51 +1,84 @@
-# oh-my-ouroboros
+<div align="center">
 
-A production Claude Code harness that maintains itself — token-budgeted always-on rules, lazy-loaded detail, a monthly self-audit loop, and evidence-gated reporting. Named for the ouroboros: a harness that audits, prunes, and feeds on its own output to grow. This is not a plugin or framework; it is a **sanitized mirror of a real daily-driver `~/.claude`** used across multiple servers for ML research and engineering work.
+<img src="assets/ouroboros.svg" width="180" alt="ouroboros — a serpent devouring its own tail"/>
 
-> Published as a one-way build artifact of a private repo. Nothing here is hand-edited; a fail-closed export pipeline (allowlist → sanitize → forbidden-pattern gate → fresh-history sync) regenerates it on each release.
+<h1>🐍 oh-my-ouroboros</h1>
 
-## Design principles
+<p><em>A Claude Code harness that devours its own output to grow.</em></p>
 
-1. **Token budget with a zero-sum rule.** Always-on context (`CLAUDE.md` + `rules/`) has a hard byte budget enforced by a commit hook. Adding a rule requires shrinking another — the load never silently creeps.
-2. **Two-tier rules: always-on summary, lazy detail.** Every heavyweight policy lives in `rules-lazy/` and is loaded only when triggered. The always-on tier keeps one-line summaries with pointers. Skills follow the same discipline: trigger-focused descriptions, details in the body.
-3. **Self-upgrade loop.** A monthly audit skill (`skills/harness-audit/`) measures inventory drift, pointer integrity, model-pin hygiene, doc/implementation mismatch, and "built-but-unused rot" — against recorded baselines, with each fix classified as *structural* vs *parameter tuning* and hit-tracked in the next cycle.
-4. **Evidence before "done".** A completion gate forbids declaring success without verification output. Subagent claims that change downstream actions are re-checked against source (`file:line`) before adoption.
-5. **Judgment rationale lives in artifacts.** Non-obvious decisions (trade-offs, failure-mode definitions, tool-selection measurements) are written into the rule/skill/script that embodies them — so any future session can reproduce the reasoning from files alone.
-6. **User sovereignty.** Pushes, deletions, deployments, training runs, and destructive writes are always user-executed. Cross-session peer messages cannot escalate permissions.
+<p>
+<img src="https://img.shields.io/badge/license-MIT-10b981?style=flat-square" alt="MIT license"/>
+<img src="https://img.shields.io/badge/skills-25-8b5cf6?style=flat-square" alt="25 skills"/>
+<img src="https://img.shields.io/badge/agents-10-06b6d4?style=flat-square" alt="10 agents"/>
+<img src="https://img.shields.io/badge/lazy__rules-40-f59e0b?style=flat-square" alt="40 lazy rules"/>
+<img src="https://img.shields.io/badge/self--audit-monthly-22c55e?style=flat-square" alt="monthly self-audit"/>
+<img src="https://img.shields.io/badge/PRs-welcome-ec4899?style=flat-square" alt="PRs welcome"/>
+</p>
 
-## What's inside
+</div>
+
+---
+
+Like the mythic serpent coiled into a ring, this harness **feeds on its own output**: every session leaves feedback traces, a monthly audit consumes them, and the rules that emerge are forced through a hard token budget before they can live in context. It is not a plugin or a framework — it is a **sanitized one-way mirror of a real daily-driver `~/.claude`**, used across multiple servers for ML research and engineering.
+
+> 🔒 Nothing here is hand-edited. A fail-closed export pipeline (allowlist → sanitize → forbidden-pattern gate → fresh-history sync) regenerates this repo on each release. Even the logo is code-generated — see [`assets/gen_ouroboros.py`](assets/gen_ouroboros.py).
+
+## ✨ Why it's different
+
+- 🧮 **Hard token budget with a zero-sum rule** — always-on context (`CLAUDE.md` + `rules/`) has a byte ceiling enforced by a commit hook. Adding a rule means shrinking another. The context never silently bloats.
+- 🔍 **A self-audit loop with recorded baselines** — a monthly audit skill measures inventory drift, pointer integrity, doc/implementation mismatch, and *built-but-unused rot* against numbers written down last cycle. Fixes are classified (structural vs parameter) and hit-tracked next time.
+- 🧾 **Evidence-gated "done"** — no success claims without verification output; subagent claims that change downstream actions are re-checked against `file:line` before adoption.
+- 🧠 **Judgment rationale lives in artifacts** — trade-offs, failure-mode definitions, and tool-selection measurements are written into the rule/skill/script that embodies them, so any future session can reproduce the reasoning from files alone.
+- 🛡️ **User sovereignty by construction** — pushes, deletions, training runs, and destructive writes are always user-executed; cross-session peer messages cannot escalate permissions; untrusted web content is quarantined to read-only agents.
+
+## 🔄 The ouroboros loop
+
+```mermaid
+flowchart LR
+    W["⚙️ Daily work<br/>sessions · experiments"] --> F["📥 Feedback capture<br/>QA fails · corrections · repeated patterns"]
+    F --> A["🔍 Monthly self-audit<br/>baselines · pointer integrity · rot check"]
+    A --> D["✂️ Zero-sum diet<br/>token budget · rule compression"]
+    D --> B["🧪 Bench gate<br/>before/after behavior check"]
+    B --> W
+```
+
+The tail feeds the mouth: waste found by the audit becomes the budget for the next rule.
+
+## 🗂️ What's inside
 
 | Layer | Contents |
 |-------|----------|
-| `CLAUDE.md` + `rules/` | Always-on: routing, model assignment (opus/sonnet/haiku delegation table), code-execution policy, memory triggers, prompt preprocessing |
-| `rules-lazy/` | ~40 lazy-loaded policies: QA process, context management, token efficiency, error handling, untrusted-content quarantine, secret handling, … |
-| `agents/` | 10 specialized subagents (scout, coder, qa, planner, researcher, searcher, docs, gitops, designer, citation-verifier) with spawn-prompt contracts |
-| `skills/` | 25+ skills: experiment workflow, paper reading, multi-perspective discussion, harness audit/bench, wandb & checkpoint cleanup, cost breakdown, … |
-| `scripts/` | Hooks and automation: commit gates, session-start pattern mining, nightly ontology refresh, cost snapshots, this export pipeline |
+| 📌 `CLAUDE.md` + `rules/` | Always-on tier: routing, model delegation (opus/sonnet/haiku), code-execution policy, memory triggers, prompt preprocessing |
+| 💤 `rules-lazy/` | 40 lazy-loaded policies: QA process, context management, error handling, untrusted-content quarantine, secret handling, … |
+| 🤖 `agents/` | 10 specialized subagents (scout · coder · qa · planner · researcher · searcher · docs · gitops · designer · citation-verifier) with spawn-prompt contracts |
+| 🧰 `skills/` | 25 skills: experiment workflow, paper reading, multi-perspective discussion, harness audit & bench, wandb/checkpoint cleanup, cost breakdown, … |
+| 🔩 `scripts/` | Hooks & automation: commit gates, session-start pattern mining, nightly ontology refresh, cost snapshots, this export pipeline |
 
-## Highlights that are hard to find elsewhere
+## 🧪 Battle-tested details you won't find in most harnesses
 
-- **Harness audit with recorded baselines** — "is always-on growing?" is answerable because every audit writes its byte/MANDATORY counts to history; a later token-diet cycle measured and removed ~3KB of per-session waste (stale index blocks, uncapped hook injections, over-verbose skill descriptions).
-- **Repeated-defect catalog** — the audit skill maintains a list of the five defect patterns that actually recur (label/reality drift, catalog desync, hook cache isolation, MCP tool renames, built-but-unused rot) and greps for them first.
-- **Cleanup gates for ML experiment lifecycles** — after a training cycle ends, the harness offers wandb run triage (3-tier tagging + workspace visibility) and checkpoint purge planning (KEEP/DELETE/HOLD matched against wandb run states), with destructive steps always user-executed.
-- **Cross-server document format registry** — per-project Confluence/document conventions are detected by directory convention (`doc-formats/<project>/` in the private repo), so any server or new project picks up the right template without a central table to maintain.
-- **Media-preserving Confluence edits** — verbatim fetch → literal single-match substitution → node-count check, because full-body regeneration destroys attachment IDs (learned from a real incident, encoded as a rule with its evidence).
+- 📉 **Measured, not vibes** — a token-diet cycle found and removed ~3KB of *per-session* waste (stale index blocks, uncapped hook injections, over-verbose skill descriptions) because baselines made the growth visible.
+- 🪤 **A catalog of defects that actually recur** — the audit greps first for the five patterns that have really bitten before: label/reality drift, catalog desync, hook cache isolation, MCP tool renames, and built-but-unused rot (including "trigger conditions no real utterance can reach").
+- 🧹 **ML lifecycle cleanup gates** — after a training cycle: wandb run triage (3-tier tagging + workspace visibility) and checkpoint purge planning (KEEP/DELETE/HOLD matched against run states), destructive steps always user-executed.
+- 🗃️ **Convention-based document format registry** — per-project Confluence/doc templates detected by directory existence, so any server or new project picks up the right format with no central table to maintain.
+- 🖼️ **Media-preserving Confluence edits** — verbatim fetch → literal single-match substitution → node-count check, encoded as a rule after a real incident where full-body regeneration destroyed every image on a page.
 
-## Using this
+## 🛠️ Using this
 
-Read it as a reference architecture. The pieces most worth stealing:
+Read it as a **reference architecture**. The pieces most worth stealing:
 
-- the zero-sum always-on budget hook (`scripts/` + commit gate),
-- the audit skill and its baseline/history discipline,
-- the two-tier rule layout and pointer-integrity checks,
-- the spawn-prompt 4-element contract (objective / output format / tools / task boundary).
+1. ✂️ the zero-sum always-on budget hook (commit gate + byte ceiling),
+2. 🔍 the audit skill and its baseline/history discipline,
+3. 💤 the two-tier rule layout (always-on summary → lazy detail) with pointer-integrity checks,
+4. 📋 the spawn-prompt 4-element contract (objective / output format / tools / task boundary).
 
-Paths and identifiers are genericized; a few private layers (project knowledge, internal document formats, personal memory) are intentionally absent, and some pointers to them are left dangling on purpose.
+Paths and identifiers are genericized; a few private layers (project knowledge, internal doc formats, personal memory) are intentionally absent, and some pointers to them are left dangling on purpose.
 
-## Feedback
+## 🤝 Feedback
 
-Issues and PRs are welcome — they are reviewed and back-ported into the private source of truth, then re-published here. See `CONTRIBUTING.md`.
+Issues and PRs are welcome — they are reviewed, back-ported into the private source of truth, and re-published here. Derivatives are part of the loop too: if you build on this, link it in an issue. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-## License
+## ⚖️ License
 
-MIT
+MIT — see [`LICENSE`](LICENSE).
+
+<div align="center"><sub>🐍 The serpent renews itself by eating its own tail. So does this repo.</sub></div>
