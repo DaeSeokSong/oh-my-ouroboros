@@ -1,0 +1,22 @@
+{
+  "_comment": "Anthropic Claude API 요금 (USD per 1M tokens). cache_write_5m=1.25x input, cache_write_1h=2x input, cache_read=0.1x input(90% 할인). scripts/cost-breakdown.py가 사용. 요금 변동 시 이 파일만 갱신.",
+  "_verified": "2026-07-18",
+  "_source": "공식: https://platform.claude.com/docs/ko/about-claude/pricing (2026-07-18 전 항목 대조 일치). Sonnet5는 2026-08-31까지 introductory $2/$10, 09-01부터 $3/$15.",
+  "_unit": "USD per 1,000,000 tokens",
+  "models": {
+    "claude-fable-5":            {"input": 10.0, "output": 50.0, "cache_write_5m": 12.5,  "cache_write_1h": 20.0, "cache_read": 1.0},
+    "claude-mythos-5":           {"input": 10.0, "output": 50.0, "cache_write_5m": 12.5,  "cache_write_1h": 20.0, "cache_read": 1.0},
+    "claude-opus-4-8":           {"input": 5.0,  "output": 25.0, "cache_write_5m": 6.25,  "cache_write_1h": 10.0, "cache_read": 0.5},
+    "claude-opus-4-7":           {"input": 5.0,  "output": 25.0, "cache_write_5m": 6.25,  "cache_write_1h": 10.0, "cache_read": 0.5},
+    "claude-opus-4-6":           {"input": 5.0,  "output": 25.0, "cache_write_5m": 6.25,  "cache_write_1h": 10.0, "cache_read": 0.5},
+    "claude-opus-4-8 (fast)":    {"input": 10.0, "output": 50.0, "cache_write_5m": 12.5,  "cache_write_1h": 20.0, "cache_read": 1.0},
+    "claude-opus-4-7 (fast)":    {"input": 30.0, "output": 150.0,"cache_write_5m": 37.5,  "cache_write_1h": 60.0, "cache_read": 3.0},
+    "claude-sonnet-5":           {"input": 2.0,  "output": 10.0, "cache_write_5m": 2.5,   "cache_write_1h": 4.0,  "cache_read": 0.2},
+    "claude-sonnet-4-6":         {"input": 3.0,  "output": 15.0, "cache_write_5m": 3.75,  "cache_write_1h": 6.0,  "cache_read": 0.3},
+    "claude-haiku-4-5-20251001": {"input": 1.0,  "output": 5.0,  "cache_write_5m": 1.25,  "cache_write_1h": 2.0,  "cache_read": 0.1},
+    "claude-haiku-4-5":          {"input": 1.0,  "output": 5.0,  "cache_write_5m": 1.25,  "cache_write_1h": 2.0,  "cache_read": 0.1}
+  },
+  "_fast_mode": "고속 모드(usage.speed=='fast')는 Opus 4.8=$10/$50, Opus 4.7=$30/$150(전체 컨텍스트 적용). 파서가 speed=='fast'이면 '<model> (fast)' 요금 적용. cache 배수는 fast 기본가 위에 적용. Opus 4.7 fast는 2026-07-24 제거 예정.",
+  "_fallback": {"input": 5.0, "output": 25.0, "cache_write_5m": 6.25, "cache_write_1h": 10.0, "cache_read": 0.5},
+  "_note_external": "codex-rescue(GPT-*)는 OpenAI 외부 실행 — Anthropic 청구 아님, 별도 표기."
+}

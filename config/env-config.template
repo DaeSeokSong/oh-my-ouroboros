@@ -1,0 +1,27 @@
+# env-config — User-specific environment variables for Claude Code setup
+# Copy this file to config/env-config and fill in your values.
+# This file is sourced by scripts that need user-specific configuration.
+# NEVER commit config/env-config (it is gitignored).
+
+# ── MCP API Keys ──────────────────────────────────────────────────────────────
+# Required for Mem0 long-term memory MCP server.
+MEM0_API_KEY=your-mem0-api-key-here
+
+# Required for Tavily web search MCP server.
+TAVILY_API_KEY=your-tavily-api-key-here
+
+# ── Notification ──────────────────────────────────────────────────────────────
+# ntfy.sh topic for push notifications (leave blank to disable push).
+# Create a unique topic at https://ntfy.sh — e.g. "myname-claude-abc12345"
+USER_NTFY_TOPIC=
+
+# Optional: self-hosted ntfy server URL (default: https://ntfy.sh)
+# NTFY_SERVER=https://ntfy.example.com
+
+# ── Storage Paths ─────────────────────────────────────────────────────────────
+# Root for long-term memory files (architecture, experiments, datasets, etc.)
+# Default: $HOME/.claude/long-term
+# LONG_TERM_ROOT=$HOME/.claude/long-term
+
+# Claude home directory (default: $HOME/.claude)
+# CLAUDE_HOME=$HOME/.claude
