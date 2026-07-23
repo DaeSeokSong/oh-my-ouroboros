@@ -22,6 +22,8 @@
 Like the mythic serpent coiled into a ring, this harness **feeds on its own output**: every session leaves feedback traces, a monthly audit consumes them, and the rules that emerge are forced through a hard token budget before they can live in context. It is not a plugin or a framework — it is a **sanitized one-way mirror of a real daily-driver `~/.claude`**, used across multiple servers for ML research and engineering.
 
 > 🔒 Nothing here is hand-edited. A fail-closed export pipeline (allowlist → sanitize → forbidden-pattern gate → fresh-history sync) regenerates this repo on each release. Even the logo is code-generated — see [`assets/gen_ouroboros.py`](assets/gen_ouroboros.py).
+>
+> 🇰🇷 The rules and skills are written in **Korean** — this is a real production config, not a localized demo. The architecture, file layout, and this README are English; the patterns (budget hooks, audit loop, two-tier rules) read the same in any language.
 
 ## ✨ Why it's different
 
