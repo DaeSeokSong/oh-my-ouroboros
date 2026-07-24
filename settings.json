@@ -1,0 +1,281 @@
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "75",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000",
+    "DISABLE_ERROR_REPORTING": "1",
+    "DISABLE_FEEDBACK_COMMAND": "1",
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1"
+  },
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Glob(**)",
+      "Grep(**)",
+      "Bash(*)",
+      "WebSearch(*)",
+      "WebFetch(*)"
+    ],
+    "deny": [
+      "Bash(sudo:*)",
+      "Bash(shutdown:*)",
+      "Bash(reboot:*)",
+      "Read(./outputs/**)",
+      "Read(./lightning_logs/**)",
+      "Read(./wandb/**)",
+      "Read(./mlruns/**)",
+      "Read(./checkpoints/**)",
+      "Read(**/__pycache__/**)",
+      "Read(./node_modules/**)",
+      "Read(./dist/**)",
+      "Read(./build/**)",
+      "Read(**/*.ckpt)",
+      "Read(**/*.pth)",
+      "Read(**/*.safetensors)",
+      "Read(./_bench/**)",
+      "Read(./_cache/**)",
+      "Read(./_refs/**)"
+    ],
+    "defaultMode": "auto"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "INPUT=$(cat); FILE=$(echo \"$INPUT\" | jq -r '.tool_input.file_path // .tool_input.path // empty' 2>/dev/null); if [ -n \"$FILE\" ] && echo \"$FILE\" | grep -qE '(\\.env$|\\.env\\.|\\/credentials(\\.json)?$|\\.pem$|\\.key$|\\.p12$|\\.pfx$|\\/secrets\\.)'  ; then echo '{\"decision\": \"block\", \"reason\": \"민감 파일 보호: .env, credentials, .pem, .key 등 파일 수정이 차단됩니다.\"}'; fi || true",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/scripts/scope-gate.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/scripts/bash-write-check.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/scripts/read-once.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "INPUT=$(cat); FILE=$(echo \"$INPUT\" | jq -r '.tool_input.file_path // .tool_input.path // empty' 2>/dev/null); if [[ \"$FILE\" == *.py ]] && which ruff > /dev/null 2>&1; then ruff format \"$FILE\" 2>/dev/null && ruff check \"$FILE\" 2>/dev/null; fi || true",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/scripts/ci-gate-edit.sh",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/graphify-autoindex.sh || true",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/read-once.sh --record",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/graphify-commit-refresh.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/scripts/claude-notify.sh \"Claude\" \"권한 승인 필요\" || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/toolcall-text-guard.sh",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "PROJECT=$(basename \"$PWD\"); [ -z \"$PROJECT\" ] && PROJECT='Claude'; $HOME/.claude/scripts/claude-notify.sh \"$PROJECT\" \"작업 완료\" || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/toolcall-text-guard.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/prompt-log.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/harness-usage-check.sh || true",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "OUT=$(bash $HOME/.claude/scripts/pattern-detect.sh 3 2>/dev/null); [ -n \"$OUT\" ] && printf '[T40 반복 패턴 후보 — 3회+ 검출, 스킬화/편입/룰화 제안 판단 대상 (이미 스킬로 커버되면 불요 판정)]\\n%s\\n' \"$OUT\"; true",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/cost-clear-note.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/cost-snapshot.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/cost-snapshot.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
+  "worktree": {
+    "baseRef": "head",
+    "bgIsolation": "none"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "node $HOME/.claude/hud/claudenews-hud.mjs",
+    "refreshInterval": 2
+  },
+  "enabledPlugins": {
+    "example-skills@anthropic-agent-skills": true,
+    "superpowers@superpowers-marketplace": true,
+    "ralph-loop@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true,
+    "claudenews@claudenews": true,
+    "codex@openai-codex": true
+  },
+  "extraKnownMarketplaces": {
+    "anthropic-agent-skills": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/skills"
+      }
+    },
+    "superpowers-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "obra/superpowers-marketplace"
+      }
+    },
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
+      }
+    },
+    "claudenews": {
+      "source": {
+        "source": "github",
+        "repo": "bhpark1013/claudenews"
+      }
+    },
+    "openai-codex": {
+      "source": {
+        "source": "github",
+        "repo": "openai/codex-plugin-cc"
+      }
+    }
+  },
+  "effortLevel": "xhigh",
+  "skipDangerousModePermissionPrompt": true,
+  "switchModelsOnFlag": false,
+  "teammateMode": "auto",
+  "remoteControlAtStartup": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true,
+  "skipAutoPermissionPrompt": true
+}

@@ -141,3 +141,7 @@ TeamCreate 전 필수 조건: 컨텍스트 < 50%, 예상 라운드 ≤ 3, SKILL_
 - **깊이 제한 N=1 (MANDATORY)**: 스킬 실행 중 재귀 호출 금지(/discuss 특례 제외), 순차 호출 허용.
 - **SKILL_DEPTH 전달 (MANDATORY)**: 모든 에이전트 spawn prompt 서두에 `[SKILL_DEPTH: N]` 포함 — main 직접 spawn=0, 스킬 내 spawn=1.
 - 4-Gate 통과 기준·/discuss 재귀 특례·신규 정식 등재 스킬(parallel-dispatch / loop / ralph-loop)·복합 요청 처리 예시 → `rules-lazy/skill-autonomy.md`.
+
+## 구현 후 계획-대비 검수 게이트 (MANDATORY)
+
+계획된 스펙이 있는 **비자명 구현**은 머지·발사 전 **독립 3-렌즈 검수**(scout 정찰 / planner 계획-적합성 / researcher 비판 감사, 병렬 spawn)를 통과해야 한다 — coder·main 자기선언만으로 통과 금지, 편차는 coder 수정 후 재검수. 생략 기준(1줄 수정·오타 등)·렌즈 표·qa 6-Gate 관계: `rules-lazy/qa-process.md` § 계획-대비 검수.

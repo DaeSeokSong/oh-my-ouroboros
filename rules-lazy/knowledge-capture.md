@@ -39,7 +39,7 @@ vault(`graphify-out/obsidian/`)는 graphify export가 **재생성하는 파생�
 
 **프로젝트 폴더 규약 (2026-07-14 사용자 지시 — 프로젝트별 관리)**:
 - `harness/` — 하네스·Claude Code 운영 지식 (훅·타이머·권한·statusline·headless 등)
-- `<프로젝트-슬러그>/` — 해당 연구 프로젝트의 도메인 지식 (예: `modularnet/`)
+- `<프로젝트-슬러그>/` — 해당 연구 프로젝트의 도메인 지식 (예: `project-C/`)
 - 배정 기준 1줄: **"이 지식을 재사용할 세션이 어느 프로젝트에서 뜨는가"** — 애매하면(양쪽에서 재사용) `harness/`
 - `README.md`만 루트 유지. 신규 프로젝트 폴더는 첫 노트 작성 시 그냥 만들면 된다 (등록 절차 없음 — detect가 하위 폴더 재귀 수집, 실측 확인)
 - 폴더는 **사람 브라우징 + vault 노트의 `source_file` 메타데이터 그룹핑**용이다 — Obsidian Graph View는 링크 기반이라 폴더 무관, 서버별 폴더는 금지(서버는 주제가 아니라 출처 — frontmatter `source:` 소관, 폴더로 나누면 서버 간 동일 지식이 중복됨)

@@ -38,6 +38,18 @@
 - 필수 키 누락 시: `ValueError` 발생 (예: `raise ValueError(f"Unknown strategy: {name}")`)
 - 선택적 기능: `try-except` + `warnings.warn` (예: HC 비활성화 시 graceful fallback)
 
+## 체크포인트 저장 기준 결정 게이트 (MANDATORY — 모든 학습 실행 전, 2026-07-24 사용자 지시)
+
+> 학습 발사 **전** 반드시 체크포인트 저장 기준을 명시적으로 결정한다. 침묵 채택 금지 — 아래 3택 중 하나를 사용자에게 1줄 보고 후 진행.
+
+1. **이전과 동일 유지** — 직전 기준을 명시 (예: "best `val_accuracy`, save_top_k=3").
+2. **수정** — 이유 + 새 기준 명시.
+3. **최초(신규 실험 유형)** — 설계.
+
+### 기본값 (실험 유형별)
+- **표준 정확도 실험**: best `val_accuracy` (기존 그대로).
+- **커스텀 지표 실험(모듈성·정렬 등)**: 정확도 단독으로는 부족한 실험 유형 — 복합 저장 지표·궤적 ckpt·학습 중 관제 지표 설계는 **프로젝트 지식 노트** 참조 (연구 신규성 포함이라 공개 미러 비대상 위치로 분리, 2026-07-24 배포 검수): project-C → `~/.claude/knowledge/project-C/ckpt-criteria-modularity.md`. 신규 프로젝트에서 같은 유형이 생기면 동일하게 `knowledge/<프로젝트>/`에 설계 노트를 만들고 여기엔 포인터만 둔다.
+
 ## 실험 코드 실행
 - wandb 로깅 config 확인 후 OFF 상태로 코드 검증
 - matmul precision: `"highest"` (FP32 완전 정밀도) — 프로젝트 기본값

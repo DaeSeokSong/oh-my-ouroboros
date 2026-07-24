@@ -55,6 +55,60 @@ The tail feeds the mouth: waste found by the audit becomes the budget for the ne
 | 🤖 `agents/` | 10 specialized subagents (scout · coder · qa · planner · researcher · searcher · docs · gitops · designer · citation-verifier) with spawn-prompt contracts |
 | 🧰 `skills/` | 25 skills: experiment workflow, paper reading, multi-perspective discussion, harness audit & bench, wandb/checkpoint cleanup, cost breakdown, … |
 | 🔩 `scripts/` | Hooks & automation: commit gates, session-start pattern mining, nightly ontology refresh, cost snapshots, this export pipeline |
+| ⚙️ `settings.json` + `_audit/history.md` | The receipts: actual hook wiring, and the audit history with recorded baselines |
+
+<details>
+<summary><b>🤖 The 10 agents, one line each</b></summary>
+<br/>
+
+| Agent | Model | Role |
+|-------|-------|------|
+| `scout` | haiku | Read-only recon — finds the files, symbols, and wiring before anyone edits |
+| `coder` | sonnet | Implementation — writes and modifies code to spec |
+| `qa` | sonnet | Verification — tests, call-site impact analysis, causal bug tracing |
+| `planner` | opus | Architecture & experiment design consulting; final calls stay with main |
+| `researcher` | opus | Paper writing, result analysis, adversarial design review |
+| `searcher` | sonnet | The only agent that touches the open web — returns quarantined summaries |
+| `docs` | sonnet | Confluence/Jira via MCP, with the media-preserving edit protocol |
+| `gitops` | sonnet | Commits, branches, diffs, tags — push always stays with the human |
+| `designer` | sonnet | Figures — TikZ diagrams and matplotlib plots |
+| `citation-verifier` | sonnet | Retraction gate + supporting/contrasting stance debate before any paper is cited |
+
+</details>
+
+<details>
+<summary><b>🧰 The 25 skills, one line each</b></summary>
+<br/>
+
+| Skill | What it does |
+|-------|--------------|
+| `solve` | Opinion/planning questions via a 5-step method; ambiguous execution requests get meta-prompt convergence |
+| `discuss` | Multi-agent debate with a devil's advocate, persuasion-attack guards, and consensus-quality metrics |
+| `experiment` | Experiment lifecycle: design → dry-run → launch → analysis → cleanup gates |
+| `workflow` | Phase-based workflow design with auto-generated rubric gates |
+| `harness-audit` | The monthly self-audit: baselines, pointer integrity, recurring-defect catalog |
+| `harness-bench` | Before/after behavior measurement when rules change |
+| `learn-from-feedback` | Corrections accumulate into rule proposals after 3+ hits |
+| `paper-read` | 9-source parallel paper search + full-PDF close reading + review doc |
+| `paper` | Paper writing: abstract, sections, review responses |
+| `research` | Deep multi-source research with citation verification |
+| `neuro-explain` | Neuroscience mechanism citations with mandatory plain-language analogies |
+| `figure` | Paper figures: TikZ for structure, matplotlib for data |
+| `confluence` | Page format standards, macro-escaping lore, media-preserving edit protocol |
+| `confluence-research-record` | 4-level research-note hierarchy (overview → year → month → day) |
+| `storytelling` | But/therefore narrative structure for research records and talks |
+| `dumbify` | Rewrites expert prose for non-expert readers without losing the numbers |
+| `commit` | Commit conventions + a rejected-pattern check against feedback history |
+| `wandb-cleanup` | 3-tier run triage + workspace visibility via raw GraphQL (no global hide API exists) |
+| `ckpt-cleanup` | KEEP/DELETE/HOLD checkpoint classification against wandb run states; purge script is user-executed |
+| `cost` | Per-model, per-agent cost breakdown rendered as a bar chart |
+| `cost-reset` | Wipe accumulated cost ledgers (destructive, user-executed) |
+| `graphify` | Turn any input into a persistent knowledge graph; query it before grepping |
+| `project-init` | New research project scaffolding |
+| `quick-skill` | Define a new rule/skill/agent quickly, with a write-time bloat gate |
+| `setup-panels` | tmux panel layouts for teammate sessions |
+
+</details>
 
 ## 🧪 Battle-tested details you won't find in most harnesses
 

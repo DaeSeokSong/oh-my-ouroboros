@@ -145,7 +145,7 @@ fi
 # 4.5) 대화 지식 축적 (knowledge/) — 최근 14일 노트 0건이면 캡처 루프 정지 의심 (2026-07-13 신설)
 #      event-구동이지만 "대화는 매일 있는데 산출이 장기 0건"은 rot — 최신 노트 나이로 근사 감시.
 if [ -d "$CLAUDE_DIR/knowledge" ]; then
-    # -maxdepth 제거 (2026-07-14): 프로젝트별 하위 폴더(harness/·modularnet/ 등) 재귀 검사 — maxdepth 1 유지 시 오경보
+    # -maxdepth 제거 (2026-07-14): 프로젝트별 하위 폴더(harness/·project-C/ 등) 재귀 검사 — maxdepth 1 유지 시 오경보
     KN=$(find "$CLAUDE_DIR/knowledge" -name '*.md' ! -name 'README.md' -newermt '-14 days' 2>/dev/null | head -1)
     if [ -z "$KN" ]; then
         warn "KNOWLEDGE_SILENT: 최근 14일 지식 노트 0건 → 대화 지식 캡처 루프 점검 (rules-lazy/knowledge-capture.md)"
