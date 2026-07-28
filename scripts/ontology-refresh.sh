@@ -68,7 +68,8 @@ if [ ! -f "$CLAUDE_DIR/graphify-out/.graphify_uncached.txt" ]; then
     notify_fail "detect 산출물 부재"
     exit 1
 fi
-N=$(grep -c . "$CLAUDE_DIR/graphify-out/.graphify_uncached.txt" 2>/dev/null || echo 0)
+# grep -c는 0건이어도 "0"을 출력하며 exit 1로 끝나 `|| echo 0`이 "0\n0"을 만들던 버그 수정 (2026-07-27)
+N=$(grep -c . "$CLAUDE_DIR/graphify-out/.graphify_uncached.txt" 2>/dev/null); N=${N:-0}
 
 # stale 목적지 청크 제거를 N과 무관하게 선행 (2026-07-17 Codex): N=0 재시도에서 이전 실패
 # finalize가 남긴 청크가 재병합되는 것 방지 — 이번 run이 추출 없이 finalize로 가도 안전.

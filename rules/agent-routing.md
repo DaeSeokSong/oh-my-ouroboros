@@ -93,8 +93,6 @@ TeamCreate 호출 전 체크리스트:
 | 다른 목적 팀 활성 중 | TeamDelete 후 새 팀 생성 |
 | 활성 팀 없음 | TeamCreate 진행 |
 
-**절대 금지**: 기존 팀 확인 없이 TeamCreate 호출 — 동일 세션에서 동일 목적 팀 2회 이상 생성 금지
-
 ## MCP 부착 정책 + spawn 가드레일 (lazy)
 
 > **상세**: `~/.claude/rules-lazy/agent-routing-mcp.md` 참조 (에이전트 spawn 시 lazy 로드)
@@ -144,4 +142,4 @@ TeamCreate 전 필수 조건: 컨텍스트 < 50%, 예상 라운드 ≤ 3, SKILL_
 
 ## 구현 후 계획-대비 검수 게이트 (MANDATORY)
 
-계획된 스펙이 있는 **비자명 구현**은 머지·발사 전 **독립 3-렌즈 검수**(scout 정찰 / planner 계획-적합성 / researcher 비판 감사, 병렬 spawn)를 통과해야 한다 — coder·main 자기선언만으로 통과 금지, 편차는 coder 수정 후 재검수. 생략 기준(1줄 수정·오타 등)·렌즈 표·qa 6-Gate 관계: `rules-lazy/qa-process.md` § 계획-대비 검수.
+계획된 스펙이 있는 **비자명 구현**은 머지·발사·**결론 확정 전** **독립 검수**(사고 유형별 로스터: 3렌즈+수치 반증은 qa) 필수 — coder·main 자기선언 금지, 편차는 coder 수정 후 재검수. **외부 기법은 채택 전 main 2문항**(① 레버: 어느 항의 gradient/업데이트가 바뀌는가 ② 부호: 목표 정렬·실패모드 무보상) 미답 시 보류→검수행. 로스터 표·2문항 본문·생략 기준·qa 6-Gate 관계: `rules-lazy/qa-process.md` § 계획-대비 검수.

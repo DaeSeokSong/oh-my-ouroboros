@@ -67,6 +67,11 @@
             "type": "command",
             "command": "bash ~/.claude/scripts/bash-write-check.sh",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/train-launch-warn.sh",
+            "timeout": 10
           }
         ]
       },
@@ -270,7 +275,7 @@
       }
     }
   },
-  "effortLevel": "xhigh",
+  "effortLevel": "high",
   "skipDangerousModePermissionPrompt": true,
   "switchModelsOnFlag": false,
   "teammateMode": "auto",

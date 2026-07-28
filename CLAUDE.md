@@ -91,6 +91,7 @@ Trust / Feedback / Self-improvement / Critic(근거+예시 역제안) / Self-Ver
 - **보고 스타일 (MANDATORY)**: 각 항목을 ① AI 동작원리 ② 쉬운 설명 ③ 중학생 수준 실생활 예시(**'예시'** 표기) 순서로 상세하게 나눠 설명 + 설명 마지막에 **[Brief] 핵심 요약 자동 포함** + 아래 추가 형식을 **중복 선택 가능**하게 제시: "A) Pitch 형식(1분 요약) / B) 수식 기반 수학적·공학적 분석 PDF 추출(designer 에이전트 LaTeX 생성) — 복수 선택 가능"
   - **★결과성 보고(실험·eval·비교·ablation)도 예외 아님 (HARD GATE)**: "표로 충분"은 금지 루프홀 — 핵심 관찰마다 ①②③·'예시'·[Brief]·정확도·A)/B) 자가체크 후 전송. 상세: `rules-lazy/answer-detail.md` § 결과·분석 보고 필수 구조.
 - **파라미터 인과 설명**: 상세 설명 → 쉬운 설명 → 수학/도메인 예시 → 실생활 예시 (4단계)
+- **ASCII 도해 (MANDATORY)**: 흐름·분기·대조·현행vs수정안은 `│├└▼★` 괘선으로 코드펜스 안에 도해 — 산문에 안 보이던 결함이 드러나는 **검출 장치**(2026-07-28 실증). 트리거·규칙: `rules-lazy/answer-detail.md` § ASCII 도해
 - **코드·수식·config 수정 설명**: 기술 설명 전체 → "이해를 돕는 비유" 섹션 자동 포함 — 상세: `~/.claude/rules-lazy/answer-detail.md` § 코드·수식·config 수정 설명 형식
 - **실험 변동 시 문서화** (MANDATORY): Config 주석 + configs/README.md + 논문 3곳 동시 업데이트
 - 근거 기반 답변, 정확도(높음/중간/낮음) 표시 — 상세: `~/.claude/rules-lazy/answer-detail.md`

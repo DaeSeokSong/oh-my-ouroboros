@@ -32,6 +32,9 @@ ACTION="${1:-}"
 # 붙어 tee는 이중 기록이 된다(2026-07-13 실측) — systemd가 주입하는 INVOCATION_ID로 분기.
 tee_log() { if [ -n "${INVOCATION_ID:-}" ]; then cat; else tee -a "$LOG"; fi; }
 log() { echo "[$(date -Iseconds)] [pipeline] $*" | tee_log; }
+# refresh.sh와 동일 채널 — 종전엔 finalize의 git add/commit 실패 경로가 미정의 함수를 호출하는
+# 잠복 버그였다 (refresh.sh에만 정의돼 있었음, 2026-07-27 수정)
+notify_fail() { bash "$CLAUDE_DIR/scripts/claude-notify.sh" "ontology" "온톨로지 갱신 실패: $1 (로그: ontology-refresh.log)" 2>/dev/null || true; }
 
 cd "$CLAUDE_DIR" || { echo "cd 실패: $CLAUDE_DIR" >&2; exit 1; }
 
@@ -114,6 +117,67 @@ else:
 PYEOF
     [[ ${PIPESTATUS[0]} -eq 0 ]] || { log "AST 추출 Python 실패 — 중단"; exit 1; }
 
+    # 캐시 감쇠(스텁) 자동 치유 (2026-07-27 신설 — 실사고 근거): graphifyy save_semantic_cache는
+    # 추출 청크를 source_file별로 그룹핑해 "언급된 모든 파일"의 엔트리를 덮어쓴다. 추출 대상이
+    # 아닌 파일이 교차 참조 노드 1개짜리 스텁으로 오염됨 — 07-24 실사고: 20파일 추출이 42파일
+    # 캐시를 스텁화 → 병합 1476→1257 붕괴 → shrink-guard 거부 + detect는 "캐시 있음=추출 불요"
+    # → 3일 연속 자가 복구 불가 교착. 판별 기준: 직전 성공 graph.json이 그 파일에 2+노드를
+    # 기록했는데 현 캐시 엔트리가 1노드 이하면 감쇠 확진 (소형 노트의 정상 1노드 추출은 graph도
+    # 1노드라 제외됨). 치유 = 엔트리 삭제 → 이번 run의 check_semantic_cache가 uncached로 재분류
+    # → 같은 run에서 재추출. 동일 (파일,해시)는 1회만 치유(ledger) — 파일 대폭 축소 등 정당한
+    # 소노드 재추출이 매일 밤 재추출을 반복(thrash)하는 것 방지.
+    "$PY" - <<'PYEOF' 2>&1 | tee_log
+import json, os
+from pathlib import Path
+root = Path(os.environ["HOME"]) / ".claude"
+out = root / "graphify-out"
+gp, si_p = out / "graph.json", out / "cache/stat-index.json"
+if not (gp.exists() and si_p.exists()):
+    print("스텁 치유: 기준(graph.json/stat-index) 부재 — 생략")
+    raise SystemExit(0)
+pre = str(root) + "/"
+gcount = {}
+for n in json.loads(gp.read_text(encoding="utf-8")).get("nodes", []):
+    sf = (n.get("source_file") or "").replace(pre, "")
+    if sf:
+        gcount[sf] = gcount.get(sf, 0) + 1
+si = json.loads(si_p.read_text(encoding="utf-8"))
+lp = out / "cache/.stub-heal-ledger.json"
+ledger = json.loads(lp.read_text(encoding="utf-8")) if lp.exists() else {}
+healed, accepted = [], []
+for k in list(si):
+    rel = k.replace(pre, "")
+    if gcount.get(rel, 0) < 2:
+        continue
+    h = si[k].get("hash", "")
+    cf = out / "cache/semantic" / (h + ".json")
+    if not cf.exists():
+        continue
+    try:
+        entry = json.loads(cf.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    if len(entry.get("nodes", [])) > 1:
+        continue
+    if h in ledger.get(rel, []):
+        accepted.append(rel)  # 치유 후 재추출 결과가 그대로 1노드 — 정당한 축소로 수용
+        continue
+    cf.unlink()
+    del si[k]
+    ledger.setdefault(rel, []).append(h)
+    healed.append(rel)
+if healed:
+    for p, data in ((si_p, si), (lp, ledger)):  # 부분 쓰기로 인덱스 파손 방지 — temp+rename
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(p)
+    print(f"스텁 캐시 치유: {len(healed)}건 무효화(이번 run 재추출 대상 편입): "
+          f"{healed[:6]}{' 외 %d건' % (len(healed)-6) if len(healed) > 6 else ''}")
+else:
+    print("스텁 치유: 대상 없음" + (f" (수용된 정당 축소 {len(accepted)}건)" if accepted else ""))
+PYEOF
+    [[ ${PIPESTATUS[0]} -eq 0 ]] || { log "스텁 치유 단계 Python 실패 — 중단"; notify_fail "스텁 치유 실패"; exit 1; }
+
     "$PY" - <<'PYEOF' 2>&1 | tee_log
 import json, os
 from graphify.cache import check_semantic_cache
@@ -132,7 +196,8 @@ print(f"Semantic: {len(all_files)-len(uncached)} cached, {len(uncached)} need ex
 PYEOF
     [[ ${PIPESTATUS[0]} -eq 0 ]] || { log "semantic detect Python 실패 — 중단"; exit 1; }
 
-    N=$(grep -c . graphify-out/.graphify_uncached.txt 2>/dev/null || echo 0)
+    # grep -c는 0건이어도 "0"을 출력하며 exit 1로 끝나 `|| echo 0`이 "0\n0"을 만들던 버그 수정 (2026-07-27)
+    N=$(grep -c . graphify-out/.graphify_uncached.txt 2>/dev/null); N=${N:-0}
     log "detect 완료 — 시맨틱 추출 필요 ${N}개"
     ;;
 
