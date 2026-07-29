@@ -50,10 +50,7 @@ add_memory(
 
 #### 상세 (call-time 참조 — `rules-lazy/mem0-conventions.md`)
 
-저장/검색 호출 직전 아래 상세를 lazy 로드한다 (MANDATORY 동작은 유지, 설명만 이전):
-- **프로젝트명 식별 규칙** + metadata에 project 필드를 두지 않는 설계 근거 → §A
-- **프로젝트 매칭 검색 패턴**: 모든 `search_memories` 쿼리에 `[프로젝트명]` prefix 필수 (크로스 오염 방지) → §B
-- **중복 방지**: 저장 전 동일 주제 검색 → 발견 시 `update_memory` 우선 + **update_memory MANDATORY 트리거 4종** (experiment 재실행/논문 재검토/결정 번복/합의 갱신) → §C
+프로젝트명 식별 규칙(§A) · 모든 검색 쿼리 `[프로젝트명]` prefix 필수(§B — 크로스 오염 방지) · 저장 전 동일 주제 검색→`update_memory` 우선 + MANDATORY 트리거 4종(§C). 호출 직전 해당 § lazy 로드 (2026-07-28 다이어트 — 설명은 §A~C가 정본).
 
 ### §1.2 category 표준값 (7종)
 
@@ -106,7 +103,7 @@ Mem0에서 메모리를 검색할 때 항상 3축 검색을 수행하여 현재 
 |---|--------|------|----------|--------|------|
 | T01 | 사용자 합의 감지 ("~로 결정", "알겠어", "그렇게 하자") | add | decision | memory-write | 즉시 저장 |
 | T02 | compact 직전 (MANDATORY — 스킵 금지) | add | context | compact_handover | 진행률+활성 결정+config 포함 |
-| T03 | 세션 시작/continuation | search ×3 + pattern-detect + usage-check | context → decision → code_pattern (3축) | — | 3축 복원 + **반복 패턴 감지**(SessionStart 훅이 `pattern-detect.sh 3` 결과를 자동 주입 — 2026-07-16 하드 훅화. 모델은 주입된 후보의 **판정만**: T40 검색 대조 → 3회+ 시 스킬화/편입/룰화 제안, 이미 스킬로 커버되면 불요 판정) + **인프라 사용 점검**(SessionStart 훅이 `harness-usage-check.sh` 출력을 자동 주입 — 모델은 주입된 이상 항목의 조치만: 감사 초과→/harness-audit 제안, 타이머 미활성→3택 게이트(`code-graph.md` §8 — 주력 1서버만 활성), push 백로그·마이닝 정지·bench 대기→해당 제안. "USAGE OK"면 조치 불요, 직접 실행 금지 항목은 제안만. 미배선 서버 폴백·배선법: `config/hooks/README.md`). **스킵 조건**: 단순 질문·단발 대화(작업성 요청 없음)면 생략 — 첫 작업성 요청 시점에 수행 |
+| T03 | 세션 시작/continuation | search ×3 + pattern-detect + usage-check | context → decision → code_pattern (3축) | — | 3축 복원 + **반복 패턴 감지·인프라 사용 점검** — SessionStart 훅이 두 스크립트 출력을 자동 주입, 모델은 **판정·조치 제안만**(직접 실행 금지). 판정 기준·이상 항목별 조치 매핑: `rules-lazy/mem0-templates.md` T03 (2026-07-28 다이어트 이관). **스킵**: 단순 질문·단발 대화면 첫 작업성 요청 시점으로 연기 |
 | T04 | QA 검증 FAIL 발생 | add | code_pattern | qa-process | 실패 원인·수정 내용 + **avoidance_rubric** 형식 (RubricEM 차용) — 다음 작업 시 search로 자동 로드되어 회피 가이드로 활용. 상세: `rules-lazy/mem0-templates.md` T04 |
 | T06 | /discuss 토론 완료 | add | discuss | discuss | 핵심 합의·근거 요약 저장 |
 | T07 | /discuss 시작 전 | search ×3 | (discuss+decision 병합쿼리) → (experiment+paper 병합쿼리) → feedback 단독 | — | 3회로 축소 (3팀 Round 2 합의) |
@@ -118,28 +115,11 @@ Mem0에서 메모리를 검색할 때 항상 3축 검색을 수행하여 현재 
 | T11 | experiment Stage A 전 | search ×4 | experiment → paper → decision → discuss 순차 | — | 4회 순차 호출 |
 | T12 | 사용자 교정 감지 ("이렇게 하지 마", "앞으로는") | add + search | feedback | learner | 저장 후 검색 → **3회+** 발견 시 `/learn-from-feedback` 자동 트리거 (룰 후보 제안) |
 
-### citation-verifier MANDATORY 트리거 조건
+### citation-verifier MANDATORY 트리거 + 호출 흐름
 
-아래 상황에서는 반드시 citation-verifier 디베이트를 소집한다:
+아래 4상황 필수 소집 — 공통 처리: **철회 게이트(Crossref+OpenAlex) + stance 디베이트** (2026-07-28 다이어트 — 4행 표의 동일 이유 문구 dedup): ① 논문을 본문·실험 자료에 인용 직전 ② SOTA 수치·베이스라인 참조 ③ 도메인 메커니즘 근거 인용 ④ 2020년 이전 논문(재현 실패·후속 반박 확인).
 
-| 상황 | 이유 |
-|------|------|
-| 논문을 본문·실험 자료에서 인용하기 직전 | 철회 게이트(Crossref+OpenAlex) + stance 디베이트로 사전 확인 |
-| SOTA 수치·베이스라인으로 참조 시 | 철회 게이트(Crossref+OpenAlex) + stance 디베이트로 학계 합의 수준 검증 |
-| 도메인 메커니즘 근거로 인용 시 | 철회 게이트(Crossref+OpenAlex) + stance 디베이트로 철회된 근거 논문 방지 |
-| 2020년 이전 논문 인용 시 | 철회 게이트(Crossref+OpenAlex) + stance 디베이트로 최근 재현 실패 또는 후속 반박 확인 |
-
-### citation-verifier 호출 흐름
-
-```
-논문 인용/참조 의도 감지
-  → citation-verifier 디베이트 소집 (철회 게이트 → 옹호+회의 병렬 → 종합)
-  → 결과 수신:
-      supporting ≥ 3 + contrasting ≤ 1 + 철회 없음 → 인용 허용
-      contrasting ≥ supporting → 사용자 경고 후 인용 여부 질문
-      철회·정정·EoC 존재 → 인용 금지 + 대체 논문 검색
-  → T21에 검증 결과 저장 (source: citation-verifier)
-```
+흐름: 인용 의도 감지 → 디베이트(철회 게이트 → 옹호+회의 병렬 → 종합) → **supporting ≥3 + contrasting ≤1 + 철회 없음 = 인용 허용** / **contrasting ≥ supporting = 사용자 경고 후 질문** / **철회·정정·EoC = 인용 금지 + 대체 논문 검색** → 결과는 T21 저장(source: citation-verifier).
 
 ### OPTIONAL (T05, T13~T41) — 해당 시 실행 (lazy)
 

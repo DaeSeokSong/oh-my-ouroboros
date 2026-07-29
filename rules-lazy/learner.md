@@ -164,6 +164,7 @@ harness-evolve.sh zerosum <budget_tokens> <candidate_file> <rule_file...>
 
 - **exit 1 (예산 초과)** → 초과량·제거 권장량 출력 후 사용자에게 제거/병합 후보 제시
   - 제거 대상 자동 선정 없음 — 사용자가 직접 결정 (불변식 1)
+  - **예산 위기 반복 시** (여유 < 500B 또는 주간 zerosum 경고 2회+): `skills/harness-audit/SKILL.md` § Step 1.5 다이어트 사이클 단독 실행으로 라우팅 (2026-07-28 사용자 결정 C)
 - **exit 0 (예산 이하)** → 룰 추가 가능 (Tier-1 통과 → 현재는 사용자 승인; Tier-2 자동 blind은 P2 미활성 — § step 3)
 
 ### 안전장치 (MANDATORY)

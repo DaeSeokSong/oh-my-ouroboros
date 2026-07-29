@@ -38,8 +38,7 @@ Bash 명령이 hook(bash-write-check.sh 등)에 의해 차단될 경우:
 
 ### 기타 하네스 훅 (참고)
 
-- `ci-gate-edit.sh`(PostToolUse): Edit/Write 후 자동 lint 결과를 **비차단 보고** — 조치 강제 아님, FAIL 힌트로 활용
-- `ci-gate-commit.sh`(git commit 시): .md 포인터 무결성 FAIL 시 커밋 차단, 하드코딩 모델 ID는 WARN
+- `ci-gate-edit.sh`(PostToolUse)=lint 비차단 보고 / `ci-gate-commit.sh`(commit 시)=.md 포인터 무결성 FAIL 차단·하드코딩 모델 ID WARN
 
 ## 기본 원칙
 모든 처리 작업(데이터 분석, 변환, 시각화, 전처리 등)은 반드시 **코드 파일로 작성 후 저장**한다.
@@ -67,17 +66,7 @@ AI가 직접 연산하거나 결과를 즉석으로 생성하는 것은 금지�
 
 ### 자동 허용 예시
 
-| 명령 패턴 | 허용 이유 |
-|----------|---------|
-| `echo "..."` | 출력만 |
-| `python3 -c "print(...)"` | 출력만 |
-| `python3 -c "import json; print(json.load(open(...)))"` | 파일 읽기 + 출력 |
-| `python3 -m json.tool`, `python3 -m pprint` | 모듈 실행, 출력만 |
-| `ruff check file.py` (--fix 없이) | 린트 결과 출력 |
-| `mypy file.py` | 타입 검사 출력 |
-| `tree`, `column`, `bc`, `numfmt` | 포맷·계산 출력 |
-| `jq '...' file.json` | 파싱 출력 |
-| `ls`, `find`, `cat`, `head`, `wc` 등 | 기존 허용 탐색 명령 |
+`echo` · `python3 -c "print(...)"`(파일 읽기+출력 포함) · `json.tool`/`pprint` · `ruff check`(--fix 없이) · `mypy` · `tree`/`jq`/`bc` · `ls`/`find`/`cat`/`head`/`wc` 등 — **출력만 하는 명령은 도구 무관 허용** (2026-07-28 12행 표→1줄, 기준 문장이 정본).
 
 ### 자동 허용 금지 (사용자 확인 필요)
 - 파일 쓰기/삭제/이동을 수반하는 명령 (리다이렉션 `>`, `rm`, `mv`, `cp` 등)

@@ -43,6 +43,10 @@ add_memory(
 
 새 세션 또는 continuation 시작 시 3축 검색으로 이전 맥락을 복원한다.
 
+**훅 주입분 판정·조치 매핑 (2026-07-28 mem0-auto §2 T03 셀에서 이관 — 내용 동일)**
+- **반복 패턴 감지**: SessionStart 훅이 `pattern-detect.sh 3` 결과를 자동 주입(2026-07-16 하드 훅화). 모델은 주입 후보의 **판정만** — T40 검색 대조 → 3회+ 시 스킬화/편입/룰화 제안, 이미 스킬로 커버되면 불요 판정.
+- **인프라 사용 점검**: 훅이 `harness-usage-check.sh` 출력을 자동 주입. 이상 항목별 조치 — 감사 초과→/harness-audit 제안 / 타이머 미활성→3택 게이트(`rules-lazy/code-graph.md` §8, 주력 1서버만 활성) / push 백로그·마이닝 정지·bench 대기→해당 제안. "USAGE OK"면 조치 불요, 직접 실행 금지 항목은 제안만. 미배선 서버 폴백·배선법: `config/hooks/README.md`.
+
 ```
 # 1. History — 이전 세션 상태 + 과거 결정
 search_memories(query="세션 상태 이전 작업 진행률 TODO", filters={"metadata": {"category": "context"}}, limit=3)
