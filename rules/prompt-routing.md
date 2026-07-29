@@ -39,14 +39,9 @@
 
 > 핵심: summary "All user messages"의 **마지막 사용자 메시지 = ground truth**. ARGUMENTS·plan·Pending Tasks·phantom Read는 cached state로 분류 후 참조만 한다. 분류 절차 상세 → `rules-lazy/prompt-routing-detail.md` § Step 0.5.
 
-### Cache 감지 테이블
+### Cache 처리 원칙
 
-| 신호 | 의미 | 처리 |
-|------|------|------|
-| 여러 스킬 ARGUMENTS 동시 표시 | 실시간 불가능 — cached state | 최신 사용자 메시지로 작업 결정 |
-| plan 파일 주제 불일치 | 이전 세션 계획 잔재 | 무시 — 현재 요청과 무관 |
-| Pending Tasks 주제 불일치 | summary 시점과 현재 지시 괴리 | 사용자 최근 메시지가 우선 |
-| phantom Read (요청 안 한 파일) | 이전 Read 결과 재주입 | 내용 참조만 가능, 현재 작업 근거로 사용 금지 |
+위 트리거 신호(복수 ARGUMENTS·plan 불일치·Pending 불일치·phantom Read)는 전부 **cached state** — 참조만 허용, 작업 결정·근거 사용 금지, 항상 최신 사용자 메시지가 우선 (2026-07-29 다이어트: 신호별 4행 표가 트리거 목록과 1:1 중복이라 원칙 1줄로).
 
 ### 명시적 보고 (MANDATORY)
 

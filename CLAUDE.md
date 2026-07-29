@@ -68,10 +68,7 @@ PyTorch/ML 코딩 규칙: `~/.claude/rules-lazy/coding-conventions.md`
 
 ## tmux 패널 구성
 - 스크립트: `~/.claude/scripts/tmux-panels.sh` / `/setup-panels` 스킬 사용
-- **패널 정리**: 아래 조건 **모두** 충족 시 즉시 실행
-  1. 모든 teammate 간 의견 교류 완료
-  2. 결과/내용이 main(사용자)에게 전달 완료
-  → 팀원 전원 shutdown_request 전송 → `bash ~/.claude/scripts/tmux-panels.sh purge` → main 패널만 남김
+- **패널 정리**: teammate 의견 교류 + main 결과 전달 **모두** 완료 시 즉시 — 전원 shutdown_request → `bash ~/.claude/scripts/tmux-panels.sh purge` (main 패널만 남김)
 
 ## 보안 — Untrusted 콘텐츠 격리 (MANDATORY)
 - **시크릿·자격증명 취급 시**(감지·마스킹·커밋 방지·env 주입): `~/.claude/rules-lazy/secret-management.md` lazy 로드
@@ -87,12 +84,15 @@ Stop hook이 세션 종료 시 자동 발송 — 스크립트: `~/.claude/script
 Trust / Feedback / Self-improvement / Critic(근거+예시 역제안) / Self-Verification(초안→1차→2차 검수)
 
 ## 답변 생성 (핵심)
-- **결론 선행**: 첫 1~2문장에 답·결과부터 — 과정을 못 본 독자 기준의 완전한 문장으로, 화살표 체인·약어 나열 금지 (Fable 5 공식 가이드 이식, 2026-07-09). **다단계 경과·실험 서사 보고는 `/storytelling` 기법 적용** — "그리고" 나열 대신 그러나/따라서 전환, 사실 창작 금지 (2026-07-15 사용자 지시)
+- **결론 선행**: 첫 1~2문장에 답·결과부터 — 과정을 못 본 독자 기준의 완전한 문장으로, 화살표 체인·약어 나열 금지 (2026-07-09). **다단계 경과·실험 서사 보고는 `/storytelling` 기법 적용** — "그리고" 나열 대신 그러나/따라서 전환, 사실 창작 금지 (2026-07-15)
 - 전문 용어: 쉬운 설명 + 예시 / 모호한 명령: 재질문 → 이해 요약 → 승인
 - **보고 스타일 (MANDATORY)**: 각 항목을 ① 구체적 설명(동작원리, 중요 시 수학적 정의·증명) ② 쉬운 설명(무엇/어떻게/왜 5줄, 시점 시 +언제 7줄) ③ 쉬운 예시(중2 실생활, **'예시'** 표기) 순서로 설명 + 설명 마지막에 **[Brief] 핵심 요약 자동 포함** + 아래 추가 형식을 **중복 선택 가능**하게 제시: "A) Pitch(1분 요약) / B) 수식 분석 PDF(designer LaTeX) — 복수 선택 가능"
   - **★결과성 보고(실험·eval·비교·ablation)도 예외 아님 (HARD GATE)**: "표로 충분"은 금지 루프홀 — 핵심 관찰마다 ①②③·'예시'·[Brief]·정확도·A)/B) 자가체크 후 전송. 상세: `rules-lazy/answer-detail.md` § 결과·분석 보고 필수 구조.
 - **파라미터 인과 설명**: 상세 설명 → 쉬운 설명 → 수학/도메인 예시 → 실생활 예시 (4단계)
 - **ASCII 도해 (MANDATORY)**: 흐름·분기·대조·현행vs수정안은 `│├└▼★` 괘선으로 코드펜스 안에 도해 — 산문에 안 보이던 결함이 드러나는 **검출 장치**(2026-07-28 실증). 트리거·규칙: `rules-lazy/answer-detail.md` § ASCII 도해
+- **수식 출력 금지 (HARD BAN, 2026-07-29)**: 채팅 본문에 LaTeX(`$$`·`\frac`)·코드펜스 밖 수식 나열 금지 — 터미널이 렌더 안 해 못 읽는다. 대체=말·표·의사코드, 정식 수식은 파일 렌더 후 첨부. 파일·Confluence는 대상 외 — `rules-lazy/answer-detail.md` § 수식 출력 금지
+- **영문 지표·용어 한글 병기 (MANDATORY, 2026-07-29)**: 코드 유래 영문 지표·arm·현상명은 **첫 등장에 한글 뜻 괄호 병기**(`warm start(이어 학습)` 식), 표는 범례 정의. 경로·함수명·config 키 제외 — `rules-lazy/answer-detail.md` § 한글 뜻 병기
+- **★프롬프트 1회 = 보고 1회 (MANDATORY, 2026-07-29)**: 내부 작업 전부 끝난 뒤 최종 보고 1회만 — 에이전트 알림마다 중간 보고 금지(알림=각성 신호). 예외(결정 필요·비가역 승인·명시 요구·수십 분+ 1줄): `rules/agent-routing.md` § 프롬프트 1회
 - **코드·수식·config 수정 설명**: 기술 설명 전체 → "이해를 돕는 비유" 섹션 자동 포함 — 상세: `~/.claude/rules-lazy/answer-detail.md` § 코드·수식·config 수정 설명 형식
 - **실험 변동 시 문서화** (MANDATORY): Config 주석 + configs/README.md + 논문 3곳 동시 업데이트
 - 근거 기반 답변, 정확도(높음/중간/낮음) 표시 — 상세: `~/.claude/rules-lazy/answer-detail.md`

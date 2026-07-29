@@ -23,7 +23,7 @@ ToolSearch("select:mcp__mem0__add_memory,mcp__mem0__search_memories,mcp__mem0__g
 ```
 세션당 1회 실행, 이후 캐싱. 로드 실패 시 → `rules-lazy/mcp-fallback-mem0.md` 적용.
 
-주 사용 6종: `add_memory` / `search_memories`(기본 limit=5) / `get_memories`(filter 필수, 기본 limit=10) / `update_memory` / `delete_memory` / `delete_all_memories`(신중). 파라미터 스키마는 ToolSearch 로드 시 제공되므로 여기 중복 명세하지 않는다 (2026-07-09 표 제거 — deferred loading과 이중 관리 방지). `get_memory`·`list_entities`·`delete_entities`는 드물게 — 필요 시 직접 호출.
+주 사용 6종: `add_memory` / `search_memories`(기본 limit=5) / `get_memories`(filter 필수, 기본 limit=10) / `update_memory` / `delete_memory` / `delete_all_memories`(신중). 파라미터 스키마는 ToolSearch 로드 시 제공 — 여기 중복 명세하지 않는다(2026-07-09). `get_memory`·`list_entities`·`delete_entities`는 필요 시 직접 호출.
 
 ---
 
@@ -143,12 +143,7 @@ Mem0에서 메모리를 검색할 때 항상 3축 검색을 수행하여 현재 
 ## §4 infer 전략
 
 - **기본**: `infer=True` (명시하지 않아도 기본 적용)
-- **수치 정밀도 필요 시**: `infer=True` 유지하되 text에 정확값 원문 포함
-
-```
-# 수치 포함 예시 — infer=True가 손실하더라도 text에 보존됨
-text="2026-04-13 Phase 2 결과: acc=87.3%, loss=0.234, lr=3e-4, batch=128, seed=42"
-```
+- **수치 정밀도 필요 시**: `infer=True` 유지하되 text에 정확값 원문 포함 (예: `acc=87.3%, lr=3e-4, seed=42` — infer가 손실해도 text에 보존됨)
 
 ---
 
