@@ -1,7 +1,7 @@
 ---
 name: workflow
 description: "Use when: 복잡한 작업의 Phase 기반 워크플로우 설계 (3단계 이상, teammate 협업, 조건부 분기 포함)."
-model: opus
+model: inherit
 allowed-tools:
   - Read
   - Write
@@ -63,14 +63,14 @@ Classify-and-Act / Fan-out-and-Synthesize / Adversarial Verification / Generate-
 ## § Mem0 패턴 검색 (워크플로우 설계 전 MANDATORY)
 
 워크플로우 설계 전 Mem0에서 관련 이력 자동 검색:
-→ mem0-auto.md T07 참조 (5채널 순차 검색 — discuss와 동일 패턴)
+→ mem0-auto.md T07 참조 (3회 순차 검색 — discuss와 동일 패턴, `rules-lazy/mem0-templates.md` T07)
 
 과거 패턴 발견 시: "이전 유사 작업에서 {Phase 구성}으로 진행, {패턴} 적용" → 동일 규칙으로 Phase 설계
 사용자 피드백 발견 시: "사용자 선호: {선호 내용}" 반영
 
 ## § Mem0 워크플로우 저장 (완료 시)
 
-워크플로우 완료 시 설계 패턴을 Mem0에 저장: → mem0-auto.md T19 참조
+워크플로우 완료 시 설계 패턴을 Mem0에 저장: → mem0-templates.md T19 참조
 
 ---
 
@@ -83,10 +83,11 @@ $ARGUMENTS 를 파싱하여 아래 흐름으로 실행:
    - 의존 관계 파악 (A 완료 후 B 시작 등)
    - 병렬 가능 작업 식별
 2. **인자가 작업 설명** → 해당 작업에 대한 워크플로우 설계
-3. 설계 완료 후 사용자 승인 → 승인된 워크플로우대로 실행
+3. 설계 완료 후 사용자 승인 → 승인된 워크플로우를 plan.md(`docs/superpowers/plans/`, 머리에 intent 경로·SHA)로 남기고 그대로 실행
 
 ## 워크플로우 설계 시 필수 포함 요소
 
+0. **intent 산출물**: 설계가 근거로 삼는 `intent.md` 경로와 커밋 SHA(없으면 `/intent` 를 먼저 돌린다 — Phase 설계는 승인된 intent 뒤에 온다, 2026-09-06 사용자 지시). 각 Phase 의 Go/NoGo 는 intent 2절(성공 기준)과 4절(제약)을 인용한다
 1. **Phase 구분**: 각 단계의 이름, 트리거 조건(항상/조건부), 단계 간 의존 관계
 2. **팀 구성**: CLAUDE.md 라우팅 테이블 기반 에이전트 배치
 3. **산출물**: 각 Phase의 예상 결과물 명시
@@ -210,6 +211,7 @@ Phase 실행 완료 후 main이 각 rubric 항목 채점. **PASS/FAIL boolean**�
 - Phase 분할 권장 수: 3~7개 (단일 워크플로우 기준)
 - 7개 초과 시: 메타-워크플로우로 분리 (Phase A.1, A.2, ...)
 - 각 Phase는 단일 산출물·단일 책임 원칙
+- **vertical slice 기준 (2026-08-06 이식 — 출처: mattpocock/skills `to-tickets`, MIT)**: 각 조각은 관련 레이어를 관통해 **독립 데모 가능**해야 하고 **단일 컨텍스트 윈도우에 들어가야** 한다 — 구현 항목 나열이 아니라 사용자 행동 언어로 표현. 광범위 리팩토링만 예외적으로 expand-contract 순서(신형 병행 추가 → 호출부 배치 이관 → 구형 삭제) 사용.
 
 ---
 
@@ -218,6 +220,7 @@ Phase 실행 완료 후 main이 각 rubric 항목 채점. **PASS/FAIL boolean**�
 Phase별 task가 독립적이면 **subagent-driven** 실행을 권장:
 - task별 fresh subagent(coder) + 2단계 리뷰(qa: spec 준수 → 코드 품질)
 - subagent는 세션 히스토리 상속 ❌ — main이 필요한 컨텍스트만 정밀 구성
+- spawn prompt 서두에 `[SKILL_DEPTH: 1]` 표기(discuss 와 같은 표기, `rules/agent-routing.md` § SKILL_DEPTH 전달)
 - 모델 선택: 기계적=haiku/sonnet, 통합·판단=sonnet, 설계·리뷰=opus (model-assignment 정렬)
 - coder status 4종(DONE/CONCERNS/NEEDS_CONTEXT/BLOCKED) 핸들링
 > worktree 강제·자체 커밋 미적용 — 커밋은 `/commit`, push는 사용자 직접 (우리 git 규칙 우선).
@@ -254,7 +257,7 @@ Phase별 task가 독립적이면 **subagent-driven** 실행을 권장:
 discuss를 먼저 진행할까요? (Y/N)
 ```
 
-- 사용자 Y → `/discuss` 실행 후 본 스킬 재개
+- 사용자 Y → 이 스킬을 먼저 끝낸 뒤 순차로 `/discuss` 를 실행한다(스킬 안에서 다른 스킬을 부르고 돌아오지 않는다, 깊이 N=1). 합의 결과는 Phase 설계에 반영해 사용자 승인을 다시 받는다
 - 사용자 N → 바로 실행 진행
 
 ## 생략 조건

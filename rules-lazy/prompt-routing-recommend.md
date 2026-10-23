@@ -43,6 +43,7 @@
 | 체크포인트 정리/ckpt 정리/학습 산출물 디스크 회수 | `/ckpt-cleanup` 스킬 (wandb 태그 연동 KEEP/DELETE/HOLD — 삭제 실행은 사용자 직접) |
 | 실험 설계/config 수정/wandb/Phase | `/experiment` 스킬 (워크플로우 + 재현성 + 결과 분석 내장) |
 | Figure/다이어그램/TikZ/matplotlib | `/figure` 스킬 (품질 기준 내장) |
+| 보안 리뷰/취약점 점검/injection·인증 우회 의심 | **security 에이전트** (라우팅 2.7) — 경량 diff는 빌트인 `/security-review`, 대규모는 claude-security 플러그인(깊이 게이트 `rules-lazy/security-scan-gate.md`) |
 | 신경과학 메커니즘/도파민/세로토닌/예측 코딩 | `/neuro-explain` 스킬 |
 | Confluence/컨플루언스/페이지 | `/confluence` 스킬 |
 | 장시간 세션/컨텍스트 | `context-management.md` |
@@ -70,6 +71,7 @@
 | **코드·Git** | git commit 전 | `/commit` |
 | **코드·Git** | 새 규칙/스킬/에이전트 정의 | `/quick-skill` |
 | **코드·Git** | 규칙/스킬 eval·benchmark 검증 | `/skill-creator` (Anthropic plugin) |
+| **문서** | 프로젝트 CLAUDE.md 감사/개선/점검 ("CLAUDE.md maintenance") | `claude-md-improver` (official plugin) — **프로젝트 레포 한정**, 글로벌 `~/.claude/CLAUDE.md`는 대상 제외(/harness-audit 소관 — 포인터·예산 구조를 프로젝트 템플릿 루브릭으로 오판 위험) |
 | **문서** | Confluence 페이지 생성·수정 | `/confluence` |
 | **문서** | Confluence 연구 기록 생성·수정 / '연구 기록', '실험 기록', '연구 노트' | `/confluence-research-record` |
 | **환경** | teammate 소집 후 tmux 패널 배치 | `/setup-panels` |
@@ -105,10 +107,10 @@
     │   NO  → 다음 단계
     │
     ├─ Step 1.5: 모델 위임 판단 (MANDATORY)
-    │   Opus 직접 처리 조건? → YES → Opus 직접
+    │   메인 직접 처리 조건? → YES → 메인 직접
     │   Haiku 위임 조건?    → YES → Haiku subagent
     │   Sonnet 위임 조건?   → YES → Sonnet subagent
-    │   불확실?             → Sonnet subagent 기본
+    │   불확실?             → opus subagent (분리 컨텍스트)
     │
     ├─ Step 1.7: 반복 패턴 감지? (MANDATORY)
     │   YES → [전처리 생략] 1줄 알림 → 즉시 위임
@@ -123,5 +125,5 @@
     │          → "/setup-panels 실행할까요?" 질문 (실행 금지)
     │   NO  → 바로 실행
     │
-    └─ 실행 (위임 판단 결과에 따라 subagent 또는 Opus 직접)
+    └─ 실행 (위임 판단 결과에 따라 subagent 또는 메인 직접)
 ```

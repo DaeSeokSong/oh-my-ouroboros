@@ -5,7 +5,8 @@
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000",
     "DISABLE_ERROR_REPORTING": "1",
     "DISABLE_FEEDBACK_COMMAND": "1",
-    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1"
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+    "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/harness-mod:~/.claude/mods/decision-popup"
   },
   "attribution": {
     "commit": "",
@@ -19,7 +20,11 @@
       "Grep(**)",
       "Bash(*)",
       "WebSearch(*)",
-      "WebFetch(*)"
+      "WebFetch(*)",
+      "Bash(tmux new-session *)",
+      "Bash(tmux send-keys *)",
+      "Bash(tmux capture-pane *)",
+      "Bash(bash ~/.claude/tools/train-watcher/launch-set.sh *)"
     ],
     "deny": [
       "Bash(sudo:*)",
@@ -50,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "INPUT=$(cat); FILE=$(echo \"$INPUT\" | jq -r '.tool_input.file_path // .tool_input.path // empty' 2>/dev/null); if [ -n \"$FILE\" ] && echo \"$FILE\" | grep -qE '(\\.env$|\\.env\\.|\\/credentials(\\.json)?$|\\.pem$|\\.key$|\\.p12$|\\.pfx$|\\/secrets\\.)'  ; then echo '{\"decision\": \"block\", \"reason\": \"민감 파일 보호: .env, credentials, .pem, .key 등 파일 수정이 차단됩니다.\"}'; fi || true",
+            "command": "INPUT=$(cat); FILE=$(echo \"$INPUT\" | jq -r '.tool_input.file_path // .tool_input.path // empty' 2>/dev/null); if [ -n \"$FILE\" ] && echo \"$FILE\" | grep -qE '(\\.env$|\\.env\\.|(^|\\/)\\.?credentials(\\.json)?$|\\.pem$|\\.key$|\\.p12$|\\.pfx$|\\/secrets\\.)'  ; then echo '{\"decision\": \"block\", \"reason\": \"민감 파일 보호: .env, credentials, .pem, .key 등 파일 수정이 차단됩니다.\"}'; fi || true",
             "timeout": 10
           },
           {
@@ -70,8 +75,18 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/scripts/git-guardrails.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "bash $HOME/.claude/scripts/train-launch-warn.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 $HOME/.claude/scripts/external-model-gate.py",
+            "timeout": 60
           }
         ]
       },
@@ -84,17 +99,41 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/agent-spawn-log.sh pre",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__claude_ai_Atlassian__(update|create)ConfluencePage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/korean-style-gate.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Write|Edit",
+        "matcher": "Agent",
         "hooks": [
           {
             "type": "command",
-            "command": "INPUT=$(cat); FILE=$(echo \"$INPUT\" | jq -r '.tool_input.file_path // .tool_input.path // empty' 2>/dev/null); if [[ \"$FILE\" == *.py ]] && which ruff > /dev/null 2>&1; then ruff format \"$FILE\" 2>/dev/null && ruff check \"$FILE\" 2>/dev/null; fi || true",
-            "timeout": 60
-          },
+            "command": "bash $HOME/.claude/scripts/agent-spawn-log.sh post",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
           {
             "type": "command",
             "command": "$HOME/.claude/scripts/ci-gate-edit.sh",
@@ -165,6 +204,11 @@
             "type": "command",
             "command": "bash $HOME/.claude/scripts/toolcall-text-guard.sh",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/t41-subagent-stop.sh",
+            "timeout": 15
           }
         ]
       }
@@ -197,6 +241,21 @@
             "type": "command",
             "command": "bash $HOME/.claude/scripts/cost-clear-note.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/graphify-session-note.sh || true",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/exchange-prune.sh",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/correction-detect.sh || true",
+            "timeout": 15
           }
         ]
       }
@@ -208,6 +267,16 @@
             "type": "command",
             "command": "bash $HOME/.claude/scripts/cost-snapshot.sh",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/read-once.sh --clear",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/precompact-handover-check.sh",
+            "timeout": 10
           }
         ]
       }
@@ -235,13 +304,14 @@
     "refreshInterval": 2
   },
   "enabledPlugins": {
-    "example-skills@anthropic-agent-skills": true,
+    "example-skills@anthropic-agent-skills": false,
     "superpowers@superpowers-marketplace": true,
     "ralph-loop@claude-plugins-official": true,
     "code-simplifier@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
     "claudenews@claudenews": true,
-    "codex@openai-codex": true
+    "codex@openai-codex": true,
+    "claude-security@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "anthropic-agent-skills": {

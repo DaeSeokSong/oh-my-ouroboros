@@ -18,11 +18,11 @@
 
 ```bash
 # HTTPS 방식 (권장 — SSH 키 설정 불필요)
-git clone https://github.com/DaeSeokSong/.claude.git ~/.claude
+git clone <your-private-harness-repo> ~/.claude
 bash ~/.claude/scripts/bootstrap.sh --https
 
 # SSH 방식 (SSH 키가 GitHub에 등록된 경우 — SSH 실패 시 HTTPS 자동 폴백)
-git clone git@github.com:DaeSeokSong/.claude.git ~/.claude
+git clone <your-private-harness-repo> ~/.claude
 bash ~/.claude/scripts/bootstrap.sh
 ```
 
@@ -74,8 +74,8 @@ vi ~/.claude/env-config
 | **2. 저장소 동기화** | SSH 클론 시도 → 실패 시 HTTPS 자동 폴백 (또는 `git pull`) |
 | **3. 디렉토리 초기화** | `projects/` 디렉토리 생성 (`.gitignore` 제외 항목) |
 | **4. MCP 설치** | context7, sentry, playwright 자동 설치 / Atlassian·Notion STEP 0 선택분 설치 |
-| **5. 플러그인 확인** | settings.json의 7개 플러그인 목록 안내 |
-| **6. ntfy 안내** | NTFY_TOPIC 설정 방법 안내 |
+| **5. 플러그인 확인** | settings.json의 플러그인 목록 안내(안내문은 7개까지 적혀 있고 `claude-security` 는 아래 표 참고) |
+| **6. ntfy 안내** | 알림 주제 설정 안내. 주제는 `config/env-config` 의 `USER_NTFY_TOPIC` 에 직접 적는 방식이 정본이며, bootstrap 출력의 `claude-notify.sh` 편집 안내는 낡았습니다(아래 «ntfy 알림 설정») |
 
 ---
 
@@ -132,7 +132,7 @@ API 키 발급: https://www.notion.so/profile/integrations (새 통합 → 내�
 
 ## Claude Code 플러그인
 
-`settings.json`에 등록된 7개 플러그인은 **git 저장소에 포함**되어 Claude Code 첫 실행 시 자동 활성화됩니다.
+`settings.json`의 `enabledPlugins`에 8개 플러그인이 등록되어 있고(`example-skills` 는 `false` 로 꺼 둠) 나머지 7개는 **git 저장소에 포함**되어 Claude Code 첫 실행 시 자동 활성화됩니다.
 
 | 플러그인 | 용도 |
 |---------|------|
@@ -143,6 +143,7 @@ API 키 발급: https://www.notion.so/profile/integrations (새 통합 → 내�
 | `claude-md-management@claude-plugins-official` | CLAUDE.md 관리 |
 | `claudenews@claudenews` | 개발 뉴스 statusline (coralline 체인) |
 | `codex@openai-codex` | Codex CLI 연동 (rescue·second-opinion) |
+| `claude-security@claude-plugins-official` | 보안 스캔 (사용 전 깊이 게이트, `rules-lazy/security-scan-gate.md`) |
 
 네트워크 없는 환경에서 수동 설치:
 ```bash
@@ -153,18 +154,37 @@ claude plugin install code-simplifier@claude-plugins-official
 claude plugin install claude-md-management@claude-plugins-official
 claude plugin install claudenews@claudenews
 claude plugin install codex@openai-codex
+claude plugin install claude-security@claude-plugins-official
 ```
 
 ---
 
 ## ntfy 알림 설정
 
+알림 주제(topic)는 추적되는 스크립트가 아니라 gitignored 설정 파일에 둡니다. `config/env-config.template` 을 `~/.claude/config/env-config`(또는 `~/.claude/env-config`)로 복사한 뒤 `USER_NTFY_TOPIC` 키에 본인만 아는 고유한 이름을 적습니다. `claude-notify.sh` 가 이 키를 읽습니다. 서버를 직접 운영하면 같은 파일의 `NTFY_SERVER` 키를 씁니다.
+
 ```bash
-# 고유 topic 이름으로 교체
-sed -i 's/NTFY_TOPIC=".*"/NTFY_TOPIC="<your-unique-topic>"/' ~/.claude/scripts/claude-notify.sh
+cp ~/.claude/config/env-config.template ~/.claude/config/env-config
+vi ~/.claude/config/env-config   # USER_NTFY_TOPIC 값을 직접 입력 (절대 커밋 금지, 추적 파일에 쓰지 않음)
 ```
 
-ntfy 앱(iOS/Android)에서 같은 topic 구독 → 완료.
+ntfy 앱(iOS/Android)에서 같은 topic 구독 → 완료. 주제 이름을 아는 사람은 누구나 알림을 읽을 수 있으므로 추측하기 어려운 이름을 쓰고, 저장소·커밋·문서에 적지 않습니다.
+
+---
+
+## Mem0·Tavily MCP 등록과 비밀 파일
+
+상시 규칙(`rules/mem0-auto.md` 의 Mem0 자동 트리거, `rules-lazy/tavily-auto.md` 의 검색)이 전제하는 두 MCP 는 bootstrap·setup-harness 가 설치하지 않으므로 새 서버에서 직접 등록합니다. 두 서버 모두 키를 settings.json 이 아니라 런처 스크립트가 비밀 파일에서 읽어 주입합니다.
+
+1. 비밀 파일 `~/.claude/mcp-secrets.env` 를 만들고 권한을 `chmod 600` 으로 둡니다(gitignored). 이 파일에 넣는 키 이름은 `MEM0_API_KEY` 와 `TAVILY_API_KEY` 입니다. 값은 각 서비스 콘솔에서 발급해 이 파일에만 적고, 다른 곳에는 쓰지 않습니다.
+2. 사용자 범위로 서버를 등록합니다. 런처는 저장소에 있는 `scripts/launch-mem0.sh`·`scripts/launch-tavily.sh` 입니다.
+
+```bash
+claude mcp add --scope user --env MEM0_DEFAULT_USER_ID=<사용자 식별 이름> mem0 -- ~/.claude/scripts/launch-mem0.sh
+claude mcp add --scope user tavily -- ~/.claude/scripts/launch-tavily.sh
+```
+
+3. `claude mcp list` 로 두 서버가 연결(Connected)인지 확인합니다. `MEM0_DEFAULT_USER_ID` 는 비밀은 아니지만 추적되는 settings.json 에는 들어 있지 않습니다. 위 `--env` 로 주거나 머신별 설정(커밋하지 않는 settings.local.json 의 env 블록)에 두십시오.
 
 ---
 

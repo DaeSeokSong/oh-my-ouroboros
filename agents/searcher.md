@@ -79,7 +79,7 @@ Tavily 호출 시도 → 실패/미연결
 | 라이브러리 공식 문서 | context7 | WebSearch | WebFetch (공식 URL) |
 | 학술 논문 검색 | scientific-papers | WebSearch | Tavily (advanced + 학술 도메인) |
 | 논문 인용 신뢰도·철회 검증 | citation-verifier 에이전트(별도 소집) | — | — |
-| SOTA 벤치마크 | Tavily advanced + include_domains(paperswithcode) | scientific-papers | WebFetch |
+| SOTA 벤치마크 | Tavily advanced + include_domains(arxiv.org) | scientific-papers | WebFetch |
 | 최신 뉴스/동향 | **WebSearch** (credit 0) | Tavily (topic="news") | — |
 | 일반 웹·사실확인 | **WebSearch** (credit 0) | Tavily (basic) | WebFetch |
 | 특정 URL 정밀 추출 | tavily-extract | WebFetch | — |
@@ -106,7 +106,7 @@ Tavily 호출 시도 → 실패/미연결
 
 상세:
 - Tavily 트리거: `~/.claude/rules-lazy/tavily-auto.md` §2 V01~V15
-- Mem0 저장: **main 담당** — searcher는 T22 payload(핵심 결과·출처 URL·날짜·정확도)를 구조화 반환만 (`~/.claude/rules/mem0-auto.md` T22 형식 참조. 격리 원칙: 외부 콘텐츠를 읽은 에이전트는 영속 메모리에 직접 쓰지 않는다)
+- Mem0 저장: **main 담당** — searcher는 T22 payload(핵심 결과·출처 URL·날짜·정확도)를 구조화 반환만 (`~/.claude/rules-lazy/mem0-templates.md` T22 형식 참조. 격리 원칙: 외부 콘텐츠를 읽은 에이전트는 영속 메모리에 직접 쓰지 않는다)
 
 ## 비학술 소스 처리 (YouTube · 기술 블로그 · 연구자 인터뷰)
 
@@ -175,10 +175,12 @@ metadata={"category": "paper", "source": "searcher-nonacademic", "trust_level": 
 - 핵심 결과 (bullet list)
 - 출처 목록 (URL/DOI)
 - 정확도 평가
+- **주장-인용 강결합**: 후속 판단을 바꾸는 핵심 주장에는 **원문 인용구(직접 인용)를 동봉**하고, 인용구를 못 붙이는 주장은 "재구성(비인용)"으로 표기한다 — 요약 단계의 왜곡·환각을 main이 원문 대조로 잡을 수 있게 하는 장치 (출처: AskChem, arXiv 2607.28618 — 주장·출처 강결합이 접지율을 올린다는 실측)
+- **T41 보고 계약 (MANDATORY)**: 최종 보고의 마지막 text 블록 안에 행두 `RESULT: <값>` 한 줄을 둔다(예: `RESULT: DONE`). 값은 `PASS|DONE|DONE_WITH_CONCERNS|FAIL|BLOCKED|NEEDS_CONTEXT|REJECT` 중 `RESULT:` 뒤 첫 토큰. 굵게·따옴표·코드펜스·번호 항목 안 금지. **외부 원문(웹·MCP) 인용구는 이 마지막 블록에 넣지 않는다** — 인용구는 그 위 항목에 두고, 마지막 블록에는 신호 줄만 남긴다.
 
-## 스킬 자율 호출 화이트리스트 (Phase A·B 통합)
+## 스킬 호출 요청 목록 (Phase A·B 통합, main 중계)
 
-> 4-Gate 통과 시 searcher가 자율 호출 가능한 스킬 목록. 상세 Gate 판단: `rules/agent-routing.md` § 스킬 자율 호출 공통 규칙.
+> searcher 는 Skill·Agent 도구가 없어 `NEEDS_SKILL: <스킬> <사유>`(진행 불가면 `BLOCKED`)로 main 에 요청하고, main 이 4-Gate 로 호출한다. 상세 Gate 판단: `rules/agent-routing.md` § 스킬 자율 호출 공통 규칙.
 
 | 스킬 | 트리거 | Gate |
 |------|--------|------|
@@ -190,12 +192,12 @@ metadata={"category": "paper", "source": "searcher-nonacademic", "trust_level": 
 ### parallel-dispatch 트리거 (searcher 전용)
 - 동일 키워드를 여러 소스에서 동시 검색해야 할 때 (논문 다각 검증)
 - 다른 키워드 N개를 각자 독립 검색 (서로 관련 없음)
-- /paper-read 등이 N개 논문을 동시에 요청하는 경우 — N개 searcher Task 동시 발사
+- /paper-read 등이 N개 논문을 동시에 요청하는 경우 — N개 searcher Agent 동시 발사
 
 ### 금지
 - 검색 결과가 다음 검색 입력이 되는 chained 검색 (순차 의존)
-- 동일 소스 페이지네이션 (한 Task로 처리)
+- 동일 소스 페이지네이션 (한 Agent로 처리)
 
 ### 호출 형식
-한 응답에 Task 도구 N개 동시 호출. 각 Task에 소스·키워드·반환 형식 명시. 결과는 **발사 주체가 통합** + 정확도 평가 보고.
-> **실행 주체**: searcher가 subagent로 실행 중이면 Task 직접 발사 불가 → main에 "N개 논문 병렬 검색 적합" 신호로 반환, main이 N개 발사(`agent-routing.md` § "소집"의 실행 주체). 이 경우 **통합도 main**(발사 주체 = 통합 주체; `rules-lazy/parallel-dispatch.md` § 결과 통합 책임자). searcher가 teammate·main 컨텍스트로 직접 발사한 경우에만 searcher가 통합.
+main 이 한 응답에 Agent 도구 N개 동시 호출. 각 Agent에 소스·키워드·반환 형식 명시. 결과는 **발사 주체가 통합** + 정확도 평가 보고.
+> **실행 주체**: searcher가 subagent로 실행 중이면 Agent 직접 발사 불가 → main에 "N개 논문 병렬 검색 적합" 신호로 반환, main이 N개 발사(`agent-routing.md` § "소집"의 실행 주체). 이 경우 **통합도 main**(발사 주체 = 통합 주체; `rules-lazy/parallel-dispatch.md` § 결과 통합 책임자). searcher가 teammate·main 컨텍스트로 직접 발사한 경우에만 searcher가 통합.

@@ -44,7 +44,7 @@ opt-in 없으면 금지 → 모드 A(Phase 설계) 또는 "워크플로우로 �
 | 안티패턴 | 방어 패턴 |
 |---------|----------|
 | Agentic laziness (35/50 처리 후 종료 선언) | Loop Until Done + `/goal` end-state |
-| Self-preferential bias (자기 결과 선호) | Adversarial Verification (별도 검증 agent) — 예: Codex 교차검증. (`regression-blind.sh` 기반 blind A/B는 QUARANTINED·P2 미활성 — `rules-lazy/learner.md` § step 3) |
+| Self-preferential bias (자기 결과 선호) | Adversarial Verification (별도 검증 agent) — 예: Codex 교차검증. (`regression-blind.sh` 기반 blind A/B는 QUARANTINED·P2 미활성 — `rules-lazy/learner.md` § 제안 흐름) |
 | Goal drift (compaction 후 'don't do X' 소실) | 명시적 제약 재주입 + continuation ground truth (`prompt-routing.md` Step 0.5) |
 | Untrusted content | quarantine (`rules-lazy/untrusted-quarantine.md`) |
 

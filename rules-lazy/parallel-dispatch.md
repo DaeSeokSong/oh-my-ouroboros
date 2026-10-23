@@ -1,6 +1,6 @@
-# Parallel Dispatch — 병렬 Task 분산
+# Parallel Dispatch — 병렬 Agent 분산
 
-> **로드 시점**: 독립적인 복수 작업을 동시에 실행해야 할 때 (한 응답에 Task 도구 N개 동시 호출)
+> **로드 시점**: 독립적인 복수 작업을 동시에 실행해야 할 때 (한 응답에 Agent 도구 N개 동시 호출)
 > **비용 모델**: Pro/Max 구독 토큰만 (추가 비용 없음)
 > **참조 스킬**: `superpowers:dispatching-parallel-agents`
 
@@ -48,7 +48,7 @@ Q3. 동일 에이전트가 반복(≥3회) 교환할 가능성이 있는가?
 
 Q4. 작업이 단일인가 복수인가?
   ├─ 단일 → 단일 subagent (parallel-dispatch 불필요)
-  └─ 복수 (2개+) → parallel-dispatch (동시 Task 호출)
+  └─ 복수 (2개+) → parallel-dispatch (동시 Agent 호출)
 ```
 
 ---
@@ -74,7 +74,7 @@ Q4. 작업이 단일인가 복수인가?
 
 | | 일반 parallel-dispatch | Tournament |
 |---|---|---|
-| 각 Task | **서로 다른** 독립 작업 | **동일 작업, 다른 전략** N개 |
+| 각 Agent | **서로 다른** 독립 작업 | **동일 작업, 다른 전략** N개 |
 | 통합 | N개 결과 병합 | **judge가 채점 → 승자 채택** (+ 차순위 강점 graft) |
 | 추가 단계 | 없음 | 채점 단계 1회 (별도 judge) |
 
@@ -101,11 +101,11 @@ Q4. 작업이 단일인가 복수인가?
 
 ---
 
-## § 동시 Task 상한선 (MANDATORY)
+## § 동시 Agent 상한선 (MANDATORY)
 
 | 항목 | 상한 | 근거 |
 |------|------|------|
-| 한 turn 최대 Task 수 | ≤ 8 | Anthropic 내부 사례의 16 병렬 보고는 fork mode 전제. 일반 spawn은 8 이내 권장 |
+| 한 turn 최대 Agent 수 | ≤ 8 | Anthropic 내부 사례의 16 병렬 보고는 fork mode 전제. 일반 spawn은 8 이내 권장 |
 | 작업 예상 시간 | ≥ 2분/작업 | overhead 손익 분기 — 30초 이하 작업은 직렬이 빠름 |
 | subagent 합산 컨텍스트 | ≤ 메인의 30% | 결과 통합 단계에서 메인 컨텍스트 폭증 방지 |
 
@@ -125,7 +125,7 @@ Q4. 작업이 단일인가 복수인가?
 - coder가 dispatch → coder가 통합 후 main 보고
 - qa가 dispatch (ralph) → qa(팀장)가 통합 후 main 보고
 
-> **전제 (소집 실행 주체)**: coder·qa가 "dispatch"하려면 Agent/Task 도구가 있어야 한다 — 이는 **teammate·main 컨텍스트일 때만** 성립한다. 일반 subagent 컨텍스트(Agent 도구 없음)에선 coder·qa가 직접 dispatch 불가 → main에 "parallel-dispatch 적합" 신호로 반환하고 **main이 dispatch + 통합**한다(`rules/agent-routing.md` § "소집"의 실행 주체).
+> **전제 (소집 실행 주체)**: coder·qa가 "dispatch"하려면 Agent 도구가 있어야 한다 — 이는 **teammate·main 컨텍스트일 때만** 성립한다. 일반 subagent 컨텍스트(Agent 도구 없음)에선 coder·qa가 직접 dispatch 불가 → main에 "parallel-dispatch 적합" 신호로 반환하고 **main이 dispatch + 통합**한다(`rules/agent-routing.md` § "소집"의 실행 주체).
 
 통합 후 보고 형식: "subagent N개 결과: {요약 3줄}, 충돌: {있음/없음}, 통합 결론: {1줄}"
 
@@ -137,8 +137,8 @@ Q4. 작업이 단일인가 복수인가?
 
 | 조건 | 기준 |
 |------|------|
-| 독립 도메인 2개+ | 각 Task가 다른 작업의 출력 없이 실행 가능 |
-| 순차 의존성 없음 | Task A가 완료돼야 Task B가 시작되는 관계 ❌ |
+| 독립 도메인 2개+ | 각 Agent가 다른 작업의 출력 없이 실행 가능 |
+| 순차 의존성 없음 | Agent A가 완료돼야 Agent B가 시작되는 관계 ❌ |
 | 컨텍스트 < 60% | 60% 이상이면 순차 실행 권장 |
 | 결과 통합 가능 | main이 N개 결과를 수신 후 통합할 수 있는 구조 |
 
@@ -149,7 +149,7 @@ Q4. 작업이 단일인가 복수인가?
 | 케이스 | 이유 |
 |--------|------|
 | 공유 state 수정 | 동시 수정 시 충돌 — 예: 동일 파일에 두 coder가 동시 Edit |
-| 순차 의존성 있음 | Task B가 Task A의 결과를 입력으로 필요 |
+| 순차 의존성 있음 | Agent B가 Agent A의 결과를 입력으로 필요 |
 | 디버깅 인과 추적 | 인과 체인을 따라가는 tracer mode는 순차 단계 필요 |
 | 합의·설계 결정 | 에이전트 간 의견 조율 필요 → teammate 사용 |
 
@@ -174,33 +174,33 @@ Agent(
 )
 ```
 
-> ⚠️ 각 prompt는 이전 Task 결과를 참조하지 않는다. 공유 state 없음.
+> ⚠️ 각 prompt는 이전 Agent 결과를 참조하지 않는다. 공유 state 없음.
 
 ---
 
 ## main 통합 패턴
 
-N개 Task 결과 수신 후 main이 통합하여 사용자에게 보고:
+N개 Agent 결과 수신 후 main이 통합하여 사용자에게 보고:
 
 ```
 [parallel-dispatch 결과 통합]
-- Task 1 (foo.py): DONE — {요약 1줄}
-- Task 2 (bar.py): DONE — {요약 1줄}
-- Task 3 (baz.py): DONE — {요약 1줄}
+- Agent 1 (foo.py): DONE — {요약 1줄}
+- Agent 2 (bar.py): DONE — {요약 1줄}
+- Agent 3 (baz.py): DONE — {요약 1줄}
 
 통합 완료. QA 검증으로 진행합니다.
 ```
 
-실패 Task가 있으면 해당 Task만 재시도하거나 main 에스컬레이션.
+실패 Agent가 있으면 해당 Agent만 재시도하거나 main 에스컬레이션.
 
 ---
 
-## § Fork mode (Claude Code v2.1.117+, SDK v2.1.121+)
+## § Fork mode (Claude Code v2.1.117+, SDK v2.1.121+, 확인일 2026-10-17, 기준 Claude Code 2.1.301)
 
 부모 context 상속 + prompt cache 재사용으로 비용 절감.
 활성화: `CLAUDE_CODE_FORK_SUBAGENT=1` env-var.
 
-**v2.1.121부터 비대화형 세션(`claude -p`, SDK) 지원** — 이전 대화형 전용 제한 해제.
+**v2.1.121부터(확인일 2026-10-17) 비대화형 세션(`claude -p`, SDK) 지원** — 이전 대화형 전용 제한 해제.
 
 | 조건 | 권장 |
 |------|------|
@@ -209,7 +209,7 @@ N개 Task 결과 수신 후 main이 통합하여 사용자에게 보고:
 | 작업 간 context 독립성 필요 | ✗ 일반 subagent 권장 |
 | skills의 allowed_tools 사전 선언 가능 | ✓ fork + permission 격리 → 승인 루프 제거 |
 
-근거: GitHub Issue #54163, Anthropic v2.1.121 changelog (2026)
+근거: GitHub Issue #54163, Anthropic v2.1.121 changelog (2026, 확인일 2026-10-17)
 
 ---
 
@@ -237,14 +237,14 @@ main이 작업 분석 중 아래 패턴 감지 시 사용자에게 추천:
 
 추천 형식:
 ```
-💡 이 작업은 parallel-dispatch (병렬 Task)로 가능합니다:
+💡 이 작업은 parallel-dispatch (병렬 Agent)로 가능합니다:
    - {Agent} × N개 동시 dispatch
    - 예상 시간 단축: 약 N배
    - 비용: 토큰 N배 (동시 진행이므로 누적 시간 절감)
    진행할까요? (Y/N)
 ```
 
-→ 사용자 Y → main이 직접 Task N개 dispatch
+→ 사용자 Y → main이 직접 Agent N개 dispatch
 → 사용자 N → 순차 실행
 
 ### Case C — 사용자 명시 동일 에이전트 N개 요청
@@ -265,7 +265,7 @@ parallel-dispatch는 단독 스킬이지만, 아래 다수 호출 기능과 결�
 | `/discuss` | TeamCreate로 teammate 다수 소집 시, 동일 역할 N명이 독립 의견 작성 필요 → 라운드 시작 단계만 parallel (이후 SendMessage 라운드는 순차) |
 | `TeamCreate` | teammate 자체가 다수 소집 — 독립 작업 phase에서 parallel-dispatch 결합 가능 |
 | `workflow` | 워크플로우의 phase가 서로 독립이면 parallel-dispatch로 phase 동시 실행 |
-| `/paper-read` | 사용자가 N편 동시 요청 시 paper-read 본문이 N개 searcher Task 동시 발사 |
+| `/paper-read` | 사용자가 N편 동시 요청 시 paper-read 본문이 N개 searcher Agent 동시 발사 |
 
 → 이런 다수 호출 기능을 main이 호출할 때, **독립 phase 또는 독립 의견 단계**에서는 parallel-dispatch 활용 권장.
 

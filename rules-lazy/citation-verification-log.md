@@ -54,7 +54,7 @@
 
 ---
 
-## §3 조회 흐름 (사용자 요청 시)
+## §2 조회 흐름 (사용자 요청 시)
 
 트리거 키워드: `"citation 검증 이력"`, `"논문 검증 현황"`, `"인용 검증 집계"`
 
@@ -123,7 +123,7 @@ search_memories(query="citation-verifier 검증 verdict", filters={"metadata": {
 
 ---
 
-## §4 표 구조 (PDF 상세 리포트)
+## §3 표 구조 (PDF 상세 리포트)
 
 ### 표지 (1페이지)
 - 집계 생성 일시
@@ -145,11 +145,11 @@ search_memories(query="citation-verifier 검증 verdict", filters={"metadata": {
 
 ---
 
-## §5 리포트 스크립트 명세
+## §4 리포트 스크립트 명세
 
 ### 필수 라이브러리
 - `reportlab` (우선) 또는 `weasyprint` (HTML→PDF)
-- `uv pip install reportlab`
+- `uv add reportlab` (프로젝트 의존성은 `uv add`·`uv sync` 로만 — `rules-lazy/uv-env.md`)
 
 ### 스크립트 파일 위치
 - 표준 위치: `~/.claude/scripts/gen_citation_report.py` 또는 프로젝트별 `docs/paper/scripts/gen_citation_report.py`
@@ -169,17 +169,17 @@ search_memories(query="citation-verifier 검증 verdict", filters={"metadata": {
 | 항목 | 범위 |
 |------|------|
 | 파일 위치 | `~/.claude/scripts/gen_citation_report.py` (글로벌) 또는 `docs/paper/scripts/gen_citation_report.py` (프로젝트별) |
-| 구현 주체 | 사용자 요청 시 Sonnet coder 위임 (현재는 설계안만) |
+| 구현 상태 | 구현됨: `~/.claude/scripts/gen_citation_report.py` (머리 주석이 데이터 소스·인자의 정본 — 상세 로그 `docs/citation-verifications.md` + Mem0 REST 병합, 실소스 0건이면 exit 2) |
 | 실행 주체 | 사용자 직접 실행 원칙 유지 |
 
-> 구현 지연 허용: 스크립트는 첫 PDF 요청 시점에 생성 가능. 사전 구현 불필요.
+> 이 절의 인자·소스 설명과 스크립트 머리 주석이 다르면 스크립트가 정본이다.
 
-### §5.1 PDF 생성 실패 복구 체크리스트
+### §4.1 PDF 생성 실패 복구 체크리스트
 
 `uv run python gen_citation_report.py` 실패 시 아래 5항목 순차 확인:
 
-1. **`reportlab` import 오류** → `uv pip install reportlab` 실행
-2. **데이터 없음** (Mem0 결과 0건) → `search_memories(categories:{contains:"paper"})` 직접 실행 후 수동 확인
+1. **`reportlab` import 오류** → `uv add reportlab` 실행(환경 변경이라 사용자 직접)
+2. **데이터 없음** (Mem0 결과 0건) → `search_memories(query="citation-verifier 검증", filters={"metadata": {"category": "paper"}})` 직접 실행 후 수동 확인
 3. **인코딩 오류** (UTF-8 미지정) → 스크립트에서 `sys.stdout.reconfigure(encoding='utf-8')` 확인
 4. **경로 권한 오류** → 사용자 지정 경로 쓰기 권한 확인 (`ls -la {경로}`)
 5. **전부 실패** → CSV fallback (`gen_citation_report.py --output xxx.csv` 지원 추가)
@@ -188,7 +188,7 @@ search_memories(query="citation-verifier 검증 verdict", filters={"metadata": {
 
 ---
 
-## §6 생략 조건
+## §5 생략 조건
 
 - 이 규칙은 citation-verifier 검증이 발생할 때만 적용
 - 집계 조회는 사용자 명시 요청 시에만 실행

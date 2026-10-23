@@ -13,6 +13,13 @@
 
 set -uo pipefail
 
+# systemd 최소 PATH에는 ~/.local/bin(uv tool 설치 위치)이 없어 pipeline detect의
+# resolve_python 폴백(command -v graphify)이 실패한다 (2026-08-12 첫 타이머 실사고 —
+# 기존 서버는 대화형 실행이 남긴 .graphify_python 캐시로 우연히 통과했을 뿐, 캐시 없는 새 서버는
+# 전부 재현된다). 기존 PATH 보강(claude/node)은 추출 분기(N>0)에만 있어 detect엔 못 미침 —
+# 여기 초입에서 선치해 detect부터 적용.
+export PATH="$HOME/.local/bin:$PATH"
+
 CLAUDE_DIR="$HOME/.claude"
 LOG="$CLAUDE_DIR/ontology-refresh.log"
 LOCK="$CLAUDE_DIR/graphify-out/.refresh-lock"
@@ -57,8 +64,13 @@ if [ "$DRC" -eq 2 ]; then
     log "이번 주기 skip (미push 백로그 — pipeline이 ntfy로 push 필요 알림 발송함)"
     exit 0
 elif [ "$DRC" -ne 0 ]; then
-    log "detect 실패 — 종료"
-    notify_fail "detect 단계 (git pull 충돌 또는 graphify 미설치)"
+    # 종전엔 "git pull 충돌 또는 graphify 미설치"로 두 원인 중 하나를 추측해 알렸다 — 2026-08-30
+    # 실사고(실제 원인은 graphify uv 도구의 anaconda 심볼릭 링크 소실)에서 문구가 원인을 가려
+    # 로그를 열어야 알 수 있었다. pipeline detect 단계는 실패 직전 log()로 구체 사유를
+    # [pipeline] 줄에 이미 남기므로 그 마지막 줄을 그대로 알림에 싣는다(추측 제거).
+    REASON=$(tail -n 20 "$LOG" | grep '\[pipeline\]' | tail -n 1 | sed -E 's/^\[[^]]*\] \[pipeline\] //')
+    log "detect 실패 — 종료 (사유: ${REASON:-확인 불가, 로그 직접 확인 필요})"
+    notify_fail "detect 단계 — ${REASON:-사유 확인 불가(로그 직접 확인 필요)}"
     exit 1
 fi
 
@@ -114,13 +126,16 @@ if [ "$N" -gt 0 ]; then
     #     systemd 소유 bash(이 스크립트)가 수행. settings 권한 완화 0 — "완화 대신 실행 주체
     #     이동" 원칙(code-graph §8) 유지.
     # 모델은 별칭 sonnet — 특정 버전 하드코딩 금지 원칙.
+    # 도구 제한 (2026-10-01 감사 D): Bash 금지가 프롬프트 문장뿐이라 --tools 로 빌트인 도구를 프롬프트가
+    # 허용한 Read·Glob·Grep·Write·Agent 로 한정한다(프롬프트 6행 «Only Read, Glob, Grep, Agent, Write»와 같은 집합).
+    # 첫 야간 실행에서 청크 0개·알림이 나면 이 목록(특히 하위 에이전트용 Agent 이름)부터 의심한다.
     STAGING="$HOME/.cache/claude-ontology/chunks"
     mkdir -p "$STAGING"
     # staging 청소 RC 검사 (2026-07-18 Codex): 실패 시 이전 run의 stale 청크가 이후 move로
     # 재병합돼 손상 그래프가 커밋될 수 있음 → find -delete(ARG_MAX 안전) + 실패 시 중단.
     find "$STAGING" -maxdepth 1 -type f \( -name 'chunk_*.json' -o -name 'wtest.json' \) -delete \
         || { log "staging 청크 청소 실패 — stale 재병합 방지 위해 중단"; notify_fail "staging 청소 실패"; exit 1; }
-    if ! (cd "$STAGING" && "$CLAUDE_BIN" -p "$(cat "$PROMPT_FILE")" --model sonnet --permission-mode acceptEdits --add-dir "$CLAUDE_DIR") >> "$LOG" 2>&1; then
+    if ! (cd "$STAGING" && "$CLAUDE_BIN" -p "$(cat "$PROMPT_FILE")" --model sonnet --tools "Read,Glob,Grep,Write,Agent" --permission-mode acceptEdits --add-dir "$CLAUDE_DIR") >> "$LOG" 2>&1; then
         # 실패 원인 1줄을 알림에 포함 (2026-07-21 사용자 지시): 로그를 안 열어도 원인·조치를
         # 알게 한다. claude CLI의 stderr는 위 리다이렉션으로 이 LOG에 append되므로 tail에서
         # 대표 에러 라인을 패턴 매칭 — auth 만료는 무인 복구 불가(대화형 /login 필요)라 조치를 명시.

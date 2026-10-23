@@ -7,7 +7,7 @@ model: sonnet
 
 > **스킬 경계**: 연구 활동 기록 전용 (서사 형식 강제). 일반 Confluence 페이지는 `/confluence`, 워크플로우 설계는 `/workflow` 사용.
 
-> **프로젝트 양식 우선 (2026-07-20)**: 작성 전 `rules-lazy/doc-format-registry.md` 조회 — 프로젝트 등록 양식(예: project-C `research-note.md`)이 있으면 그 골격·escaping이 우선하고, 본 스킬의 4단계 계층·7답 서사 원칙은 그 위에 겹쳐 적용한다.
+> **프로젝트 양식 우선 (2026-07-20)**: 작성 전 `rules-lazy/doc-format-registry.md` 조회 — 프로젝트 등록 양식이 있으면 그 골격·escaping이 우선하고, 본 스킬의 4단계 계층·7답 서사 원칙은 그 위에 겹쳐 적용한다.
 
 ---
 
@@ -39,9 +39,9 @@ model: sonnet
 
 | 레벨 | 형식 | 예시 |
 |------|------|------|
-| Level 1 | `{프로젝트} 연구 기록` | TexRoRA 연구 기록 |
-| Level 2 | `{프로젝트} {YYYY}` | TexRoRA 2026 |
-| Level 3 | `{프로젝트} {YYYY}년 {MM}월` | TexRoRA 2026년 3월 |
+| Level 1 | `{프로젝트} 연구 기록` | ProjectX 연구 기록 |
+| Level 2 | `{프로젝트} {YYYY}` | ProjectX 2026 |
+| Level 3 | `{프로젝트} {YYYY}년 {MM}월` | ProjectX 2026년 3월 |
 | Level 4 | `{YYYY-MM-DD} \| {주제 요약}` | 2026-03-30 \| XAI 교차 분석 → v3-c 확정 |
 
 > 연속 작업: `{YYYY-MM-DD} ~ {MM-DD}` 형식 허용
@@ -165,7 +165,7 @@ Level 4 페이지 생성 시 해당 날짜 활동을 Mem0에서 자동 수집:
   ```
   <span data-type="inline-extension" data-extension-key="90117453-3cec-45bc-9ac2-5a6b76f0375b/da350fb4-aa69-4acb-8f14-b6eaa7d05c18/static/latex-math-inline" data-extension-type="com.atlassian.ecosystem" data-parameters="{&quot;layout&quot;:&quot;inlineExtension&quot;,&quot;guestParams&quot;:{&quot;body&quot;:&quot;<FORMULA>&quot;,&quot;alignment&quot;:&quot;center&quot;},&quot;localId&quot;:&quot;<고유id>&quot;}">LaTex Math Inline</span>
   ```
-- **★escaping (핵심)**: `<FORMULA>`는 **자연 LaTeX(백슬래시 1개)를 타이핑 시 `\\`(2개)로** 씀 → MCP가 HTML속성 JSON 1회 언이스케이프 → 저장 `\`(1개) → MathJax 정상. 예 `\mathbf{W}` = `\\mathbf{W}`로 입력. ⚠️ `\\\\`(4개)는 저장 `\\`(2개)=MathJax가 literal 처리해 **명령 사라짐(깨짐)** — 금지. contentFormat=html 왕복도 동일(2개 입력). 정상 실측: REDESIGN-PC(1658847234), 실험1(1715896322 v4), 측정지표(1724907555 v6, 2026-07-18 스크린샷 렌더 확인).
+- **★escaping (핵심)**: `<FORMULA>`는 **자연 LaTeX(백슬래시 1개)를 타이핑 시 `\\`(2개)로** 씀 → MCP가 HTML속성 JSON 1회 언이스케이프 → 저장 `\`(1개) → MathJax 정상. 예 `\mathbf{W}` = `\\mathbf{W}`로 입력. ⚠️ `\\\\`(4개)는 저장 `\\`(2개)=MathJax가 literal 처리해 **명령 사라짐(깨짐)** — 금지. contentFormat=html 왕복도 동일(2개 입력).
 - **⚠️ read-back 백슬래시 수는 correctness 지표 아님 (2026-07-18 검증)**: getConfluencePage(html)로 다시 읽으면 스팬 body가 4개(또는 페이지별 16개)로 과이스케이프돼 보이지만 이는 **직렬화 표현일 뿐**이고 실제 MathJax는 정상 렌더. 페이지마다 read-back 백슬래시 수가 달라도 **당황 말 것** — 입력은 항상 2개(`\\`) 규칙 고정, 렌더 확인은 read-back 카운트가 아니라 실제 화면(사용자 스크린샷)으로.
 - **★모든 수식·수학 표현은 매번 `latex-math-inline`으로 렌더한다 (2026-07-18 사용자 지시 — 유니코드/코드 텍스트 대체 금지).** 등식·행렬·연산(예: `Q = U Vᵀ`, `M = U Σ Vᵀ`, `aligned(f)=(f−μ_s)@M+μ_t`)·기호 모두 위 inline 매크로 사용. 산문 속 단발 변수 언급("가중치 W" 같은 서술)까지 강제하진 않되 **수식·등식으로 쓰이는 순간 latex-inline 필수**(과거 `Q=UVᵀ`를 코드텍스트로 넣던 관행 폐기). escaping은 위 ★escaping 규칙 준수. block은 `mathblock`(extension-key=mathblock, com.atlassian.macro.core).
 
@@ -277,7 +277,7 @@ Level 4 페이지 생성 시 해당 날짜 활동을 Mem0에서 자동 수집:
 
 - `/confluence` 스킬로 페이지 생성·수정 시 이 형식 기본 적용
 - docs 에이전트 위임 시 이 스킬 내용을 프롬프트에 명시
-- 4단계 업데이트의 수정 전 3단계 확인(docs.md § 페이지 수정 전 의무 확인 MANDATORY — Confluence 쓰기=외부 발신 게이트)은 **Level 1에서 캐스케이드 전체를 한 번에 고지·승인**받아 수행한다: "이 갱신이 함께 건드리는 상위 페이지(Level 2 월 / Level 3 연 / Level 4 인덱스) 목록"을 승인 시 함께 제시. Level 2~4는 그 **승인 범위 안에서** 진행하며 레벨마다 재확인은 생략 — 단 **승인 없는 Confluence 쓰기는 없다**(무단 진행 금지, 주권 게이트 유지)
+- 4단계 업데이트의 수정 전 3단계 확인(docs.md § 페이지 수정 전 의무 확인 MANDATORY — Confluence 쓰기=외부 발신 게이트)은 **첫 쓰기(§ 업데이트 흐름 Step 1, Level 4 일자 페이지) 전에 캐스케이드 전체를 한 번에 고지·승인**받아 수행한다: "이 갱신이 함께 건드리는 상위 페이지(Level 3 월 / Level 2 연도 / Level 1 전체) 목록"을 승인 시 함께 제시. 나머지 Level 은 그 **승인 범위 안에서** 진행하며 레벨마다 재확인은 생략 — 단 **승인 없는 Confluence 쓰기는 없다**(첫 쓰기 전 승인 필수, 무단 진행 금지, 주권 게이트 유지)
 
 ## § QMD (.qmd) 연구 기록 변환
 

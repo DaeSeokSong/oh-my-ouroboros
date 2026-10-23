@@ -31,7 +31,7 @@ CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 [ -z "${CMD:-}" ] && exit 0
 
 # git commit 게이트: `git commit` (앞에 줄시작/공백/;&| 경계) — log --grep 등 오탐 최소화.
-# 과트리거해도 graphify .는 멱등·저비용이라 무해하나, 불필요 실행은 피한다.
+# 과트리거해도 graphify update .는 멱등·저비용이라 무해하나, 불필요 실행은 피한다.
 printf '%s' "$CMD" | grep -qE '(^|[;&|[:space:]])git[[:space:]]+commit([[:space:]]|$)' || exit 0
 
 # 시작 디렉토리: 명령의 선두 `cd DIR &&`가 있으면 그 대상, 없으면 훅 payload의 cwd.
@@ -72,11 +72,18 @@ done
 [ -z "${ROOT:-}" ] && exit 0
 
 # ROOT 절대경로 정규화 (autoindex와 동일 — 마커 write/read 경로 일치 보장)
-ROOT=$(cd "$ROOT" 2>/dev/null && pwd) || exit 0
+# pwd -P(물리 경로) 필수 (2026-07-31): 심링크 경로(~/workspace/.claude) 유입 시 논리 pwd로는
+# 하네스 격리 비교가 불일치해 우회됨 — autoindex와 동일 교정.
+ROOT=$(cd "$ROOT" 2>/dev/null && pwd -P) || exit 0
 [ -z "$ROOT" ] && exit 0
 
 # 하네스 격리 — ~/.claude 온톨로지는 §7 나이틀리 타이머만 (AST-only update 금지)
-[ -n "$HOME_DIR" ] && [ "$ROOT" = "$HOME_DIR/.claude" ] && exit 0
+# (2026-08-07 수정: $HOME/.claude가 심링크인 서버에서 물리화된 ROOT와 심링크 문자열이
+# 불일치해 가드가 무력화됐던 것을 $HOME/.claude도 물리화 후 비교하도록 교정 — autoindex와 동일)
+if [ -n "$HOME_DIR" ]; then
+    HARNESS_DIR=$(cd "$HOME_DIR/.claude" 2>/dev/null && pwd -P)
+    [ -n "$HARNESS_DIR" ] && [ "$ROOT" = "$HARNESS_DIR" ] && exit 0
+fi
 
 GRAPH_DIR="$ROOT/graphify-out"
 
@@ -86,7 +93,7 @@ if [ -f "$GRAPH_DIR/.autoindex-updated" ]; then
     rm -f "$GRAPH_DIR/.autoindex-updated" 2>/dev/null
 fi
 if [ -f "$GRAPH_DIR/.autoindex-failed" ]; then
-    echo "[graphify] ⚠️ $(cat "$GRAPH_DIR/.autoindex-failed" 2>/dev/null) — 코드 그래프 자동 갱신 실패 (수동 graphify . 확인)"
+    echo "[graphify] ⚠️ $(cat "$GRAPH_DIR/.autoindex-failed" 2>/dev/null) — 코드 그래프 자동 갱신 실패 (수동 graphify update . 확인)"
     rm -f "$GRAPH_DIR/.autoindex-failed" 2>/dev/null
 fi
 
@@ -124,7 +131,10 @@ mkdir "$LOCK" 2>/dev/null || exit 0
 # 백그라운드 증분 재인덱싱 — 훅은 즉시 반환 (autoindex와 동일 빌드 명령·마커·락해제)
 ( MYTOKEN="$BASHPID-$(date +%s 2>/dev/null || echo 0)"
   echo "$MYTOKEN" > "$LOCK/owner" 2>/dev/null
-  cd "$ROOT" 2>/dev/null && graphify . >/dev/null 2>&1 \
+  # `graphify .`가 아닌 `graphify update .`(코드 전용) — pending 문서가 1건이라도 있으면
+  # `graphify .`는 LLM API 키를 요구하며 exit 1 전체 중단 (2026-07-31 8일 정체 실증:
+  # 문서 107건 pending → headless 훅 무키 환경에서 코드 291건 갱신까지 통째 실패)
+  cd "$ROOT" 2>/dev/null && graphify update . >/dev/null 2>&1 \
     && printf '%s %s' "$(date '+%m-%d %H:%M')" "$(basename "$ROOT")" > "$GRAPH_DIR/.autoindex-updated" 2>/dev/null \
     || printf '%s %s FAIL' "$(date '+%m-%d %H:%M')" "$(basename "$ROOT")" > "$GRAPH_DIR/.autoindex-failed" 2>/dev/null
   [ "$(cat "$LOCK/owner" 2>/dev/null)" = "$MYTOKEN" ] && rm -rf "$LOCK" 2>/dev/null ) &

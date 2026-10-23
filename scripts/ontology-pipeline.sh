@@ -8,15 +8,17 @@
 #   Claude는 시맨틱 추출 단계에서만 헤드리스 세션으로 참여한다 (ontology-refresh.sh 참조).
 #
 # 범위 제한: CLAUDE_DIR 하드코딩, graphify-out/ 밖 쓰기 없음(로그 제외).
-#   git push는 이 스크립트 어디에도 없다 — 하네스 표준 정책(push는 항상 사용자 직접).
-#   커밋은 graphify-out/ 경로만 add — 다른 미커밋 변경을 절대 쓸어담지 않는다.
+#   git commit/push는 이 스크립트 어디에도 없다 — 커밋·push 모두 사용자 직접
+#   (2026-08-05 자동 커밋 폐지: 커밋 시점을 기계가 정하면 pull 순서 통제 불가 → 멀티서버 충돌).
+#   스테이징은 graphify-out/ 경로만 add — 다른 미커밋 변경을 절대 쓸어담지 않는다.
 #
 # 서브커맨드:
 #   detect    git pull --ff-only → 파일 탐지 → AST 추출 → 시맨틱 캐시 확인.
 #             산출: .graphify_detect.json / .graphify_ast.json / .graphify_uncached.txt
 #             (uncached 목록이 비어있지 않으면 헤드리스 Claude가 청크 추출을 수행해야 함)
 #   finalize  청크+캐시 병합 → 그래프 빌드/클러스터 → 라벨(기존 재사용+신규 휴리스틱) →
-#             건강 진단 → obsidian/html export → manifest/cost → cleanup → graphify-out/만 커밋.
+#             건강 진단 → obsidian/html export → manifest/cost → cleanup →
+#             graphify-out/만 스테이징 + .commit-msg 준비 + ntfy (커밋·push는 사용자).
 #
 # 종료 코드: 0=완료  1=오류(pull 실패·빈 그래프·shrink-guard 등)  2=detect 스킵(미push 백로그 — 오류 아님)  3=사용법 오류
 # (2=스킵을 0과 분리한 이유: 스킵인데 0을 주면 호출자(refresh.sh)가 finalize로 진행해
@@ -35,6 +37,10 @@ log() { echo "[$(date -Iseconds)] [pipeline] $*" | tee_log; }
 # refresh.sh와 동일 채널 — 종전엔 finalize의 git add/commit 실패 경로가 미정의 함수를 호출하는
 # 잠복 버그였다 (refresh.sh에만 정의돼 있었음, 2026-07-27 수정)
 notify_fail() { bash "$CLAUDE_DIR/scripts/claude-notify.sh" "ontology" "온톨로지 갱신 실패: $1 (로그: ontology-refresh.log)" 2>/dev/null || true; }
+# 커밋 대기 알림 (2026-08-05 사용자 결정 — 자동 커밋 폐지와 한 쌍, 종전 "ntfy는 실패 전용" 결정을 대체)
+# stdout도 버린다 — claude-notify.sh의 터미널 벨(printf '\a')이 stdout으로 새어 로그에 BEL(0x07)이
+# 섞이면 usage-check 성공 라인 앵커(^\[)가 깨져 TIMER_PARSE 허위 경고 (2026-08-15 실사고)
+notify_action() { bash "$CLAUDE_DIR/scripts/claude-notify.sh" "ontology" "$1" >/dev/null 2>&1 || true; }
 
 cd "$CLAUDE_DIR" || { echo "cd 실패: $CLAUDE_DIR" >&2; exit 1; }
 
@@ -60,14 +66,22 @@ case "$ACTION" in
   detect)
     log "detect 시작"
 
-    # pull은 best-effort (2026-07-10 단일 빌더 재설계 — 사용자 결정): 타이머는 1서버에만 있고
-    # push·pull은 전량 사용자 몫이므로, 무인 인증(서버별 SSH 키 등록)을 요구하지 않는다.
-    # pull 실패(인증·네트워크)는 오류가 아니라 "로컬 상태로 빌드" — 단일 빌더라 발산 없음(선형 이력).
-    # 타서버발 변경은 사용자가 이 서버에서 pull한 뒤 다음 주기에 자연 반영된다.
-    if GIT_TERMINAL_PROMPT=0 git pull --ff-only >> "$LOG" 2>&1; then
-        log "git pull 성공 — 원격 최신 상태에서 빌드"
+    # 멀티서버 가드 1 — behind 빌드 금지 (2026-08-03 사용자 지시: push-pull 겹침 방지 강화).
+    # 종전엔 pull 실패를 전부 "로컬 상태로 빌드"로 처리해, 원격이 앞선(behind) 서버가
+    # 낡은 상태 위에 커밋을 쌓아 발산을 만들었다 (divergence 반복 실사고의 발생원).
+    # 원인 3분류: ⓐ fetch 자체 불가(인증·네트워크) → 원격 상태를 알 수 없으니 기존
+    # best-effort 유지(로컬 빌드 — 미push 가드가 발산을 1커밋으로 상한) ⓑ fetch 가능 +
+    # behind + ff 가능 → 따라잡고 빌드 ⓒ fetch 가능 + ff 불가(이미 발산·로컬 미커밋 충돌)
+    # 또는 behind 해소 실패 → skip (빌드하면 발산 확정 — 사용자 pull 정리가 선행 조건).
+    if GIT_TERMINAL_PROMPT=0 git fetch origin >> "$LOG" 2>&1; then
+        if GIT_TERMINAL_PROMPT=0 git pull --ff-only >> "$LOG" 2>&1; then
+            log "git pull 성공 — 원격 최신 상태에서 빌드"
+        else
+            log "fetch는 성공했으나 ff-pull 불가(발산 또는 로컬 충돌) — 발산 확대 방지 skip (사용자 pull/rebase 정리 후 재개)"
+            exit 2
+        fi
     else
-        log "git pull 불가(인증/네트워크/충돌) — 로컬 상태로 진행 (단일 빌더 전제, §7.1)"
+        log "git fetch 불가(인증/네트워크) — 로컬 상태로 진행 (미push 가드가 발산 1커밋 상한, §7.1)"
     fi
 
     # 멀티서버 가드 2 (§7.1 미push 가드): 이 서버의 이전 온톨로지 커밋이 아직 push 안 됐으면
@@ -89,7 +103,12 @@ case "$ACTION" in
 import json, os
 from graphify.detect import detect
 from pathlib import Path
-root = Path(os.environ["HOME"]) / ".claude"
+# .resolve() 필수 — ~/.claude 는 ~/workspace/.claude 심볼릭 링크다. detect()는 파일 경로를
+# resolve된 형태로 반환하는데 root를 심볼릭 링크 형태로 두면 graphify.cache의
+# _semantic_entry_matches_path가 os.path.abspath(root)+상대경로로 재구성한 경로와 detect()가
+# 반환한 resolve된 경로가 문자열로 어긋나 시맨틱 캐시가 전량 미스된다(2026-08-30 실사고:
+# 3일 연속 매 회 전체 코퍼스 재추출). 9곳 전부 동일하게 resolve해야 root 형태가 일치한다.
+root = (Path(os.environ["HOME"]) / ".claude").resolve()
 result = detect(root)
 (root / "graphify-out/.graphify_detect.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
 print(f"Corpus: {result.get('total_files',0)} files, {result.get('total_words',0)} words")
@@ -100,7 +119,7 @@ PYEOF
 import json, os
 from graphify.extract import collect_files, extract
 from pathlib import Path
-root = Path(os.environ["HOME"]) / ".claude"
+root = (Path(os.environ["HOME"]) / ".claude").resolve()
 out = root / "graphify-out"
 detect = json.loads((out / ".graphify_detect.json").read_text(encoding="utf-8"))
 code_files = []
@@ -129,7 +148,7 @@ PYEOF
     "$PY" - <<'PYEOF' 2>&1 | tee_log
 import json, os
 from pathlib import Path
-root = Path(os.environ["HOME"]) / ".claude"
+root = (Path(os.environ["HOME"]) / ".claude").resolve()
 out = root / "graphify-out"
 gp, si_p = out / "graph.json", out / "cache/stat-index.json"
 if not (gp.exists() and si_p.exists()):
@@ -182,7 +201,7 @@ PYEOF
 import json, os
 from graphify.cache import check_semantic_cache
 from pathlib import Path
-root = Path(os.environ["HOME"]) / ".claude"
+root = (Path(os.environ["HOME"]) / ".claude").resolve()
 out = root / "graphify-out"
 detect = json.loads((out / ".graphify_detect.json").read_text(encoding="utf-8"))
 all_files = [f for cat in ("document", "paper", "image") for f in detect["files"].get(cat, [])]
@@ -208,7 +227,7 @@ PYEOF
     "$PY" - <<'PYEOF' 2>&1 | tee_log
 import json, glob, os
 from pathlib import Path
-root = Path(os.environ["HOME"]) / ".claude"
+root = (Path(os.environ["HOME"]) / ".claude").resolve()
 out = root / "graphify-out"
 chunks = sorted(glob.glob(str(out / ".graphify_chunk_*.json")))
 all_nodes, all_edges, all_hyper = [], [], []
@@ -226,7 +245,7 @@ PYEOF
 import json, os
 from graphify.cache import save_semantic_cache
 from pathlib import Path
-root = Path(os.environ["HOME"]) / ".claude"
+root = (Path(os.environ["HOME"]) / ".claude").resolve()
 out = root / "graphify-out"
 p = out / ".graphify_semantic_new.json"
 new = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"nodes": [], "edges": [], "hyperedges": []}
@@ -236,7 +255,7 @@ PYEOF
     "$PY" - <<'PYEOF' 2>&1 | tee_log
 import json, os
 from pathlib import Path
-root = Path(os.environ["HOME"]) / ".claude"
+root = (Path(os.environ["HOME"]) / ".claude").resolve()
 out = root / "graphify-out"
 def load(name, default):
     p = out / name
@@ -276,7 +295,7 @@ from graphify.analyze import god_nodes, surprising_connections, suggest_question
 from graphify.report import generate
 from graphify.export import to_json
 
-root = Path(os.environ["HOME"]) / ".claude"
+root = (Path(os.environ["HOME"]) / ".claude").resolve()
 out = root / "graphify-out"
 extraction = json.loads((out / ".graphify_extract.json").read_text(encoding="utf-8"))
 detection = json.loads((out / ".graphify_detect.json").read_text(encoding="utf-8"))
@@ -284,6 +303,22 @@ detection = json.loads((out / ".graphify_detect.json").read_text(encoding="utf-8
 G = build_from_json(extraction, root=str(root), directed=False)
 if G.number_of_nodes() == 0:
     print("ERROR: empty graph"); raise SystemExit(1)
+
+# 오염 시그니처 가드 (2026-08-06 신설 — 동일 오염 재발: 4a2cc52f·e8136924·0cc685e5):
+# md 파일에 AST 노드가 붙은 그래프(+1,800여 노드)가 타 서버에서 생성·커밋돼 pull로 전파.
+# 원인 규명(2026-08-07 ad45edfc): graphify 차이가 아니라 $HOME/.claude가 심링크인 서버
+# 에서 autoindex 훅의 하네스 격리 가드가 편측 물리화로 무력화 → git commit마다
+# AST-only `graphify update`가 하네스에 몰래 실행돼 md AST 노드를 주입한 것.
+# 발생원은 수정됐지만 이 가드는 유지한다 — 동일 계열(경로 가드 우회·수동 update 등)의
+# 미지 발생원이 또 생겨도 여기서 차단된다. shrink/팽창 가드는 크기 "비율"이라 기준선이
+# 이미 오염되면 무력 — 시그니처 자체를 본다: 정상 빌드에서 md는 시맨틱 노드만 갖는다
+# (ast-on-md=0, 1fe5b32c 실측).
+ast_md = sorted({str(d.get("source_file", "")) for _, d in G.nodes(data=True)
+                 if d.get("_origin") == "ast" and str(d.get("source_file", "")).endswith(".md")})
+if ast_md:
+    print(f"ERROR: 오염 시그니처 — md 파일 AST 노드 소스 {len(ast_md)}건 (정상=0, 예: {ast_md[:3]}). "
+          f"이 서버의 graphify 설치 점검 필요 — 빌드 거부 (code-graph.md §7.1)"); raise SystemExit(1)
+
 communities = cluster(G)
 cohesion = score_all(G, communities)
 
@@ -350,11 +385,16 @@ PYEOF
 
     # export 실패는 즉시 중단 (2026-07-15 GPT P1-3: 종전 RC 미검사 — 부분 산출물 위에
     # stale manifest 기준 삭제가 진행될 수 있었음)
-    if ! graphify export obsidian >> "$LOG" 2>&1; then
+    # bare `graphify`는 systemd 최소 PATH에서 미해석 (2026-08-05 실측: 추출 분기(N>0)의
+    # claude CLI PATH 증강이 우연히 ~/.local/bin을 얹어주던 것 — N=0이면 command not found).
+    # 캐시 인터프리터($PY)와 동일 venv의 절대경로 실행파일로 결정적 호출.
+    GRAPHIFY_BIN="$(dirname "$PY")/graphify"
+    [ -x "$GRAPHIFY_BIN" ] || GRAPHIFY_BIN=$(command -v graphify) || { log "graphify 실행파일 미발견 — 중단"; exit 1; }
+    if ! "$GRAPHIFY_BIN" export obsidian >> "$LOG" 2>&1; then
         log "obsidian export 실패 — 중단 (fail-closed)"
         exit 1
     fi
-    graphify export html >> "$LOG" 2>&1 || log "html export 실패 (비차단 — 부가 산출물)"
+    "$GRAPHIFY_BIN" export html >> "$LOG" 2>&1 || log "html export 실패 (비차단 — 부가 산출물)"
 
     # orphan 자동 정리 (2026-07-15 신설 → 07-15 GPT P1-2/P1-3 재설계): exporter는 upsert
     # 방식이라 삭제 노드의 노트가 잔존 누적됨 (실측 460건, 대소문자 충돌 23쌍 전부 orphan發).
@@ -426,7 +466,7 @@ import json, os
 from pathlib import Path
 from datetime import datetime, timezone
 from graphify.detect import save_manifest
-root = Path(os.environ["HOME"]) / ".claude"
+root = (Path(os.environ["HOME"]) / ".claude").resolve()
 out = root / "graphify-out"
 detect = json.loads((out / ".graphify_detect.json").read_text(encoding="utf-8"))
 save_manifest(detect.get("all_files") or detect["files"], root=str(root))
@@ -443,25 +483,64 @@ PYEOF
           graphify-out/.graphify_cached.json graphify-out/.graphify_uncached.txt
     find graphify-out -maxdepth 1 -name '.graphify_chunk_*.json' -delete 2>/dev/null
 
-    if git diff --quiet -- graphify-out/ && [ -z "$(git ls-files --others --exclude-standard graphify-out/)" ]; then
-        log "변경 없음 — 커밋 스킵"
+    # HEAD 대비 비교 (2026-08-05 자동 커밋 폐지에 따른 교정): 커밋이 사용자 소관이 되면서
+    # "스테이징만 되고 미커밋"인 변경이 상시 존재 가능 — index 대비(diff)만 보면 재빌드 결과가
+    # 어제 스테이징분과 동일할 때 pending을 놓친다. HEAD 대비가 커밋 대기의 올바른 신호.
+    if git diff --quiet HEAD -- graphify-out/ && [ -z "$(git ls-files --others --exclude-standard graphify-out/)" ]; then
+        log "변경 없음 — 스테이징 스킵"
+        rm -f graphify-out/.commit-msg
     else
+        # 커밋 직전 원격 재확인 (2026-08-03 — 빌드 수십 분 사이 타서버가 먼저 커밋·push했을 수 있음):
+        # fetch 가능 + behind면 지금 커밋 = 발산 확정 → 커밋 보류(산출물은 워킹트리 보존, 다음
+        # 주기에 detect가 pull 후 재빌드). fetch 불가면 기존 흐름 유지(미push 가드 상한).
+        if GIT_TERMINAL_PROMPT=0 git fetch origin >> "$LOG" 2>&1; then
+            BEHIND=$(git rev-list --count HEAD..'@{upstream}' 2>/dev/null); BEHIND=${BEHIND:-0}
+            if [ "$BEHIND" -gt 0 ]; then
+                log "커밋 직전 원격 전진 감지(behind=$BEHIND) — 발산 방지 커밋 보류, 산출물 워킹트리 보존"
+                exit 2
+            fi
+        fi
+        # 팽창 가드 (2026-08-04 실사고: 타 서버발 오염 커밋 4a2cc52f — md semantic 중복 병합으로
+        # 1,430→3,090(+116%) 급팽창이 나이틀리에 그대로 커밋·push-pull로 전 서버 전파됨.
+        # shrink-guard(#479)의 반대쪽 구멍: 오염은 축소가 아니라 팽창으로 나타난다.
+        # 정상 일일 증분은 +3% 내외 — +30% 초과는 오염 신호로 커밋 거부, 산출물은 보존).
+        EXPAND_PCT=$(python3 - <<'PYEOF'
+import json, subprocess
+try:
+    old = json.loads(subprocess.run(["git", "show", "HEAD:graphify-out/graph.json"],
+                                    capture_output=True, text=True).stdout or "{}")
+    new = json.load(open("graphify-out/graph.json"))
+    o, n = len(old.get("nodes", [])), len(new.get("nodes", []))
+    print(0 if o == 0 else (n - o) * 100 // o)
+except Exception:
+    print(0)
+PYEOF
+)
+        if [ "${EXPAND_PCT:-0}" -gt 30 ]; then
+            log "팽창 가드: 노드 +${EXPAND_PCT}% (임계 +30%) — 오염 의심 커밋 거부, 산출물 워킹트리 보존 (수동 검증 후 재개)"
+            notify_fail "finalize 팽창 가드 발동 (+${EXPAND_PCT}% — 오염 의심)"
+            exit 1
+        fi
         # git add RC 검사 (2026-07-18 Codex): add 실패 시 stale pre-staged가 잘못 커밋될 수 있음
         if ! git add graphify-out/ >> "$LOG" 2>&1; then
             log "git add graphify-out/ 실패 — 중단"; notify_fail "finalize git add 실패"; exit 1
         fi
-        # 커밋 RC 확인 필수 — ci-gate-commit(깨진 포인터 등)이 차단해도 미감지로 "커밋 완료"를
-        # 오보한 실사고(2026-07-13: 추출 노드의 발명된 경로 skills/goal/SKILL.md가 게이트에 걸림).
-        # pathspec 'graphify-out/'로 스코프 — 무관한 pre-staged 변경(예: 사용자 편집 파일) 혼입 방지.
-        if git commit -m "chore(ontology): 자동 갱신 $(date '+%Y-%m-%d')" -- graphify-out/ >> "$LOG" 2>&1; then
-            log "커밋: $(git rev-parse --short HEAD) — push 권장은 다음 세션 시작 시 usage-check가 전달 (ntfy 미사용, 2026-07-10 사용자 결정)"
-        else
-            log "커밋 차단(ci-gate FAIL 가능) — 산출물은 스테이징 유지, 로그의 게이트 출력 확인 필요"
-            notify_fail "finalize 커밋 차단 (ci-gate — 깨진 포인터 등)"
-            exit 1
-        fi
+        # 자동 커밋 폐지 (2026-08-05 사용자 결정 — 멀티서버 충돌 실사고 재발): 커밋 시점을
+        # 기계가 정하면 사용자가 pull 순서를 통제할 수 없다 — 무인증 서버는 behind 가드도 무력해
+        # 낡은 베이스 위 커밋이 발산·충돌을 만든다. 스테이징 + 커밋 메시지 준비까지만 자동,
+        # 커밋·push는 사용자가 pull로 순서를 잡은 뒤 직접 수행. ci-gate-commit(깨진 포인터 등)도
+        # 사용자 커밋 시점에 대화형으로 걸리므로 종전 RC 오보 문제가 구조적으로 소멸.
+        # 서버 태그 (2026-08-06 사용자 결정): 어느 서버가 어떤 graphify로 몇 노드를 만들었는지
+        # 커밋 메시지에 남겨 오염 커밋의 발생원·버전을 이력에서 즉시 추적 가능하게 한다
+        # (서버별 브랜치/vault 분리는 단일 공유 온톨로지 목적에 반해 기각 — 태그 방식 채택).
+        GVER=$("$GRAPHIFY_BIN" --version 2>/dev/null | awk '{print $NF}'); GVER=${GVER:-?}
+        NODE_CT=$("$PY" -c "import json;print(len(json.load(open('graphify-out/graph.json'))['nodes']))" 2>/dev/null); NODE_CT=${NODE_CT:-?}
+        printf 'chore(ontology): 자동 갱신 %s [%s | graphify %s | %s nodes]\n' \
+            "$(date '+%Y-%m-%d')" "$(hostname)" "$GVER" "$NODE_CT" > graphify-out/.commit-msg
+        log "스테이징 완료 — 커밋 대기: git pull 확인 후 git commit -F graphify-out/.commit-msg -- graphify-out/ && git push"
+        notify_action "온톨로지 갱신 스테이징 완료 — pull 확인 후 커밋·push 필요 (명령: git commit -F graphify-out/.commit-msg -- graphify-out/)"
     fi
-    log "finalize 완료 (push 없음 — 사용자 직접)"
+    log "finalize 완료 (커밋·push 사용자 직접)"
     ;;
 
   *)

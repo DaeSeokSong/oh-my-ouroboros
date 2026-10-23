@@ -187,21 +187,96 @@ _place_overflow() {
 # ============================================================================
 # cleanup
 # ============================================================================
+# ----------------------------------------------------------------------------
+# 파괴 전 자기 대상 확인 (2026-10-01 감사 — purge·cleanup 이 제목 규칙만으로 pane 을 지우고
+# main 을 «창의 첫 pane» 으로 가정해, 첫 pane 이 아닌 곳에서 돌리면 자기 pane 을 죽였다)
+#   · 자기 pane($TMUX_PANE)과 그 창은 절대 지우지 않는다.
+#   · 지울 대상은 자동 생성 pane(✳ 제목)과, cleanup 에서만 setup 이 만든 "name [role]" pane.
+#   · 학습 세션(프로젝트 .claude/train.env 의 TRAIN_TMUX_PREFIX 로 시작하는 세션·창)은 대상에서 뺀다.
+#   · 지우기 전에 대상 목록을 먼저 출력한다.
+# ----------------------------------------------------------------------------
+_train_prefixes() {
+    local d="$PWD"
+    if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$CLAUDE_PROJECT_DIR/.claude/train.env" ]; then
+        sed -n 's/^TRAIN_TMUX_PREFIX=//p' "$CLAUDE_PROJECT_DIR/.claude/train.env" | tr -d "\"'"
+    fi
+    while :; do
+        if [ -f "$d/.claude/train.env" ]; then
+            sed -n 's/^TRAIN_TMUX_PREFIX=//p' "$d/.claude/train.env" | tr -d "\"'"
+        fi
+        [ "$d" = "/" ] && break
+        d=$(dirname "$d")
+    done
+}
+
+_is_train_name() {
+    local n="$1" p
+    [ -n "$n" ] || return 1
+    for p in $(_train_prefixes); do
+        [ -n "$p" ] && [[ "$n" == "$p"* ]] && return 0
+    done
+    return 1
+}
+
+_self_pane() { printf '%s' "${TMUX_PANE:-$(tmux list-panes -F '#{pane_id}' | head -1)}"; }
+
+# 지울 pane 을 "pane_id<TAB>title" 줄로 낸다. $1 = purge | cleanup
+# (제목이 비어도 필드가 밀리지 않게 제목을 마지막 필드로 둔다)
+_pane_targets() {
+    local mode="$1" self pid sess win title
+    self=$(_self_pane)
+    while IFS=$'\t' read -r pid sess win title; do
+        [[ "$pid" == "$self" ]] && continue
+        _is_train_name "$sess" && continue
+        _is_train_name "$win" && continue
+        if [[ "$title" =~ ^✳ ]]; then :
+        elif [[ "$mode" == cleanup && "$title" =~ \[.*\] ]]; then :
+        else continue; fi
+        printf '%s\t%s\n' "$pid" "$title"
+    done < <(tmux list-panes -F $'#{pane_id}\t#{session_name}\t#{window_name}\t#{pane_title}')
+}
+
 cmd_cleanup() {
-    # 1) 오버플로우 윈도우 제거
-    for win_idx in $(tmux list-windows -F '#{window_index} #{window_name}' \
-        | grep " ${OVERFLOW_PREFIX}-" | awk '{print $1}' | sort -rn || true); do
-        tmux kill-window -t ":${win_idx}" 2>/dev/null || true
+    local self line idx wname sess n
+    # 2026-10-01 P6 검수: tmux 밖($TMUX_PANE 없음)에서는 «내 pane» 을 알 수 없다 — 첫 pane 을 자기로 가정해 지우거나(set -e 로) exit 127 로 죽지 않고 안내 후 정상 종료한다.
+    if [ -z "${TMUX_PANE:-}" ]; then
+        echo "tmux 밖에서 실행됐습니다(TMUX_PANE 없음). 자기 pane 을 알 수 없어 아무것도 지우지 않습니다. tmux 창 안에서 다시 실행하십시오."
+        return 0
+    fi
+    self=$(_self_pane)
+
+    # 1) 오버플로우 윈도우 제거 (자기 pane 이 든 창·학습 세션 창 제외)
+    local wins=()
+    while IFS=$'\t' read -r idx sess wname; do
+        [[ "$wname" == "${OVERFLOW_PREFIX}-"* ]] || continue
+        _is_train_name "$sess" && continue
+        _is_train_name "$wname" && continue
+        tmux list-panes -t ":${idx}" -F '#{pane_id}' | grep -qx "$self" && continue
+        wins+=("$idx")
+    done < <(tmux list-windows -F $'#{window_index}\t#{session_name}\t#{window_name}')
+
+    # 2) 자동 생성·setup 패널 제거 (자기 pane 제외)
+    local targets=()
+    while IFS= read -r line; do
+        if [ -n "$line" ]; then targets+=("$line"); fi
+    done < <(_pane_targets cleanup)
+
+    echo "삭제 대상: 오버플로우 윈도우 ${#wins[@]}개, pane ${#targets[@]}개"
+    for (( n=0; n<${#wins[@]}; n++ )); do echo "  - window :${wins[$n]}"; done
+    for (( n=0; n<${#targets[@]}; n++ )); do
+        line="${targets[$n]}"
+        echo "  - pane ${line%%$'\t'*} [${line#*$'\t'}]"
     done
 
-    # 2) 메인 패널 외 제거
-    local main_id
-    main_id=$(tmux list-panes -F '#{pane_id}' | head -1)
-    for pid in $(tmux list-panes -F '#{pane_id}' | tac | grep -v "^${main_id}$" || true); do
-        tmux kill-pane -t "$pid" 2>/dev/null || true
+    for (( n=${#wins[@]}-1; n>=0; n-- )); do   # 큰 번호부터 지워 인덱스가 밀리지 않게
+        tmux kill-window -t ":${wins[$n]}" 2>/dev/null || true
+    done
+    for (( n=0; n<${#targets[@]}; n++ )); do
+        line="${targets[$n]}"
+        tmux kill-pane -t "${line%%$'\t'*}" 2>/dev/null || true
     done
 
-    tmux select-pane -t "$main_id"
+    tmux select-pane -t "$self"
     echo "✅ Cleanup complete."
 }
 
@@ -220,7 +295,7 @@ cmd_setup() {
     tmux set-option -w pane-border-format " #{pane_title} " 2>/dev/null || true
 
     local main_id
-    main_id=$(tmux list-panes -F '#{pane_id}' | head -1)
+    main_id=$(_self_pane)   # 창의 첫 pane 이 아니라 이 스크립트를 돌리는 pane 이 main
     tmux select-pane -t "$main_id" -T "Main (Team Lead)"
 
     local main_win_idx
@@ -337,34 +412,39 @@ cmd_status() {
 
 _show_banner() {
     local pid="$1" name="$2" role="$3"
+    # send-keys 문자열은 대상 셸이 그대로 해석한다. 작은따옴표로만 감싸면 name·role 안의 `'; …; #`
+    # 로 임의 명령이 실행된다. printf %q 로 셸 인용을 붙여 넣는다(한글 role 도 그대로 통과한다).
+    local q_name q_role
+    q_name=$(printf '%q' "$name")
+    q_role=$(printf '%q' "$role")
     tmux send-keys -t "$pid" \
-        "clear && printf '\\n  \\033[1;36m%s\\033[0m\\n  Role: %s\\n  Status: Waiting...\\n' '$name' '$role'" Enter
+        "clear && printf '\\n  \\033[1;36m%s\\033[0m\\n  Role: %s\\n  Status: Waiting...\\n' $q_name $q_role" Enter
 }
 
 # ============================================================================
 # purge: Task 도구가 자동 생성한 불필요 pane만 선별 제거
-#   - Main pane 보존
+#   - Main pane($TMUX_PANE) 보존
 #   - setup으로 생성한 패널 ("name [role]" 형식 타이틀) 보존
-#   - "✳" 접두사 등 Claude Code 자동 생성 pane만 제거
+#   - "✳" 접두사 등 Claude Code 자동 생성 pane만 제거 (그 밖의 pane 은 지우지 않는다)
+#   - 학습 세션(train.env 접두) 보존, 지우기 전에 대상 목록 출력
 # ============================================================================
 cmd_purge() {
-    local main_id
-    main_id=$(tmux list-panes -F '#{pane_id}' | head -1)
+    local line n killed=0
+    local targets=()
+    while IFS= read -r line; do
+        if [ -n "$line" ]; then targets+=("$line"); fi
+    done < <(_pane_targets purge)
 
-    local killed=0
-    while IFS=$'\t' read -r pid title; do
-        # Skip main pane
-        [[ "$pid" == "$main_id" ]] && continue
+    echo "삭제 대상: pane ${#targets[@]}개"
+    for (( n=0; n<${#targets[@]}; n++ )); do
+        line="${targets[$n]}"
+        echo "  - pane ${line%%$'\t'*} [${line#*$'\t'}]"
+    done
 
-        # Keep panes with setup-style titles: "name [role]" pattern
-        # Setup panels always have "[...]" in title and never start with "✳"
-        if [[ "$title" =~ \[.*\] ]] && [[ ! "$title" =~ ^✳ ]]; then
-            continue
-        fi
-
-        # Kill extra panes (auto-created by Task tool or other sources)
-        tmux kill-pane -t "$pid" 2>/dev/null && killed=$((killed + 1))
-    done < <(tmux list-panes -F '#{pane_id}	#{pane_title}')
+    for (( n=0; n<${#targets[@]}; n++ )); do
+        line="${targets[$n]}"
+        tmux kill-pane -t "${line%%$'\t'*}" 2>/dev/null && killed=$((killed + 1))
+    done
 
     if [ "$killed" -gt 0 ]; then
         echo "✅ Purged $killed extra pane(s). Setup panels preserved."

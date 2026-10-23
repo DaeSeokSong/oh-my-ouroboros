@@ -1,123 +1,90 @@
 # 코드 작성 및 실행 규칙
 
 > **로드 시점**: 코드 작성 및 실행이 필요한 모든 작업 시 (항상 적용)
-> teammate 프롬프트 작성 시에도 이 규칙을 teammate에게 그대로 전달할 것
 
 ## Hook 차단 시 처리 규칙 (MANDATORY)
 
-Bash 명령이 hook(bash-write-check.sh 등)에 의해 차단될 경우:
-- **"터미널에서 직접 실행하세요"라고 일방 통보 금지**
-- 차단된 명령이 여러 개면 번호를 매겨서 한 번에 질문
-- 반드시 아래 형식으로 목적과 명령어를 설명하고 실행 여부를 질문:
+Bash 명령이 hook(bash-write-check.sh 등)에 차단되면 **"터미널에서 직접 실행하세요"라고 일방 통보하지 않는다**. 반드시 아래 형식으로 목적과 명령어를 밝히고 실행 여부를 묻는다. 차단된 명령이 여러 개면 번호를 매겨 한 번에 묻는다.
 
-단일 명령:
 ```
 `<명령어>`을(를) 실행하려고 합니다.
 목적: <왜 이 명령이 필요한지 1줄>
 실행할까요?
 ```
 
-복수 명령:
-```
-아래 명령들을 실행하려고 합니다. 각각 승인할지 알려주세요:
-1. `<명령어1>` — <목적>
-2. `<명령어2>` — <목적>
-```
-
-- 사용자가 승인하면: 명령어 첫 줄에 `# APPROVED` 를 붙여서 재실행 (hook 통과)
+- 승인 시: 첫 줄에 `# APPROVED «발화 8자+»` 를 붙여 재실행(인용이 프롬프트 로그에 있어야 통과). 실행 시 바뀌는 인터프리터 코드(규칙 0.4, `scripts/bash-write-check.sh` 헤더)는 승인으로도 막힌다
 - 사용자가 거부하면: 대안 방법 모색
 
 ### Read 차단 (read-once 훅) — 복구 절차
 
-`scripts/read-once.sh`(PreToolUse)는 **동일 파일 + 동일 mtime 전체 Read를 TTL 20분간 차단**한다 (세션 격리 캐시 — 이 세션이 읽은 파일만 해당). 차단 메시지("이미 읽은 파일 — 메모리에서 참조") 수신 시:
-1. 내용이 이미 컨텍스트에 있으면 → 재사용 (재읽기 불필요가 정상 동작)
-2. 일부만 필요하거나 재검증 목적(mem0-auto §1.5 현재 코드 우선) → **offset/limit을 지정해 Read** (부분 읽기는 캐시 미적용) 또는 Grep 사용
-3. 파일이 실제로 변경됐다면 mtime이 바뀌어 자동 통과 — 차단이 반복되면 변경이 저장 안 된 것
-
-> 차단·실패의 **유형별 후속 처리**(에러 분류 5종·재시도 한도·침묵 재시도 금지)는 `~/.claude/rules-lazy/error-handling.md` — 도구 차단·MCP 불가·명령 실패 시 lazy 로드. (2026-07-10 진입점 신설 — 구축-미사용 rot #5: 인바운드 0이던 고아 룰)
-
-### 기타 하네스 훅 (참고)
-
-- `ci-gate-edit.sh`(PostToolUse)=lint 비차단 보고 / `ci-gate-commit.sh`(commit 시)=.md 포인터 무결성 FAIL 차단·하드코딩 모델 ID WARN
+`scripts/read-once.sh` 는 **동일 파일 + 동일 mtime 전체 Read를 TTL 20분간 차단**한다. 차단 시: 컨텍스트의 내용을 재사용 → 일부만 필요하거나 재검증 목적이면 **offset/limit 부분 Read 또는 Grep** 사용(부분 읽기는 캐시 미적용) → 파일 변경으로 mtime이 바뀌면 자동 통과 → compact 뒤에는 재읽기 허용. 유형별 후속 처리(에러 분류 5종·재시도 한도·침묵 재시도 금지)는 `~/.claude/rules-lazy/error-handling.md` § (a) 도구 차단을 따른다. 도구 차단·MCP 불가·명령 실패 시 이 lazy 규칙을 로드한다.
 
 ## 기본 원칙
 모든 처리 작업(데이터 분석, 변환, 시각화, 전처리 등)은 반드시 **코드 파일로 작성 후 저장**한다.
 AI가 직접 연산하거나 결과를 즉석으로 생성하는 것은 금지한다.
 
+## 프로젝트 경계 (MANDATORY — 2026-09-07 사용자 지시, 예외 없음)
+
+- **쓰기는 cwd 가 속한 저장소 안에서만**. 다른 프로젝트 저장소는 **Read·Grep·Glob 만** 허용한다(Write·Edit·생성·삭제·`git checkout`·`git stash`·설정 변경 전부 금지). 다른 저장소를 고쳐야 풀리는 일이면 쓰지 않고, 필요한 변경을 보고에 적어 **사용자에게 알린다**. 기준은 세션을 시작한 cwd 이며 `cd` 로 다른 저장소에 들어가도 쓰기 대상은 바뀌지 않는다. 예외는 아래 항의 세 곳(memory·하네스 홈·허용 목록)뿐이다.
+- **cwd 가 git 저장소 밖이면 Write·Edit 를 전부 막는다**(2026-09-08 사용자 결정). 예외는 프로젝트 memory 폴더, 하네스 홈(`~/.claude` 의 knowledge·doc-formats·learner 퀴즈 기록(`_evolve/quiz/`)·`.scratch/`·자기 scope 파일), `config/scope-allow.txt` 에 사용자가 적은 절대 경로 접두 아래뿐이다.
+- **집행**: `scripts/scope-gate.sh` 가 저장소 밖 Write·Edit 를 막는다. 리다이렉션은 `bash-write-check.sh`가, `git checkout .`·`restore .`·`stash`(2026-09-14 추가)는 `git-guardrails.sh`가 막는다. 다만 두 훅 다 저장소 경계는 모르므로 **「저장소 밖 쓰기」**에 한해서는 이 문구가 유일한 통제다.
+- `~/.claude` 쓰기는 `[Harness] Manager` 세션 전용(예외 표): `rules-lazy/scope-gate.md`
+- 정본 상세(«scripts 에 만들어» 해석·다른 프로젝트 수정 시 처리·subagent 전파·실사고 2026-09-07): `rules-lazy/code-execution-detail.md` § 프로젝트 경계
+
 ## 코드 저장 규칙
 
-### 임시 코드
-- 탐색 / 검증 / 테스트 / 중간 단계 목적의 코드
-- **지정된 임시 폴더**에 저장
-- **폴더 미지정 시**: 작업 전 사용자에게 임시 폴더 경로를 반드시 질문
-- 작업 완료 후 삭제 여부 사용자에게 확인
-
-### 최종 코드
-- 산출물로 보존되어야 하는 코드 (재실행 가능한 파이프라인)
-- **지정된 목표 폴더**에 저장
-- **폴더 미지정 시**: 작업 전 사용자에게 목표 폴더 경로를 반드시 질문
-- 파일명은 기능을 명확히 표현 (예: `dicom_stats.py`, `stratified_split.py`)
-- 단일 파일로 재실행 가능하도록 작성 (인자 없이 바로 실행 가능)
+- **임시 코드**: 기본 자리 = `<현재 프로젝트>/.scratch/<세션·잡 id>/` (MANDATORY — 2026-09-08 사용자 결정). 하네스 `jobs/<잡>/tmp/`·`outputs/_scratch/` 에는 쓰지 않는다. 사용자 지정이 있으면 그것이 우선이다.
+- **최종 코드**: 재실행 가능한 산출물은 지정된 목표 폴더에 저장한다. 폴더 미지정이면 작업 전 목표 폴더를 반드시 질문한다.
+- `.gitignore`·승격·정리 절차·파일명 규칙: `rules-lazy/code-execution-detail.md` § 코드 저장 규칙
 
 ## 탐색성 실행 자동 허용
 
 파일 시스템이나 외부 상태를 **변경하지 않고** 정보를 출력하기만 하는 명령은 사용자 확인 없이 실행한다.
-도구 종류(echo, python, bash 등)는 무관 — **효과가 read-only인지**가 기준이다.
-
-### 자동 허용 예시
-
-`echo` · `python3 -c "print(...)"`(파일 읽기+출력 포함) · `json.tool`/`pprint` · `ruff check`(--fix 없이) · `mypy` · `tree`/`jq`/`bc` · `ls`/`find`/`cat`/`head`/`wc` 등 — **출력만 하는 명령은 도구 무관 허용** (2026-07-28 12행 표→1줄, 기준 문장이 정본).
+도구 종류(echo, python, bash 등)는 무관 — **효과가 read-only인지**가 기준이다. 단 인라인 실행은 조회(목록·검색·상태 출력)까지다. **수치 계산은 read-only 여도 인라인으로 하지 않고 코드 파일로 저장해 돌린다**(기본 원칙, 2026-10-02 사용자 결정). 저장한 파일의 read-only 실행은 자동 허용에 든다.
 
 ### 자동 허용 금지 (사용자 확인 필요)
 - 파일 쓰기/삭제/이동을 수반하는 명령 (리다이렉션 `>`, `rm`, `mv`, `cp` 등)
-- `ruff check --fix` (파일 수정 수반 — 명시적 사용자 요청 시만. 2026-07-15부터 PostToolUse hook도 `--fix` 없이 진단만 수행 — Edit 범위 밖 자동 변경이 "실험 중 리팩토링 금지"와 충돌하던 것 제거)
+- `ruff check --fix` (파일 수정 수반 — 명시적 사용자 요청 시만)
 - `pip install`, `uv add` 등 환경 변경
-- 학습/훈련 스크립트 실행
+- 학습/훈련 스크립트 실행 (main 의 tmux 발사는 아래 예외)
 
 ## 코드 실행 규칙
 1. 코드 작성 완료 후 **즉시 실행 금지** (AI·teammate 모두 해당)
-2. 코드 실행은 **항상 사용자가 직접 수행** — AI는 절대 실행하지 않는다
-3. 코드 완료 시 사용자에게 아래 형식으로 실행 명령서를 출력한다:
-4. **background 실행도 동일 원칙 적용** — 상세: `~/.claude/rules-lazy/background-task.md`
-
-### 예외: 검증 목적 실행 허용 (qa·coder — MANDATORY 경계)
-QA 파이프라인 자동화를 위해 아래는 AI(qa/coder) 직접 실행을 허용한다 — qa 검증(6-Gate)·Ralph(진입 판단 5-Gate)·G-E 루프의 성립 조건:
-- **테스트**: pytest 등 단위 테스트 실행
-- **dry-run**: `wandb=disabled trainer.fast_dev_run=true` 등 검증용 시험 구동
-- **lint·타입체크**: ruff/mypy (read-only)
-
-경계 (여전히 사용자 직접 — 예외 불가): 학습·훈련 본 실행, 배포, 데이터 변경·전처리 실행, 환경 변경. (`rules-lazy/qa-process.md` § ML 실험 코드 제한과 일치)
-
-## 예외: Figure 스크립트 AI 직접 실행 허용
-논문/Confluence 페이지에 삽입할 Figure 생성 스크립트는 **AI가 직접 실행 가능**하다.
-
-- **적용 대상**: 경로 `docs/paper/figures/scripts/` 하위 + 파일명 `gen_*.py` 패턴 **모두** 충족하는 스크립트
-- **조건**: 논문 또는 Confluence 페이지에 첨부·삽입하는 이미지를 생성하는 경우
-- **실행 방법**: `uv run python {스크립트 경로}` (Bash 도구 사용)
-- **금지 사항**: 학습 코드, 데이터 처리 코드, 일반 분석 코드는 이 예외 적용 불가
-- **gpt-image-2 생성 제외 (MANDATORY)**: `scripts/gen_gptimg.sh`(Codex exec 경유 gpt-image-2 생성)는 이 자동 실행 예외에 **포함되지 않는다** — Codex 한도를 3~5배 소모하므로 **매 호출 사용자 승인 후** 실행 (designer가 실행 명령서 출력 → 사용자 직접 실행)
+2. **본 실행(학습·훈련·배포·데이터 변경·환경 변경)은 사용자가 직접 수행**한다(학습·훈련은 메모리 가드·와쳐·목표 표를 갖춘 발사 세트 명령서로 넘긴다). AI 실행은 이 파일의 예외 여섯 가지(탐색성 read-only 자동 허용·검증 목적 qa/coder·Figure `gen_*.py`·main 의 tmux 학습 발사·승인 대기 목록의 와쳐 발사·paper-read Step 2·2.5 의 `scripts/pdf_to_md.py` 변환(main 이 변환, scout 이 로컬 경로 `--head` 서두 조회, 읽기 전용 산출))가 **닫힌 목록**이며 그 밖은 금지다
+3. 코드 완료 시 사용자에게 실행 명령서를 출력한다. **학습·훈련 스크립트의 명령서는 발사 세트(메모리 가드·와쳐·목표 표)를 갖춘 `launch-set.sh launch` 형**이다(CLAUDE.md § 연구 환경 규칙). 그 밖의 코드는 아래 형식:
    ```
    코드 준비 완료: {파일 경로}
    실행 명령:
      cd <your-project-root>
      uv run python3 {파일 경로}
    ```
+4. **background 실행도 동일 원칙 적용** — 상세: `rules-lazy/background-task.md`
+
+### 예외: 검증 목적 실행 허용 (qa·coder — MANDATORY 경계)
+아래는 AI(qa/coder) 직접 실행을 허용한다(qa 검증·Ralph·G-E 루프의 성립 조건):
+- **테스트**: pytest 등 단위 테스트 실행
+- **dry-run**: `wandb=disabled trainer.fast_dev_run=true` 등 검증용 시험 구동
+- **lint·타입체크**: ruff/mypy (read-only)
+
+경계 (qa·coder 불가): 학습·훈련 본 실행, 배포, 데이터 변경·전처리 실행, 환경 변경.
+
+## 예외: main 의 tmux 학습 발사 (2026-09-29 사용자 지시)
+- main 세션만(subagent·teammate 불가), 사용자가 이번 사이클에 발사를 지시한 학습만. tmux 세션 `<접두><GPU 번호>` 의 창에서 `launch-set.sh launch` 로 올린다. 발사 세트·목표 표·GPU 사용자 배정은 그대로이고 «발사 완료»는 `launch-set.sh verify` 원문만 증거다. 절차·여전히 사용자 몫인 것: `rules-lazy/background-task.md` § main 의 tmux 직접 발사
+- **대기 목록 자동 발사 (2026-10-01)**: 판 > GPU 일 때 사용자가 승인한 목록의 판만 와쳐가 빈 GPU 에 올린다. 목록이 바뀌면 멈추고 main 은 스스로 재승인하지 않는다 — 동 파일 § 대기 목록 자동 발사
+- **tmux 세션·창 종료(kill·`exit`·`C-d`)는 대상마다 매번 사용자 재확인**(2026-09-29 지시, 창이 닫히면 학습이 죽는다)
+
+## 예외: Figure 스크립트 AI 직접 실행 허용
+- **대상·조건**: `docs/paper/figures/scripts/` 하위 `gen_*.py`(논문·Confluence 삽입 이미지 생성용, 학습·데이터처리·일반분석 코드는 이 예외 적용 불가)
+- **실행 방법**: `uv run python {스크립트 경로}`
+- **TeX**: `latexmk -norc -pdf`·pdflatex 로 `docs/paper/figures/`·`docs/analysis/*.tex` 컴파일(shell-escape 금지)
+- **gpt-image-2 생성 제외 (MANDATORY)**: `scripts/gen_gptimg.sh`는 이 예외에 **포함되지 않는다** — Codex 한도를 3~5배 소모하므로 **매 호출 사용자 승인 후** 실행 (designer가 실행 명령서 출력 → 사용자 직접 실행)
 
 ## 폴더 사전 지정 (재질문 금지 조건)
-대화 맥락에서 이미 명시된 경우 재질문하지 않는다:
-- 임시 폴더: `<your-workspace>` (사용자 환경에 맞게 설정 — 대화 맥락에서 명시된 경우)
-- 목표 폴더: 작업 지시에서 명시된 경우
+임시 폴더는 기본값이라 **질문하지 않는다**. 목표 폴더는 작업 지시에 명시된 경우 재질문하지 않는다. 상세: `rules-lazy/code-execution-detail.md` § 폴더 사전 지정
 
 ### § Mem0 프로젝트 경로 기억
 
-프로젝트별 폴더 경로는 Mem0 T14로 기억(`mem0-auto.md`) — 발견 시 재질문 없이 자동 적용, 미발견 시 기존 규칙대로 질문.
+프로젝트별 폴더 경로는 Mem0 T14로 기억(`rules-lazy/mem0-templates.md`) — 발견 시 재질문 없이 자동 적용.
 
 ## Teammate 적용
-- 위 규칙은 모든 teammate에게도 동일하게 적용
-- Teammate가 코드를 작성할 때:
-  - 임시 코드 → 지정된 임시 폴더에 저장
-  - 최종 코드 → 지정된 목표 폴더에 저장
-- Teammate가 코드를 작성한 후:
-  - mediator를 통해 team-lead에게 실행 명령서 전달 (SendMessage)
-  - 코드 실행은 team-lead(사용자)가 직접 수행 — teammate·mediator 모두 실행 금지
-  - 탐색성 명령(ls, find, cat, head, wc)은 실행 가능
+- 위 규칙(저장 폴더·실행 금지) 전부 teammate에게 동일 적용(프롬프트에 전달) — 작성 후 실행 명령서는 mediator 경유 team-lead에게 전달(SendMessage), 실행은 사용자 직접(teammate·mediator 금지), 탐색성 명령만 실행 가능 예외는 qa 가 리더인 재검증 팀의 qa 하나로, 위 «검증 목적 실행»(테스트·dry-run·lint)까지 한다. 토론 팀의 qa·coder teammate 는 탐색성 명령만 실행한다(2026-10-02 사용자 결정)

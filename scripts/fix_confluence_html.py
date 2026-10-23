@@ -76,17 +76,23 @@ def fix_adf_formula_backslash(html: str) -> tuple[str, int]:
     return fixed, count[0]
 
 
+# §9 탐지·치환 공용: 뒤가 영문자가 아닌 리터럴 \n (영문자가 뒤따르면 \nabla 같은 LaTeX 명령)
+LITERAL_NEWLINE = re.compile(r'\\n(?![A-Za-z])')
+
+
 def fix_adf_formula_literal_newlines(html: str) -> tuple[str, int]:
     """
     §9 수정: ADF body 파라미터의 리터럴 \\n (0x5C+0x6E) 제거
     발생 원인: REST API가 body를 JSON 직렬화 → 실제 개행(0x0A) 대신 \\n 두 문자로 저장
     증상: 수식 블록 앞뒤에 불필요한 빈 줄 렌더링
+    뒤에 영문자가 오는 \\n 은 지우지 않는다 — \\nabla·\\nu·\\neq 같은 LaTeX 명령이 깨진다(2026-10-01 감사).
+    한계: 개행 바로 뒤에 영문자 수식이 붙은 오염("\\nE=...")은 구분할 수 없어 남는다.
     """
     count = [0]
 
     def fix_body(match):
         original = match.group(1)
-        cleaned = original.replace('\\n', '')  # 리터럴 \n 두 문자 제거
+        cleaned = LITERAL_NEWLINE.sub('', original)  # 리터럴 \n 두 문자 제거(뒤가 영문자면 LaTeX 명령이라 보존)
         cleaned = cleaned.strip()
         if cleaned != original:
             count[0] += 1
@@ -121,12 +127,14 @@ def fix_all(html: str, verbose: bool = True) -> str:
             print(f"   ✅ §8 수정 완료 ({cnt}개 body)")
 
     # §9: ADF body 리터럴 \n
-    if re.search(r'<ac:adf-parameter key="body">.*?\\n', html, re.DOTALL):
+    bodies = re.findall(r'<ac:adf-parameter key="body">(.*?)</ac:adf-parameter>', html, re.DOTALL)
+    removed = sum(len(LITERAL_NEWLINE.findall(b)) for b in bodies)
+    if removed:
         if verbose:
             print("⚠️  §9 ADF body 리터럴 \\n 감지 → fix_adf_formula_literal_newlines 적용")
         html, cnt = fix_adf_formula_literal_newlines(html)
         if verbose:
-            print(f"   ✅ §9 수정 완료 ({cnt}개 body)")
+            print(f"   ✅ §9 수정 완료 ({cnt}개 body, 리터럴 \\n {removed}건 제거)")
 
     return html
 

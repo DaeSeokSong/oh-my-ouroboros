@@ -1,7 +1,7 @@
 # MCP 연결 상태 사전 점검 규칙 (MANDATORY)
 
 > **로드 시점**: OAuth 기반 MCP 도구 호출 직전 (lazy)
-> **배경**: Claude Code v2.1.x [#52565](https://github.com/anthropics/claude-code/issues/52565) 버그로 OAuth MCP는 `.credentials.json`에 accessToken이 빈 문자열로 저장됨 → 매 세션 재인증 필요
+> **배경**: Claude Code v2.1.x(확인일 2026-10-17, 기준 Claude Code 2.1.301) [#52565](https://github.com/anthropics/claude-code/issues/52565) 버그로 OAuth MCP는 `.credentials.json`에 accessToken이 빈 문자열로 저장됨 → 매 세션 재인증 필요
 
 ---
 
@@ -58,11 +58,11 @@ ToolSearch(query="select:mcp__<server>__<tool>", max_results=1)
 ```
 ⚠️ **{MCP_NAME} MCP 연결 끊김 — 재인증 필요**
 
-원인: Claude Code v2.1.x OAuth 영속 저장 버그 (#52565)
+원인: Claude Code v2.1.x(확인일 2026-10-17) OAuth 영속 저장 버그 (#52565)
 영향: {호출하려던 도구} 사용 불가
 
 조치 옵션:
-1. `/mcp` 명령으로 {server} 재인증 → 인증 완료 후 작업 재시도 (Recommended)
+1. `/mcp` 명령으로 {server} 재인증 → 인증 완료 후 작업 재시도
 2. 대체 도구로 우회 진행 — {대체 도구 또는 방법 명시}
 3. 작업 보류
 

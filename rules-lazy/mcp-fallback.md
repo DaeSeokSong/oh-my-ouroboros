@@ -16,7 +16,7 @@
 
 ## 에이전트 spawn 시 MCP 상태 전달 (MANDATORY)
 
-에이전트 spawn prompt 서두에 MCP 가용 상태를 포함하되, **미연결이 확인된 서버만** 표시한다(`agent-routing-mcp.md:21`과 정합 — 전체 나열은 토큰 낭비, 기본값은 available 가정). 예: 특정 서버 미연결 시에만 `[MEM0: unavailable]`.
+에이전트 spawn prompt 서두에 MCP 가용 상태를 포함하되, **미연결이 확인된 서버만** 표시한다(`agent-routing-mcp.md` § 에이전트 spawn prompt 서두에 포함할 2가지의 2번과 정합 — 전체 나열은 토큰 낭비, 기본값은 available 가정). 예: 특정 서버 미연결 시에만 `[MEM0: unavailable]`.
 
 ```
 # 미연결 확인된 서버만 (available은 생략 — 기본 가정):

@@ -31,7 +31,7 @@ Mem0 불가 시 아래 원칙을 적용한다:
 
 ### Fallback 매핑 (Category → 파일)
 
-> 아래 `long-term/` = `${LONG_TERM_ROOT}` (canonical: `~/workspace/_data/workspaces/user/.claude/long-term/`) — `~/.claude/long-term` 생성 금지.
+> 경로 정본: `rules-lazy/memory-write.md` § 메모리 구조 표(`${LONG_TERM_ROOT}`, `~/.claude/long-term` 생성 금지). 아래 `long-term/experiments.md`·`feedback.md` 는 그 표의 `<프로젝트>/` 아래 주제 파일이다.
 
 #### 저장 (add_memory → Write)
 

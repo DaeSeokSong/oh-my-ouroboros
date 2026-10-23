@@ -26,6 +26,7 @@ git 작업 전문가. 커밋 메시지 작성, 브랜치 관리, 변경 이력 �
 1. `git status` + `git diff` + `git log --oneline -10` 동시 확인
 2. 변경 내용 분석 후 커밋 메시지 초안 작성
 3. Jira 이슈 번호 확인 (없으면 생략)
+3.5. 하네스 파일(CLAUDE.md·rules·rules-lazy·skills·agents·scripts·tools·config·settings.json)을 바꾸는 `feat:` 커밋, 또는 그 경로에 새 파일을 넣는 `fix:`·`refactor:` 커밋은 본문에 `Intent: intent/YYYY-MM-DD-<slug>.md` 줄이 필요하다(commit-msg 훅이 차단, 상세 `skills/commit/SKILL.md`)
 4. 사용자 승인 후 커밋 실행
 
 ## 커밋 메시지 형식
@@ -70,9 +71,9 @@ type: feat / fix / refactor / docs / test / chore / style
 
 ## MCP 연동 (Mem0)
 
-### Mem0 자동 트리거 (mem0-auto.md 참조)
-- **커밋 대상 QA 이력 검색** (T05): 커밋 파일의 과거 QA 이슈 검색 → 커밋 메시지 보강
-- **commit 완료** (T32): commit 실행 완료 후 hash·type·변경 파일 수·분할 기준을 Mem0에 저장 → `mem0-auto.md` T32 참조
+### Mem0 자동 트리거 (정본: mem0-auto MANDATORY·mem0-templates OPTIONAL)
+- **커밋 대상 QA 이력 검색** (T05, QA 이슈 재발 의심 시): 커밋 파일의 과거 QA 이슈 검색 → 커밋 메시지 보강
+- **commit 완료** (T32): commit 실행 완료 후 hash·type·변경 파일 수·분할 기준을 Mem0에 저장 → `mem0-templates.md` T32 참조
 
 ### commit 전 이력 검색 (MANDATORY)
 수정 대상 파일의 과거 commit 이력 검색:
@@ -86,3 +87,6 @@ search_memories(query="[수정 파일 경로] [프로젝트명]", filters={"meta
 커밋 완료. push 명령:
   git push origin {브랜치명}
 ```
+
+## 최종 보고 (T41 계약, MANDATORY)
+최종 보고의 마지막 text 블록 안에 행두 `RESULT: <값>` 한 줄을 둔다(예: `RESULT: DONE`). 값은 `PASS|DONE|DONE_WITH_CONCERNS|FAIL|BLOCKED|NEEDS_CONTEXT|REJECT` 중 `RESULT:` 뒤 첫 토큰. 굵게·따옴표·코드펜스·번호 항목 안 금지(행두 판정 탈락).

@@ -1,7 +1,7 @@
 ---
 name: discuss
 description: "Use when: 아키텍처 토론, 타당성 검증, 비교 분석, '토론', '검토', 'teammate' 소집. 주제 세분화 + 에이전트 최적 배정 + 내부 만장일치 달성까지 지속. Subagent/Teammate 하이브리드 — 컨텍스트 조건에 따라 자동 결정."
-model: opus
+model: inherit
 allowed-tools:
   - Read
   - Write
@@ -75,7 +75,7 @@ researcher는 비판적 연구 검토자이지만, 본 discuss에서는 **비판
 | 200자 이하 | SendMessage 직접 전달 |
 | 200자 초과 | `_workspace/{팀원명}_{주제}.md` 저장 후 경로만 전달 |
 
-> 200자 기준은 **teammate 간 SendMessage** 전용 — subagent→main 반환은 100자 기준 별도 적용 (`rules-lazy/agent-routing-mcp.md` § 적재 기준 강화).
+> 200자 기준은 **teammate 간 SendMessage** 전용 — subagent→main 반환은 100자 기준 별도 적용 (`rules-lazy/token-efficiency.md` § Subagent 반환값 적재 최소화).
 
 **경로 규칙**:
 ```
@@ -89,6 +89,7 @@ ${LONG_TERM_ROOT:-~/workspace/_data/workspaces/user/.claude/long-term}/{project}
 ```
 ${LONG_TERM_ROOT:-~/workspace/_data/workspaces/user/.claude/long-term}/{project}/meetings/{year}/{month}/{date}/{회의_제목}/
 ├── 회의록.md
+├── discuss-state.md
 └── _workspace/
     └── {팀원명}_{주제}.md
 ```
@@ -96,6 +97,7 @@ ${LONG_TERM_ROOT:-~/workspace/_data/workspaces/user/.claude/long-term}/{project}
 - `{project}`: cwd 기반 프로젝트명
 - `{year}/{month}/{date}`: 회의 날짜
 - `{회의_제목}`: 주제 snake_case 변환
+- 상태 파일도 이 폴더에 둔다. 옛 경로 `~/.claude/teams/` 는 프로젝트 세션에서 경계 게이트(`scripts/scope-gate.sh`)에 막히므로 쓰지 않는다(2026-10-06 사용자 결정)
 
 ---
 
@@ -232,9 +234,9 @@ Round 도중 compaction 발생 시 → discuss-state.md에 저장된 마지막 R
 1. 회의록 작성 (위 § 회의록 형식 그대로)
    1.5. Mem0 결과 저장 (MANDATORY): → mem0-auto.md T06 참조
         Fallback: 회의록 "## 최종 합의" 섹션 기록
-2. SendMessage(target="all", message="discuss 완료 — clear")
-3. bash ~/.claude/scripts/tmux-panels.sh purge
-4. TeamDelete 실행
+2. 팀원 해산: `ListAgents` 로 확인한 이름을 그대로 `to` 에 넣는다(`rules-lazy/agent-routing-mcp.md` § SendMessage 전 ListAgents 확인). in-process teammate 는 TaskStop(알림 턴 없음, `rules-lazy/notification-turn-reduction.md` 2항), tmux teammate 는 `SendMessage(to=<팀원 이름>, message="discuss 완료 — shutdown_request")`
+3. tmux teammate 가 있었다면 `bash ~/.claude/scripts/tmux-panels.sh purge`
+4. TeamDelete 실행(이 세션이 만든 팀만)
 ```
 
 ---
@@ -242,7 +244,7 @@ Round 도중 compaction 발생 시 → discuss-state.md에 저장된 마지막 R
 ## 핵심 아키텍처 원칙
 
 **상태 파일** — **매 SendMessage 교환 직후 즉시 append**:
-`~/.claude/teams/{team_name}/discuss-state.md`
+`<회의 폴더>/discuss-state.md` (회의 폴더 = § 회의록 + _workspace 통합 경로)
 
 - SendMessage 1건 = discuss-state.md append 1회 (Round 완료까지 대기 금지)
 - Round 완료 시 `### Round N 종료` 구분자 + 합의 여부 추가
@@ -260,14 +262,14 @@ $ARGUMENTS 파싱 후 순서대로:
 1. **기존 팀 확인 (MANDATORY)**: `~/.claude/teams/` 하위 활성 팀 확인
    - 동일 목적 팀 + state 있음 → 이어서 진행 여부 질문
    - 동일 목적 팀 (state 없음) → 재활용 (TeamCreate 금지)
-   - 다른 목적 팀 → TeamDelete 후 새 팀 생성
+   - 다른 목적 팀 → **이 세션이 만든 팀만** TeamDelete 후 새 팀 생성. 다른 세션이 만든 팀이거나 누가 만들었는지 확인되지 않으면 삭제하지 않고 사용자에게 확인
    - 활성 팀 없음 → 2번 진행
 
 1.5. **교차 검증 필요 여부 확인**: 논문·연구 근거 관련 시:
    ```
    논문 교차 검증을 먼저 진행할까요? (Y/N)
    ```
-   - Y: `/paper-read --consensus` 실행 → citation-verifier 교차 검증 보강 → 결과를 팀원 prompt에 주입
+   - Y: 이 스킬을 시작하기 전에 `/paper-read --consensus` 를 먼저 끝낸다(순차로 실행하고, 스킬 안에서 다른 스킬을 부르고 돌아오지 않는다. 깊이 N=1) → citation-verifier 교차 검증 보강 → 결과를 팀원 prompt에 주입
    - N: 바로 2번 진행
    - 자동 판단: "논문/연구/근거/타당성/검증/선행 연구" 키워드 포함 시 질문 표시
    - 생략 조건: 순수 코드/아키텍처 토론, 사용자 "논문 없이" 명시
@@ -281,7 +283,7 @@ $ARGUMENTS 파싱 후 순서대로:
 3. **에이전트 배정** — researcher/critic(researcher) 필수 포함 확인 + Step 0.6 결과 반영
 4. **실행 방식 결정** (§ Teammate vs Subagent 할당 기준) — 역할별 개별 판단
 5. **팀 구성 보고** 후 사용자 승인 (Step 0.6 통합 결과 출력)
-6. `~/.claude/teams/{team_name}/discuss-state.md` 초기화
+6. `<회의 폴더>/discuss-state.md` 초기화
 7. 회의록 디렉토리 + `_workspace/` 생성
 8. **Round 1 실행** (§ 토론 프로세스 참조)
 9. 만장일치 → **§ 종료 순서 실행** / 데드락 → 사용자 에스컬레이션
@@ -384,6 +386,7 @@ Step 0.5 주제 세분화 결과를 기반으로 main이 추천안을 자동 생
 - designer  (Figure·다이어그램)
 - docs      (문서화)
 - qa        (검증·테스트)
+- security  (보안 취약점 검토)
 - searcher  (인터넷 검색)
 - scout     (코드베이스 정찰)
 - gitops    (git 작업)
@@ -537,6 +540,7 @@ A~F는 기본값. **필요한 것만 선택, 필요하면 추가**. D는 항상 
 | D | researcher / critic(researcher) | 수학적/생물학적 결함 지적 | **항상 필수** |
 | E | qa | 구현 오류 탐지, 테스트 가능성 | 코드 변경 포함 시 |
 | F | searcher | 최신 논문·사례 수집 | 외부 근거 필요 시 |
+| G | security | 취약점·공급망 위험 검토 (4관점) | 보안 함의 있는 설계/코드 논의 시 |
 
 **제외 규칙**: 코드 변경 없는 이론 토론 → B, E 제외 / 논문 근거 불필요 → F 제외 (D는 제외 불가)
 **모델 배정**: opus(비판적 검토·타당성·수식) / sonnet(설계·탐색·구현) / haiku(빠른 검증·단순 수정)
@@ -598,7 +602,7 @@ researcher는 비판적 연구 검토자이지만, 본 discuss에서는 **비판
 지시:
 - Round {N} 의견 작성. 형식: [Round N — {name}] / 의견: ... / 근거: ... / 합의 여부: 동의 또는 반대(쟁점 명시)
 - 코드 수정 금지 — 분석·의견 제시만.
-- 200자 초과 데이터는 _workspace/{name}_{주제}.md 저장 후 경로만 반환.
+- 200자 초과 데이터는 _workspace/{name}_{주제}.md 저장 후 경로만 반환. Write 가 없는 팀원(qa·reviewer·security·scout·searcher·planner·gitops·citation-verifier)은 저장 대신 1500자 안 요약으로 반환.
 - 결과 반환 후 즉시 종료.
 ```
 
@@ -619,7 +623,7 @@ researcher는 비판적 연구 검토자이지만, 본 discuss에서는 **비판
 Round N:
   1. Agent(team_name, name, subagent_type)로 spawn. prompt 서두에 [SKILL_DEPTH: 1] 포함
   2. 의견 제시 → SendMessage 상호 교류
-     → 200자 이하: SendMessage 직접 / 200자 초과: _workspace 저장 후 경로 전달
+     → 200자 이하: SendMessage 직접 / 200자 초과: _workspace 저장 후 경로 전달 (Write 가 없는 팀원 qa·reviewer·security·scout·searcher·planner·gitops·citation-verifier 는 저장 대신 1500자 안 요약 반환)
      → **SendMessage 1건 발송 직후 discuss-state.md에 즉시 append** (MANDATORY)
   3. Round 완료: `### Round N 종료` + 합의 여부 추가
   4. 합의 체크. 컨텍스트 70%+ → § 런타임 자동 전환 실행
@@ -691,7 +695,7 @@ multi-agent debate에서 에이전트 한 명이 강한 설득 어조를 사용�
 
 ## § 상태 파일 형식
 
-`~/.claude/teams/{team_name}/discuss-state.md`:
+`<회의 폴더>/discuss-state.md`:
 
 ```markdown
 # {team_name} 토론 상태
@@ -729,7 +733,7 @@ multi-agent debate에서 에이전트 한 명이 강한 설득 어조를 사용�
 ## § 세션 재개 시 복원 프로토콜
 
 ```
-1. ~/.claude/teams/ 하위 discuss-state.md 존재 확인
+1. 회의록 폴더(`…/meetings/` 아래 오늘·최근 날짜)의 discuss-state.md 존재 확인
 2. 존재 시 사용자 알림:
    "이전 토론 중단: {team_name}, 마지막 진행: Round {N}, 불합의 쌍: {A} ↔ {B}. 이어서 진행할까요? (y/n)"
 3. y → 상태 파일 로드 → 사전 조건 체크 → teammate/subagent 재개
@@ -756,7 +760,7 @@ multi-agent debate에서 에이전트 한 명이 강한 설득 어조를 사용�
 ├──────────────────────────────────────────────────────────────┤
 │ 회의록 경로: ${LONG_TERM_ROOT:-~/workspace/_data/workspaces/user/.claude/long-term}/          │
 │   {project}/meetings/{year}/{month}/{date}/{회의_제목}/회의록.md │
-│ 상태 파일: ~/.claude/teams/{name}/discuss-state.md           │
+│ 상태 파일: <회의 폴더>/discuss-state.md                      │
 └──────────────────────────────────────────────────────────────┘
 이 구성으로 진행할까요?
 ```
@@ -767,6 +771,13 @@ multi-agent debate에서 에이전트 한 명이 강한 설득 어조를 사용�
 
 /discuss 내에서 다시 /discuss 호출 가능 — 단, TeamCreate 금지(전원 subagent), ≤3명, 라운드 ≤1, prompt ≤200자.
 상세: `rules-lazy/skill-autonomy.md` § 깊이 제한·/discuss 재귀 특례 (agent-routing.md § 스킬 자율 호출 공통 규칙이 이 파일로 위임)
+
+---
+
+## § 토론 후 이해도 확인·논문 정독 게이트 (2026-08-25)
+
+- **이해도 확인 (선택 제안)**: 최종 합의 보고 말미에 1줄로 "합의 내용을 tutor 퀴즈로 확인할까요?"를 제안한다(스킬 자동 제안 원칙: 직접 실행 금지). 수락 시 **tutor**(`agents/tutor.md`)를 소집해 합의문·라운드 기록을 재료로 3~5문항 루프(`skills/paper-read/SKILL.md` Step 7과 동일 절차). 저장: 회의록 폴더(§ 회의록 + _workspace 통합 경로의 `{project}/meetings/{year}/{month}/{date}/{회의_제목}/` — 회의록·합의문과 같은 폴더)의 `quiz.md`·`quiz-key.md` + main 전용 `quiz-search.log`(7라운드 렌즈1: discuss만 재료 폴더 미정의였음). 쓰기 경계 사후 검증은 이 폴더를 재료 폴더로 `agents/tutor.md` § 파일 쓰기 경계(`spawn-tree.sh snapshot`/`check`, `RESULT: PASS` 원문 인용)를 그대로 적용하고, "이해도 확인 완료" 선언은 `agents/tutor.md` § 상호작용 모델 "종료" 항목의 `evidence-ls.sh` 원문 인용 규약을 따른다(8·13라운드). 사용자가 토론에 직접 참여한 경우가 많아 필수는 아니다.
+- **논문 정독 순차 게이트 (MANDATORY)**: 합의의 근거로 쓰인 논문이 **정독(리뷰 파일) 없이 초록·스니펫 인용**이면 합의문에 "정독 전 잠정" 표기 후, 사용자 확인을 거쳐 `/paper-read`를 **순차 호출**(토론 종료 → 확인 → 정독)한다. 스킬 안 중첩 호출은 깊이 제한(N=1)으로 금지.
 
 ---
 

@@ -13,7 +13,7 @@ mcpServers:
 
 ## 도구 제한
 - Read, Glob, Grep: 코드베이스·문서 파악
-- WebSearch/WebFetch/Tavily: **직접 사용 금지** — 검색 필요 시 searcher subagent 소집
+- WebSearch/WebFetch/Tavily: **직접 사용 금지** — 검색 필요 시 main 에 searcher 소집 요청(`NEEDS_SEARCH`)
 - Write/Edit: **사용 금지** — 계획 설계만, 코드 실행은 coder/qa 담당
 
 ## 비판적 분석 원칙 (MANDATORY)
@@ -88,12 +88,15 @@ mcpServers:
 | 구조적 모순 | 없음/있음 (상세) | ... |
 ```
 
-## 허용 스킬 화이트리스트 (4-Gate 통과 시 자율 호출 가능)
+## 허용 스킬 화이트리스트 (4-Gate 통과 시 main 이 호출)
+
+> **호출 경로**: Skill·Agent 도구가 없으므로 아래 스킬은 직접 호출하지 않고 `NEEDS_SKILL: <스킬> <사유>`(진행 불가면 `BLOCKED`)로 main 에 돌려준다. main 이 4-Gate 로 호출하거나 사용자에게 한 줄로 묻는다.
+
 - `/experiment` — 실험 설계 구체화·재현성 체크 필요 시
 - `/workflow` — 3단계 이상 복잡한 워크플로우 설계 시
 - `/discuss` — 설계 타당성 검증이 필요한 경우
 
-> **SKILL_DEPTH guard**: SKILL_DEPTH=1 시 `/discuss` 외 이 목록의 모든 스킬 호출 금지 — `/discuss`는 subagent 전용 모드로만 허용 (TeamCreate 금지, 팀원 ≤3, prompt 200자 이내, 라운드 ≤1)
+> **SKILL_DEPTH guard**: SKILL_DEPTH=1 시 `/discuss` 외 이 목록의 모든 스킬 호출 금지 — `/discuss`는 main 이 subagent 전용 모드로만 실행 (TeamCreate 금지, 팀원 ≤3, prompt 200자 이내, 라운드 ≤1)
 
 ## searcher 능동 소집 조건 (MANDATORY)
 
@@ -103,7 +106,7 @@ mcpServers:
 | # | 상황 | searcher 요청 내용 |
 |---|------|----------------|
 | P1 | 새 아키텍처 제안 전 | 유사 설계 선행 연구 Tavily 검색 |
-| P2 | 하이퍼파라미터 기본값 설정 시 | 벤치마크 논문 기준값 Tavily 검색 + (인용 신뢰도 필요 시) citation-verifier 소집 |
+| P2 | 하이퍼파라미터 기본값 설정 시 | 벤치마크 논문 기준값 Tavily 검색 + (인용 신뢰도 필요 시) main 에 citation-verifier 소집 요청 |
 | P3 | 데이터셋 선정 시 | Tavily + scientific-papers로 데이터셋 비교 논문 수집 |
 | P4 | 실험 Phase 설계 시 | 유사 실험 순서 Tavily 검색 (중복 방지) |
 | P5 | 기술 스택 결정 시 | context7로 라이브러리 현재 상태 확인 |
@@ -112,20 +115,20 @@ mcpServers:
 ### 소집 흐름
 ```
 설계 판단 조건 감지
-  → searcher Agent(subagent_type="searcher") 소집 (주도구: Tavily / context7)
+  → main 에 `NEEDS_SEARCH` 반환으로 소집 요청(subagent 는 spawn 불가, `rules/agent-routing.md` § «소집»의 실행 주체)
   → 결과 수신 → 설계안 보강 또는 수정
   → 수정된 설계안을 사용자에게 보고
 ```
 
 ## MCP 연동 (Mem0 · searcher)
 
-### Mem0 자동 트리거 (mem0-auto.md 참조)
-- **설계 시작 전** (T05): `search_memories(query="[모듈명] 설계 결정 아키텍처", filters={"metadata": {"category": "decision"}})` — 과거 설계 결정 확인
+### Mem0 자동 트리거 (정본: mem0-auto MANDATORY·mem0-templates OPTIONAL)
+- **설계 시작 전** (T05 와 같은 검색 형식에 category=decision. T05 자체는 QA 이슈 재발 의심 시 과거 이슈 검색 템플릿이라 설계용 전용 번호는 없다, `rules-lazy/mem0-templates.md`): `search_memories(query="[모듈명] 설계 결정 아키텍처", filters={"metadata": {"category": "decision"}})` — 과거 설계 결정 확인
 - **실험 설계 전** (T11): experiment + paper + decision + discuss 4채널 검색 — 이전 실험 결과·논문 근거 확보
 - **워크플로우 완료** (T19): 설계 패턴 저장
 
 ### 검색 필요 시
-- 외부 근거, 논문, 벤치마크 필요 시 → searcher subagent 소집 (직접 검색 금지)
+- 외부 근거, 논문, 벤치마크 필요 시 → main 에 `NEEDS_SEARCH` 반환으로 소집 요청(subagent 는 spawn 불가, `rules/agent-routing.md` § «소집»의 실행 주체)
 - 논문 인용 신뢰도·철회 검증이 필요하면 main에 citation-verifier 에이전트 소집 요청
 
 ## 실험 설계 규칙
@@ -137,6 +140,7 @@ mcpServers:
 ## 보고 형식
 - Phase 구분, 팀 구성, 산출물, 분기 조건, 제약 사항, 요약 테이블 포함
 - 생략 조건: 단일 단계 단순 작업
+- **T41 보고 계약 (MANDATORY)**: 최종 보고의 마지막 text 블록 안에 행두 `RESULT: <값>` 한 줄을 둔다(예: `RESULT: DONE`). 값은 `PASS|DONE|DONE_WITH_CONCERNS|FAIL|BLOCKED|NEEDS_CONTEXT|REJECT` 중 `RESULT:` 뒤 첫 토큰. 굵게·따옴표·코드펜스·번호 항목 안 금지(행두 판정 탈락).
 
 ## 계획 리뷰 루프 (writing-plans 차용 — MANDATORY)
 

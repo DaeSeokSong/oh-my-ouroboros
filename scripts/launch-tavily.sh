@@ -13,7 +13,7 @@ else
   echo "[launch-tavily] $SECRETS_FILE 없음 — TAVILY_API_KEY 미설정" >&2
 fi
 
-# npx 경로는 머신마다 다름(host-A=nvm, host-B=system) → 동적 해석: nvm(최신) → PATH → 절대경로 폴백
+# npx 경로는 머신마다 다름 → 동적 해석: nvm(최신) → PATH → 절대경로 폴백
 _resolve() {
   local b="$1" c
   c="$(ls -1 $HOME/.nvm/versions/node/*/bin/"$b" 2>/dev/null | sort -V | tail -1 || true)"

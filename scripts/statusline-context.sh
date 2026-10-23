@@ -12,6 +12,8 @@ INPUT=$(cat)
 
 PCT=$(printf '%s' "$INPUT" | jq -r '.context_window.used_percentage // 0' 2>/dev/null | cut -d. -f1)
 PCT=${PCT:-0}
+# 비정수(음수·문자열·null 등)는 0 으로 — 아래 산술·비교에 그대로 들어가면 스테이터스라인이 깨진다
+case "$PCT" in ''|*[!0-9]*) PCT=0 ;; esac
 MODEL=$(printf '%s' "$INPUT" | jq -r '.model.display_name // "Claude"' 2>/dev/null)
 [ -z "$MODEL" ] && MODEL="Claude"
 

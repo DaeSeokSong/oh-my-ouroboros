@@ -106,13 +106,13 @@ multi-step QA 시 다음 형식으로 단계별 verify 정의:
 ```
 verify FAIL → 원인 분석 → qa 자체 Edit로 경미 수정(FAIL 한정) → 재실행 → verify PASS까지 반복 (최대 N회)
 ```
-> **실행 주체 경계**: 이 자율 루프는 qa **자신의 Edit 권한(FAIL 수정 한정)** 으로만 성립한다 — qa는 Agent 도구가 없어 coder를 직접 spawn할 수 없다. 구조·수식·다지점 수정처럼 coder가 필요한 FAIL은 자율 루프에서 빠져 **main 에스컬레이션**(coder 위임은 main 경유)으로 전환한다(`agent-routing.md` § "소집"의 실행 주체).
+> **실행 주체 경계**: 이 자율 루프는 qa **자신의 Edit 권한(FAIL 수정 한정 — 유일한 예외는 `/paper-read` Step 4·Phase 1.5 검수 보고서 `papers/{논문명}/qa-report.md` 채우기(Step 7은 tutor 전담, qa 미개입 — 15라운드 렌즈1), main이 미리 만든 파일만, 14라운드 Grok)** 으로만 성립한다 — qa는 Agent 도구가 없어 coder를 직접 spawn할 수 없다. 구조·수식·다지점 수정처럼 coder가 필요한 FAIL은 자율 루프에서 빠져 **main 에스컬레이션**(coder 위임은 main 경유)으로 전환한다(`agent-routing.md` § "소집"의 실행 주체).
 
-> N회 초과 시 Ralph Wiggum 루프 트리거 (mem0-auto.md T33)
+> N회 초과 시 Ralph Wiggum 루프 트리거 (mem0-templates.md T33)
 
 ## QA 체크리스트 (순서대로)
 
-### 1순위 — 구조적·수학적 검증 (MANDATORY, 항상 최우선 실행)
+### 1순위 — 구조적·수학적 검증 (MANDATORY, 항상 먼저 **분석**하되 보고 게이팅은 qa-process § 2단계 리뷰 순서: 1차 기획-구현 일치 FAIL이면 이 결과는 "보류"로 표기)
 
 코드 종류와 무관하게 모든 검증에서 가장 먼저 수행한다.
 
@@ -140,14 +140,11 @@ verify FAIL → 원인 분석 → qa 자체 Edit로 경미 수정(FAIL 한정) �
 5. **테스트 실행**: 관련 테스트 파일 존재 시 실행
 
 ## ML 실험 사전 체크 (자동 트리거)
-트리거: `run_trains.py`, `train.py`, `config/train.yaml`, `config/task/*.yaml`, `model/` 하위 수정 시
-- [ ] `wandb=disabled trainer.fast_dev_run=true` dry-run 통과 여부
-- [ ] 새 모델/레이어 파라미터 수 확인 (`torchinfo.summary()`)
-- [ ] checkpoint 경로 충돌 없는지
-- [ ] seed, 환경 기록 완비 (`/experiment` 스킬 § 재현성 체크리스트)
-- [ ] **NaN/Inf loss 강제 감지** (silent failure 방지): dry-run stdout에 `nan`/`inf` (case-insensitive) 검출 시 즉시 FAIL — `fast_dev_run=true`는 NaN과 함께 exit 0 반환 가능
-- [ ] **exit code 강제 체크**: 모든 dry-run 실행 후 `echo "exit:$?"` 명시 출력 확인. exit 0이라도 NaN/Inf 검출 시 FAIL 우선
-- [ ] **silent skip 감지**: `0 batches`, `Epoch 0: 0it`, `LR scheduler is empty` 등 silent skip 패턴 검출 시 FAIL
+학습 스크립트·config·`model/` 하위 수정 시 체크리스트 전체는 `rules-lazy/qa-process.md` §6 하나가 정본이다(NaN/Inf·exit code·silent skip·pyvenv.cfg 포함).
+
+## 보안 검증 (security 에이전트 소관 — 2026-07-31 승격 이전)
+
+코드 취약점 검토(입력 주입·인증/인가·시크릿 노출·공급망 4관점)는 **`agents/security.md` 소관** — 당일 신설한 qa 보안 렌즈를 전담 에이전트로 승격 이전(중복 정의 금지, 단일 소유). **main은 qa spawn 시 security를 병행 spawn하는 것이 기본**(스킵 4종·결과 통합: `agents/security.md` § 호출 시점). qa는 기능 검증 중 보안 의심 지점 발견 시 직접 파지 않고 main에 `RECOMMEND: security 소집 {지점 1줄}` 신호만 반환한다.
 
 ## 보고 형식
 ```
@@ -161,7 +158,10 @@ verify FAIL → 원인 분석 → qa 자체 Edit로 경미 수정(FAIL 한정) �
 4. Config-코드(-논문) 일치: PASS/FAIL
 5. Import 검증: PASS/FAIL
 6. 테스트: PASS/SKIP/FAIL
+7. Ralph Wiggum 루프: N회 반복 / 위임 건수 M건 (해당 시)
+8. 원시 증거 (MANDATORY, 2026-08-25): 실행한 검증 명령 원문 + exit code + 실행 시각 + 검증 대상 파일의 `git hash-object` 값(내용 결박 — mtime은 touch로 위조 가능) + 출력 마지막 10줄(또는 로그 경로와 sha256). 없거나 해시가 현재 파일과 다르면 1~6의 PASS는 자기선언으로 무효. **해시는 전 건 main이 `git hash-object`로 재계산해 대조**하고, 비자명 변경은 추가로 main이 명령을 직접 1회 재실행해 대조. 한계(정직 표기): 자명한 변경에서는 해시 외 4필드(명령·exit code·시각·출력)가 자기보고로 남는다 — 정본: rules-lazy/qa-process.md § QA 결과 보고 형식 8항
 ```
+> **T41 보고 계약 (MANDATORY)**: 위 표와 별개로 최종 보고의 마지막 text 블록 안에 행두 `RESULT: <값>` 한 줄을 둔다. 값은 `PASS|DONE|DONE_WITH_CONCERNS|FAIL|BLOCKED|NEEDS_CONTEXT|REJECT` 중 `RESULT:` 뒤 첫 토큰. 굵게·따옴표·코드펜스·번호 항목 안 금지(행두 판정 탈락). FAIL 을 낼 때 약점 귀속 대상이 coder 가 아니면 같은 줄에 `target=<역할>` 을 덧붙인다(예: `RESULT: FAIL target=researcher`). 외부 원문 인용 줄은 마지막 블록에 넣지 않는다.
 
 ### dry-run stdout 요약 표준화 (#6 추가 — silent failure 방지)
 
@@ -174,15 +174,15 @@ grep -E "ERROR|WARN|Traceback|loss=nan|loss=inf|OOM|0 collected|FAILED" {output_
 
 ## MCP 연동 (Mem0)
 
-### Mem0 자동 트리거 (mem0-auto.md 참조)
-- **QA FAIL 발생** (T04): `add_memory(text="QA 실패: [파일]:[함수] — 원인: [요약], 수정: [내용]", metadata={"category": "code_pattern", "source": "qa-process"})` — 실패 이력 저장
-- **검증 시작 전** (T05): `search_memories(query="[모듈명] QA", filters={"metadata": {"category": "code_pattern"}})` — 과거 QA 이슈 사전 확인, 동일 패턴 경고
-- **Ralph Wiggum 루프 완료** (T33): 반복 횟수·최종 결과·수정 이력을 Mem0에 저장 → `mem0-auto.md` T33 참조
+### Mem0 자동 트리거 (정본: mem0-auto MANDATORY·mem0-templates OPTIONAL)
+- **QA FAIL 발생** (T04): **avoidance_rubric 형식**으로 저장 — 템플릿 정본: `rules-lazy/mem0-templates.md` T04 (구식 단순 포맷 금지 — 구조화 필드가 없으면 다음 작업 회피 가이드 재로드가 무의미, 2026-07-31 감사 교정)
+- **QA 이슈 재발 의심 시** (T05, `mem0-templates.md`): `search_memories(query="[모듈명] QA", filters={"metadata": {"category": "code_pattern"}})` — 과거 QA 이슈 사전 확인, 동일 패턴 경고
+- **Ralph Wiggum 루프 완료** (T33): 반복 횟수·최종 결과·수정 이력을 Mem0에 저장 → `mem0-templates.md` T33 참조
 
 ### § Mem0 Ralph Wiggum 이력
 
 #### 루프 완료 시 저장 (MANDATORY)
-Ralph Wiggum 루프 종료(PASS 또는 coder 위임) 시 자동 저장 → `mem0-auto.md` T33 참조
+Ralph Wiggum 루프 종료(PASS 또는 coder 위임) 시 자동 저장 → `mem0-templates.md` T33 참조
 → 동일 파일/함수에서 반복 실패 패턴 학습으로 재발 방지
 
 #### 루프 시작 전 검색
@@ -218,6 +218,9 @@ search_memories(query="[파일 경로] Ralph Wiggum [프로젝트명]", filters=
 1. REPRODUCE — 결정론적 재현
    목표: 버그를 100% 재현하는 최소 조건 확정
    방법: seed·입력·환경 고정 → 동일 결과 2회 이상 확인
+   기준: 실제 버그 코드 경로를 타며 사용자의 정확한 증상을 단언(assert)하는
+         신호 — 지금은 red, 수정 후 green. 이 신호 구축이 원인 추측보다
+         선행한다 (출처: mattpocock/skills diagnosing-bugs, MIT)
    출력: "재현 조건: {seed}, {입력}, {환경} → 항상 {증상} 발생"
 
 2. ISOLATE — 이진 탐색으로 원인 범위 축소
@@ -291,14 +294,15 @@ add_memory(
 - 동일 위치·동일 원인 2회 연속 발생 시 → 즉시 main 에스컬레이션 (무한 루프 방지)
 - 자동 재시도는 코드 변경만 — 테스트 추가/제거·아키텍처 변경 ❌
 
-## 스킬 자율 호출 화이트리스트 (Phase A·B 통합)
+## 스킬 호출 요청 목록 (Phase A·B 통합, main 중계)
 
-> 4-Gate / 5-Gate 통과 시 qa가 자율 호출 가능한 스킬 목록. 상세 Gate 판단: `rules/agent-routing.md` § 스킬 자율 호출 공통 규칙.
+> qa 는 Skill·Agent 도구가 없어 `NEEDS_SKILL: <스킬> <사유>`(진행 불가면 `BLOCKED`)로 main 에 요청하고, main 이 4-Gate / 5-Gate 로 호출한다. 상세 Gate 판단: `rules/agent-routing.md` § 스킬 자율 호출 공통 규칙.
 
 | 스킬 | 트리거 | Gate |
 |------|--------|------|
 | `ralph-loop:ralph-loop` | 테스트 자동 재시도 (단순 오타·import·타입 불일치 등 경미 수정) | 5-Gate (`rules-lazy/qa-process.md` § Ralph Wiggum 루프) |
 | `superpowers:dispatching-parallel-agents` | multi-module 검증 — 2+ 모듈이 독립 (공유 state 없음, 호출부 분리) | 4-Gate (공통) |
+| `/pydicom` (K-Dense scientific-agent-skills, MIT, 네트워크 없음) | 설치 시 활성(2026-09-14 사용자 결정). DICOM 메타·픽셀·전송 구문·비식별 검토 코드 검증 시 참조. 환자 식별 정보는 여전히 `rules-lazy/secret-management.md`·외부 전송 검사가 우선 | 4-Gate (공통) |
 
 **비용 모델**: Pro/Max 구독 토큰만 (추가 API 비용 ❌)
 

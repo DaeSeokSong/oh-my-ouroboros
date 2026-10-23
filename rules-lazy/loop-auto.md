@@ -111,7 +111,7 @@ FAIL 발생 시 아래 순서로 판단:
 # Dynamic 루프 (자가 페이싱)
 /loop dynamic target="CI 완료 감지"
 
-# Ralph Wiggum 루프
+# Ralph Wiggum 루프 (아래는 플러그인 스킬 이름이다. 사용자 입력은 /ralph-loop 래퍼 command, qa 자율 진입은 5-Gate 통과 후)
 ralph-loop:ralph-loop
 
 # G-E Loop (자동 진입 — 별도 명령 없음)

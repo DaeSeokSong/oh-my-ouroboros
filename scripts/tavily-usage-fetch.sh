@@ -34,7 +34,9 @@ SECRETS="$HOME/.claude/mcp-secrets.env"
 [ -f "$SECRETS" ] && { set -a; . "$SECRETS"; set +a; }
 [ -n "${TAVILY_API_KEY:-}" ] || exit 0
 
-resp="$(curl -s --max-time 10 -H "Authorization: Bearer $TAVILY_API_KEY" https://api.tavily.com/usage)" || exit 0
+# API 키는 curl 설정으로 표준입력(-K -)에 실어 보낸다: -H 인자는 ps 에 그대로 보인다(2026-10-01 감사 D).
+KEY_ESC="${TAVILY_API_KEY//\\/\\\\}"; KEY_ESC="${KEY_ESC//\"/\\\"}"
+resp="$(printf 'header = "Authorization: Bearer %s"\n' "$KEY_ESC" | curl -s -K - --max-time 10 https://api.tavily.com/usage)" || exit 0
 out="$(printf '%s' "$resp" | python3 -c '
 import json, sys
 try:

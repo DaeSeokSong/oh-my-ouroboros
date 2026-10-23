@@ -30,7 +30,7 @@
 
 # AWS
 AKIA[0-9A-Z]{16}                          # AWS Access Key ID
-[0-9a-zA-Z/+]{40}                         # AWS Secret Access Key (context 필요)
+[0-9a-zA-Z/+]{40}                         # AWS Secret Access Key (context 필요, 40자 hex·base64 는 git 커밋 해시와 겹쳐 오탐, 앞뒤 키 이름으로 판별)
 
 # OpenAI
 sk-[a-zA-Z0-9]{20,}                       # OpenAI API Key
@@ -74,8 +74,8 @@ xoxp-[0-9]{11}-[0-9]{11}-[0-9]{12}-[a-zA-Z0-9]{32} # Slack User Token
    → 매칭 내용 발견 시 → §3 즉시 처리 절차
 
 4. gitleaks / trufflehog 사용 가능 시 (권장)
-   → gitleaks detect --staged
-   → trufflehog git file://. --since-commit HEAD --only-verified   # git 서브커맨드는 repo URI 필수 (file://. = 현재 repo)
+   → gitleaks git --staged
+   → trufflehog git file://. --since-commit HEAD --only-verified   # 미설치(선택). git 서브커맨드는 repo URI 필수 (file://. = 현재 repo)
    → 결과 이상 없으면 commit 진행
 
 5. 스캔 통과 → commit 진행
@@ -84,10 +84,12 @@ xoxp-[0-9]{11}-[0-9]{11}-[0-9]{12}-[a-zA-Z0-9]{32} # Slack User Token
 ### 도구별 실행 명령
 
 ```bash
-# gitleaks (설치된 경우)
-gitleaks detect --staged --no-git
+# gitleaks 8.30 (설치됨). 스테이징 스캔은 git 하위 명령, git 이력 없는 폴더·파일은 dir 하위 명령
+# (구 `detect --staged --no-git` 은 --staged 와 --no-git 을 함께 쓸 수 없다)
+gitleaks git --staged
+gitleaks dir .
 
-# trufflehog (설치된 경우)
+# trufflehog (미설치, 선택)
 trufflehog git file://. --since-commit HEAD --only-verified --fail
 
 # 수동 grep (도구 미설치 시 fallback)
@@ -185,7 +187,7 @@ export ANTHROPIC_API_KEY=""
 
 ```python
 # ❌ 금지: 하드코딩
-API_KEY = "sk-ant-abc123..."
+API_KEY = "sk-ant-EXAMPLE"
 
 # ✅ 올바른 방법: 환경 변수 참조
 import os
@@ -196,7 +198,7 @@ if not API_KEY:
 
 ```yaml
 # ❌ 금지: YAML 하드코딩
-api_key: "tvly-abc123..."
+api_key: "tvly-EXAMPLE"
 
 # ✅ 올바른 방법: 환경 변수 참조
 api_key: ${TAVILY_API_KEY}
@@ -222,6 +224,17 @@ api_key: ${TAVILY_API_KEY}
 
 **AI가 직접 실행 금지**: `git filter-repo`, `git push --force` — 반드시 사용자 직접 수행
 
+### 이력 재작성 전 점검 (2026-10-06 실사고)
+
+자격 증명 형태 URL 이 저장소의 두 번째 커밋부터 들어가 기본 브랜치 팁에도 남은 사례에서, 이력 재작성은 커밋 297개의 해시와 배포판 태그를 바꾸고 워크트리 네 개가 같은 저장소를 공유하며 해시를 인용한 문서를 낡게 만드는 일이었다. 위 1~5 앞에 아래를 둔다. 점검은 값이 출력되지 않는 읽기 전용 명령으로만 하고(AI 가능), 재작성·force push 는 종전대로 사용자 직접이다.
+
+1. **영향 점검 4항**: 처음 들어간 커밋, 지금도 그 값을 담은 refs(브랜치·태그 팁), 재작성으로 해시가 바뀌는 커밋 수, 해시를 인용한 곳(문서·배포 기록·CI). 예: `git log --all -G'<패턴>' --format='%h %ad %s'`, `git grep -c '<패턴>' <ref>` (값이 아니라 개수·해시만 본다).
+2. **값 유효성 확인**: 1단계(무효화) 전에 그 자격 증명이 지금도 유효한지 담당자에게 확인한다(이미 폐기된 값이었던 사례가 있다). 폐기된 값이면 사용자 선택지에 «이력 정리 생략»을 넣는다.
+3. **새 미러 클론에서 재작성**: 워크트리 여럿이 object store 를 공유하므로 작업 중인 클론에서 하지 않는다. 워크트리 안의 미추적 산출물(`.scratch` 등)은 먼저 백업한다.
+4. **force push 와 서버 쪽 잔존**: `--all` 과 `--tags` 를 따로 밀고, 서버에 남는 PR 참조·포크·캐시는 force push 로 지워지지 않으므로 서버 관리자 정리가 필요하다고 적는다.
+5. **도구와 해시 대응표**: `git filter-repo` 는 uv 로 설치하고(`uv tool install git-filter-repo`), 재작성 뒤 생기는 `commit-map` 을 보관한다. 옛 해시를 인용한 문서는 그 대응표로 새 해시로 바꾼다.
+6. **사용자 선택지 유지**: 조치 없음 · 교체만 · 추적 해제 · 전부(교체+추적 해제+이력 정리)를 선택지로 올리고, AI 는 읽기 점검만 한다.
+
 ---
 
 ## §7 절대 금지 사항 (MANDATORY)
@@ -242,7 +255,7 @@ api_key: ${TAVILY_API_KEY}
 
 | 상황 | 참조 파일 |
 |------|---------|
-| git commit 절차 전체 | `~/.claude/rules/agent-routing.md` § gitops |
+| git commit 절차 전체 | `~/.claude/agents/gitops.md` |
 | 비밀 관련 에러 처리 | `~/.claude/rules-lazy/error-handling.md` § (e) CONSENT_NEEDED |
 | git 롤백 필요 시 | `~/.claude/rules-lazy/rollback-procedure.md` § Git 상태 |
 | 환경 설정 파일 구조 | `~/.claude/env-config` |

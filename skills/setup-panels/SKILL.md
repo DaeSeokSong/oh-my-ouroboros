@@ -28,6 +28,7 @@ $ARGUMENTS 를 파싱하여 아래 순서로 실행:
 1. **인자가 "cleanup"** → `tmux-panels.sh cleanup`
 2. **인자가 "status"** → `tmux-panels.sh status`
 3. **인자가 "purge"** → `tmux-panels.sh purge`
+   - purge·cleanup 은 자기 pane 과 학습 세션을 지우지 않고 대상 목록을 먼저 출력한다.
 4. **그 외 모든 경우 (인자 유무 관계없이)**:
    - **STEP 1**: 활성 팀 config.json 자동 조회
      - `~/.claude/teams/` 하위에서 가장 최근 수정된 팀 폴더의 `config.json` 읽기
@@ -41,22 +42,11 @@ $ARGUMENTS 를 파싱하여 아래 순서로 실행:
 ## 팀원 조회 방법 (코드)
 
 ```bash
-# 활성 팀 config.json 경로 찾기
-TEAM_CONFIG=$(ls -t ~/.claude/teams/*/config.json 2>/dev/null | head -1)
-
-# members 배열에서 name:agentType 추출
-if [ -n "$TEAM_CONFIG" ]; then
-  python3 -c "
-import json, sys
-data = json.load(open('$TEAM_CONFIG'))
-members = data.get('members', [])
-for m in members:
-    name = m.get('name', '')
-    role = m.get('agentType', 'agent')
-    print(f'{name}:{role}')
-"
-fi
+# 활성 팀 config.json 경로 찾기 (탐색성 read-only)
+ls -t ~/.claude/teams/*/config.json 2>/dev/null | head -1
 ```
+
+찾은 `config.json` 은 **Read 도구로 읽어** `members` 배열의 `name`·`agentType` 을 뽑는다(명령 치환과 인라인 `python3 -c` 는 `bash-write-check.sh` 훅에 막히므로 쓰지 않는다). 뽑은 값은 위 STEP 3 의 `~/.claude/scripts/tmux-panels.sh setup "name:agentType" ...` 서브커맨드로 넘긴다.
 
 ## 자동 연동 워크플로우
 

@@ -9,6 +9,8 @@
 #   0 = PASS (교정 규칙 미위반)
 #   1 = FAIL (교정 규칙 위반 감지)
 #   2 = INCONCLUSIVE (판정 불가: 파싱 실패·모델 오류)
+#   3 = 보류 (실험 활성 — judge 를 돌리지 않음. 2026-10-01 감사 P6: 종전 exit 0 은 호출자가 PASS 로 읽었다.
+#       harness-evolve.sh 는 0·1 이외를 INCONCLUSIVE 로 처리하므로 허위 PASS 가 되지 않는다)
 
 set -uo pipefail
 
@@ -45,7 +47,7 @@ fi
 # ── experiment-gate 가드 (불변식 3) ────────────────────────────────────────────
 if [[ -f "$HOME/.claude/_bench/.experiment_active" ]]; then
     echo "실험 활성 — 보류"
-    exit 0
+    exit 3
 fi
 
 # ── rubric 읽기 ────────────────────────────────────────────────────────────────

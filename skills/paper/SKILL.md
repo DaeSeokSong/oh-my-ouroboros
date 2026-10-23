@@ -1,6 +1,6 @@
 ---
 description: "Use when: 논문 작업 (abstract, section, review, figure), '논문', '초록', '피어리뷰' 키워드."
-model: opus
+model: inherit
 ---
 
 # Code Based Paper
@@ -53,6 +53,10 @@ $ARGUMENTS 를 파싱하여 아래 순서로 실행:
 - 아키텍처/흐름도 → **TikZ** (matplotlib 금지)
 - 데이터 플롯 → matplotlib/seaborn
 - 생성 후 sonnet UX/UI 검수 **필수**
+
+## 논문용 실험 설계 점검 (학습이 걸린 경우, 2026-10-12)
+
+논문에 싣는 실험(새 차수·새 판)을 설계하거나 확정할 때는 `/experiment` 와 같은 «심사 시각 점검»을 건다: researcher 가 점검하고(설계자 본인은 점검자가 될 수 없음) 보고서를 의뢰서 옆 `intent/<의뢰서 이름>.review.md` 에 남기며, 판정은 조언이고 진행 여부는 사용자가 정한다. 정본 `rules-lazy/design-review-check.md`, 재개·시드 추가·같은 설정 재발사는 면제.
 
 ## Confluence 연동
 

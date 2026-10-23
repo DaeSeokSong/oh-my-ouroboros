@@ -5,12 +5,14 @@
 
 ## 승격 트리거 분류
 
+> 목적지 파일은 `rules-lazy/memory-write.md` § 메모리 구조 표의 `<프로젝트>/` 아래 주제 파일이다(경로는 그 표가 정본, 없는 파일은 새로 만든다).
+
 | 카테고리 | 트리거 조건 | 출발 | 목적지 |
 |----------|-----------|------|--------|
 | **설계 확정** | 아키텍처 구조/모듈 결정, 수식 확정, 설계 근거 합의 | decisions.md | architecture.md |
 | **데이터 확정** | 데이터셋 추가/교체/제거 확정, 분할 전략 확정 | decisions.md | datasets.md |
 | **파라미터 확정** | 하이퍼파라미터 기준값 확정, lr/rank/batch 등 | decisions.md | hyperparams.md |
-| **실험 결과 확정** | Phase 완료 + 결과 수치 확정, 베이스라인 수치 확정 | progress.md | experiments.md |
+| **실험 결과 확정** | Phase 완료 + 결과 수치 확정, 베이스라인 수치 확정 | handover.md | experiments.md |
 | **사용자 교정** | "이렇게 하지 마", "이게 더 낫다" 등 행동 교정 | decisions.md | feedback.md |
 | **도구/환경 결정** | MCP 선택, 패키지 선정, 인프라 설정 등 영구 참조 | decisions.md | feedback.md |
 | **논문 결정** | 논문 구조, 실험 순서, 제출 전략 등 학회 관련 | decisions.md | experiments.md |
@@ -42,12 +44,12 @@
 ### § Mem0 승격 안전망
 
 - 승격 대상 항목은 이미 Mem0 `decision` 채널에 저장되어 있음 (memory-write.md § Mem0 병렬 저장)
-- 승격 누락 시에도 `search_memories(query="[프로젝트] 결정", filters={"metadata": {"category": "decision"}})`로 복구 가능 (`category=`는 유효 인자 아님 — `filters.metadata.category` 사용, `mem0-auto.md` §1.3) → `mem0-auto.md` T05 참조
+- 승격 누락 시에도 `search_memories(query="[프로젝트] 결정", filters={"metadata": {"category": "decision"}})`로 복구 가능 (`category=`는 유효 인자 아님 — `filters.metadata.category` 사용, `mem0-auto.md` §1.3) → 전용 템플릿 없음(T05 는 QA 이슈 검색용), `search_memories` 직접 호출
 - compact 전 일괄 승격 시: Mem0에서 미승격 항목 검색 → 누락 방지
 
 승격 실패 복구 흐름:
   장기 파일에 항목 없음 감지
-    → search_memories(category="decision", query="{항목 키워드}") → `mem0-auto.md` T05 참조
+    → search_memories(query="{항목 키워드}", filters={"metadata": {"category": "decision"}}) → 전용 템플릿 없음, `search_memories` 직접 호출
     → 결과 있으면 → 장기 파일에 복원 + 사용자 보고
     → 결과 없으면 → 진짜 미기록 → 사용자에게 재확인
 

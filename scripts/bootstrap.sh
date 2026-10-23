@@ -53,8 +53,8 @@ for arg in "$@"; do
 done
 
 # ── 상수 ──
-REPO_SSH="git@github.com:DaeSeokSong/.claude.git"
-REPO_HTTPS="https://github.com/DaeSeokSong/.claude.git"
+REPO_SSH="<your-private-harness-repo>"
+REPO_HTTPS="<your-private-harness-repo>"
 CLAUDE_DIR="$HOME/.claude"
 FAILED_STEPS=()
 
@@ -134,31 +134,8 @@ else
     log_ok "기본 모델: Sonnet (sonnet)"
 fi
 
-# ── env-config 저장 ──
-ENV_CONFIG="$CLAUDE_DIR/env-config"
-log_info "환경 설정 저장: $ENV_CONFIG"
-cat > "$ENV_CONFIG" <<ENVEOF
-# Claude Code 환경 설정 (bootstrap.sh가 자동 생성)
-CONFLUENCE_MCP=$( $SETUP_ATLASSIAN && echo "true" || echo "false" )
-BIO_PLAUSIBILITY=$BIO_PLAUSIBILITY
-DEFAULT_MODEL=$DEFAULT_MODEL
-ENVEOF
-log_ok "env-config 저장 완료"
-
-# ── model pin 반영 (2026-07-15 개정 — GPT P1-6): 추적 settings.json에는 model 키를 두지
-# 않는다(머신별 사용자 영역, 과거 2회 의도 제거 이력). 선택값은 gitignored settings.local.json에
-# 기록. 주의: ~/.claude/settings.local.json의 전역 인식은 공식 문서에 명시돼 있지 않으므로,
-# 새 세션에서 /status로 적용 여부를 확인하고 미적용이면 셸에 ANTHROPIC_MODEL export를 권장.
-LOCAL_SETTINGS="$CLAUDE_DIR/settings.local.json"
-if command -v jq >/dev/null 2>&1 && [ -f "$LOCAL_SETTINGS" ]; then
-    TMP_LS=$(mktemp)
-    jq --arg m "$DEFAULT_MODEL" '.model = $m' "$LOCAL_SETTINGS" > "$TMP_LS" && mv "$TMP_LS" "$LOCAL_SETTINGS"
-    log_ok "settings.local.json model → $DEFAULT_MODEL (gitignored 로컬 pin)"
-else
-    printf '{\n  "model": "%s"\n}\n' "$DEFAULT_MODEL" > "$LOCAL_SETTINGS"
-    log_ok "settings.local.json 생성 — model=$DEFAULT_MODEL (gitignored 로컬 pin)"
-fi
-log_info "적용 검증: 새 세션에서 /status 확인 — 미적용 시 셸에 export ANTHROPIC_MODEL=$DEFAULT_MODEL 추가"
+# (env-config·model pin 저장은 STEP 2 의 클론 뒤로 옮겼다 — 2026-10-01 감사:
+#  클론 전에 쓰면 ~/.claude 가 없을 때 실패하고, 비-git 기존 폴더는 .bak 으로 밀려 저장분이 사라진다)
 
 # =============================================================
 # STEP 1: 사전 요구사항 확인
@@ -249,6 +226,46 @@ fi
 
 # 스크립트 실행 권한 복원
 chmod +x "$CLAUDE_DIR/scripts/"*.sh 2>/dev/null && log_ok "scripts/*.sh 실행 권한 설정 완료"
+
+# ── env-config 저장 (클론 뒤) ──
+# 이미 있으면 이 스크립트가 묻는 세 키만 갱신한다 — 덮어쓰면 알림 주제 등 사용자 설정이 지워진다.
+ENV_CONFIG="$CLAUDE_DIR/env-config"
+CONFLUENCE_MCP_VAL=$( $SETUP_ATLASSIAN && echo "true" || echo "false" )
+log_info "환경 설정 저장: $ENV_CONFIG"
+if [ -f "$ENV_CONFIG" ]; then
+    [ -s "$ENV_CONFIG" ] && [ -n "$(tail -c1 "$ENV_CONFIG")" ] && echo >> "$ENV_CONFIG"   # 마지막 줄이 개행 없이 끝나면 append 가 그 줄에 붙는다(2026-10-01 P6 검수)
+    for kv in "CONFLUENCE_MCP=$CONFLUENCE_MCP_VAL" "BIO_PLAUSIBILITY=$BIO_PLAUSIBILITY" "DEFAULT_MODEL=$DEFAULT_MODEL"; do
+        if grep -q "^${kv%%=*}=" "$ENV_CONFIG"; then
+            sed -i "s|^${kv%%=*}=.*|${kv}|" "$ENV_CONFIG"   # 값은 true/false/sonnet/opus 뿐이라 sed 특수문자 없음
+        else
+            printf '%s\n' "$kv" >> "$ENV_CONFIG"
+        fi
+    done
+    log_ok "env-config 갱신 완료 (기존 다른 설정 보존)"
+else
+    cat > "$ENV_CONFIG" <<ENVEOF
+# Claude Code 환경 설정 (bootstrap.sh가 자동 생성)
+CONFLUENCE_MCP=$CONFLUENCE_MCP_VAL
+BIO_PLAUSIBILITY=$BIO_PLAUSIBILITY
+DEFAULT_MODEL=$DEFAULT_MODEL
+ENVEOF
+    log_ok "env-config 저장 완료"
+fi
+
+# ── model pin 반영 (2026-07-15 개정 — GPT P1-6): 추적 settings.json에는 model 키를 두지
+# 않는다(머신별 사용자 영역, 과거 2회 의도 제거 이력). 선택값은 gitignored settings.local.json에
+# 기록. 주의: ~/.claude/settings.local.json의 전역 인식은 공식 문서에 명시돼 있지 않으므로,
+# 새 세션에서 /status로 적용 여부를 확인하고 미적용이면 셸에 ANTHROPIC_MODEL export를 권장.
+LOCAL_SETTINGS="$CLAUDE_DIR/settings.local.json"
+if command -v jq >/dev/null 2>&1 && [ -f "$LOCAL_SETTINGS" ]; then
+    TMP_LS=$(mktemp)
+    jq --arg m "$DEFAULT_MODEL" '.model = $m' "$LOCAL_SETTINGS" > "$TMP_LS" && mv "$TMP_LS" "$LOCAL_SETTINGS"
+    log_ok "settings.local.json model → $DEFAULT_MODEL (gitignored 로컬 pin)"
+else
+    printf '{\n  "model": "%s"\n}\n' "$DEFAULT_MODEL" > "$LOCAL_SETTINGS"
+    log_ok "settings.local.json 생성 — model=$DEFAULT_MODEL (gitignored 로컬 pin)"
+fi
+log_info "적용 검증: 새 세션에서 /status 확인 — 미적용 시 셸에 export ANTHROPIC_MODEL=$DEFAULT_MODEL 추가"
 
 # =============================================================
 # STEP 3: 디렉토리 구조 초기화 (.gitignore 제외 항목)
@@ -459,15 +476,12 @@ if ! $SKIP_PLUGINS; then
     echo "  7. codex@openai-codex"
 fi
 
-NOTIFY_SCRIPT="$CLAUDE_DIR/scripts/claude-notify.sh"
-if [ -f "$NOTIFY_SCRIPT" ]; then
-    CURRENT_TOPIC=$(grep -m1 'NTFY_TOPIC=' "$NOTIFY_SCRIPT" | cut -d'"' -f2 2>/dev/null || echo "")
-    if [ -n "$CURRENT_TOPIC" ] && [ "$CURRENT_TOPIC" != "your-topic-name" ]; then
-        log_ok "ntfy NTFY_TOPIC: $CURRENT_TOPIC"
-        log_info "다른 topic 사용 시: sed -i 's/NTFY_TOPIC=\".*\"/NTFY_TOPIC=\"<new-topic>\"/' $NOTIFY_SCRIPT"
+# 2026-10-01 P6 검수: 알림 주제는 추적 파일(claude-notify.sh)이 아니라 gitignored env-config 의 USER_NTFY_TOPIC 에 둔다(주제 값은 출력하지 않는다).
+if [ -f "$CLAUDE_DIR/scripts/claude-notify.sh" ]; then
+    if grep -qsE '^USER_NTFY_TOPIC=.+' "$CLAUDE_DIR/env-config" "$CLAUDE_DIR/config/env-config"; then
+        log_ok "ntfy USER_NTFY_TOPIC 설정됨 (env-config)"
     else
-        log_warn "NTFY_TOPIC 미설정. 알림을 받으려면:"
-        echo "  sed -i 's/NTFY_TOPIC=\".*\"/NTFY_TOPIC=\"<your-unique-topic>\"/' $NOTIFY_SCRIPT"
+        log_warn "USER_NTFY_TOPIC 미설정. 알림을 받으려면 $CLAUDE_DIR/config/env-config 에 USER_NTFY_TOPIC=<알림 주제> 를 적으십시오(추적 파일에는 쓰지 마십시오)."
     fi
 fi
 

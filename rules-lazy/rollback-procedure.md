@@ -10,12 +10,14 @@
 
 | 트리거 | 조건 | 분류 |
 |--------|------|------|
-| QA 연속 실패 | 동일 파일·함수 QA FAIL 5회 연속 | 코드 변경 롤백 |
+| QA 연속 실패 | 동일 위치(파일:줄)·동일 원인 QA FAIL 3회 (`qa-process.md` § 동일 실패 패턴 감지와 같은 기준) | 코드 변경 롤백 |
 | 사용자 명시 | "되돌려", "이전으로", "취소해", "undo" | 사용자 요청 |
 | 의도하지 않은 변경 | 변경 계획에 없던 파일이 수정된 것 감지 | 코드 변경 롤백 |
 | 테스트 전파 실패 | 수정 후 기존 통과 테스트가 새로 실패 | 코드 변경 롤백 |
 | 데이터 손실 위험 | 삭제/덮어쓰기 명령이 잘못 실행될 것으로 판단 | 즉시 중단 + 사용자 확인 |
 | 비밀 정보 커밋 | API 키 등이 git 이력에 포함된 것 발견 | Git 상태 롤백 |
+
+> 3회 기준 대조(2026-10-17): ① 같은 위치·같은 원인 3회째 FAIL이면 롤백, ② 2회째까지는 수정 재시도, ③ 위치나 원인이 바뀌면 횟수를 처음부터 센다.
 
 ---
 
@@ -23,21 +25,22 @@
 
 ### (a) 코드 변경 롤백
 
-**트리거**: QA FAIL 5회 연속, 의도하지 않은 파일 변경, 사용자 명시
+**트리거**: 동일 위치 QA FAIL 3회, 의도하지 않은 파일 변경, 사용자 명시
 
 **절차**
 
 ```
 1. 백업 확인
    → git diff {파일} 또는 git show HEAD:{파일} 로 변경 전 내용 확인
-   → 백업 없으면 git stash 또는 git checkout HEAD -- {파일} 검토
+   → 되돌리기 전에 패치로 저장: git diff HEAD -- {파일} > {임시폴더}/{파일명}.patch (staged 변경 포함. 리다이렉션이라 쓰기 훅에 막히면 «사용자 승인 후 실행»)
+     (git stash 는 scripts/git-guardrails.sh 가 막는다. checkout/restore 의 «.»·«./»·«:/» 전체 폐기도 막히고 경로 명시는 통과한다)
 
 2. 변경 범위 파악
    → 변경된 파일 목록: git diff --name-only HEAD
    → 변경 줄 수: git diff --stat HEAD
 
 3. 롤백 방법 선택 (사용자에게 제시 후 선택 대기):
-   A) 단일 파일 롤백: git checkout HEAD -- {파일명}
+   A) 단일 파일 롤백: git restore --source=HEAD --staged --worktree -- {파일명} (경로 명시, 패치 저장 후. 옵션 없는 index 기준 restore 는 stage 된 변경을 되돌리지 않는다)
    B) 마지막 커밋 이전으로: git reset --soft HEAD~1 (스테이징 유지)
    C) Edit 역방향 적용: 현재 변경 내용을 역으로 Edit 도구 적용
 
@@ -246,7 +249,7 @@
 | 상황 | 참조 파일 |
 |------|---------|
 | git commit 전 비밀 정보 발견 | `~/.claude/rules-lazy/secret-management.md` |
-| QA FAIL 반복 (5회+) | `~/.claude/rules-lazy/qa-process.md` § Ralph Wiggum 루프 |
+| QA FAIL 반복 (동일 위치 3회) | `~/.claude/rules-lazy/qa-process.md` § Ralph Wiggum 루프 |
 | 에러 발생 시 에스컬레이션 | `~/.claude/rules-lazy/error-handling.md` § main 에스컬레이션 |
 | git 커밋·브랜치 전문 처리 | gitops 에이전트 (`agent-routing.md`) |
 | Mem0 update/delete 상세 | `~/.claude/rules/mem0-auto.md` §0 MCP 도구 레퍼런스 |

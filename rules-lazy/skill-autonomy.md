@@ -1,8 +1,8 @@
 # 스킬 자율 호출 상세 (agent-routing 보조)
 
-> **로드 시점**: 에이전트가 스킬 자율 호출을 판단하거나, main이 spawn 시 SKILL_DEPTH/특례를 적용할 때 lazy 로드.
+> **로드 시점**: 에이전트가 스킬 호출 필요(`NEEDS_SKILL`)를 판단하거나, main이 spawn 시 SKILL_DEPTH/특례를 적용할 때 lazy 로드.
 > **모(母) 파일**: `~/.claude/rules/agent-routing.md` (always-on — 4-Gate·SKILL_DEPTH 요약)
-> 에이전트는 작업 중 필요하다고 판단될 때 4단계 Gate를 통과한 스킬을 자율 호출할 수 있다. 사전에 스킬 체인을 정의하지 않는다 — 에이전트가 맥락에 따라 자율 판단한다.
+> 에이전트는 Skill 도구가 없어 작업 중 스킬이 필요하다고 판단되면 `NEEDS_SKILL: <스킬> <사유>` 를 main 에 반환한다(main 중계). main 이 4단계 Gate 를 적용해 호출하거나 사용자에게 한 줄로 묻는다. 사전에 스킬 체인을 정의하지 않는다 — 필요 판단은 에이전트가 맥락에 따라 한다.
 
 ---
 
@@ -51,9 +51,9 @@ discuss로 소집된 teammate가 다시 `/discuss`를 호출하는 경우 **허�
 
 ## 신규 정식 등재 스킬 (Phase A·B 통합 — MANDATORY)
 
-아래 3 스킬은 정식 라우팅 대상이며, 4-Gate 통과 시 해당 에이전트가 자율 호출 가능.
+아래 3 스킬은 정식 라우팅 대상이며, 해당 에이전트가 `NEEDS_SKILL` 로 요청하면 main 이 4-Gate 를 적용해 호출한다.
 
-| 스킬 | 호출 주체 | 자율 호출 트리거 |
+| 스킬 | 호출 요청 주체 | 호출 요청 트리거 (main 중계) |
 |------|----------|----------------|
 | `superpowers:dispatching-parallel-agents` | coder, scout, searcher, qa | 독립 작업 2+ 감지 시 (공유 state 없음) |
 | `/loop` (bundled — interval / dynamic) | main | 학습 모니터링·반복 패턴 감지 + 사용자 비용 결정 후 |

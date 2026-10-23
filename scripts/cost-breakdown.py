@@ -37,7 +37,7 @@ cost-breakdown.py — Claude Code 트랜스크립트에서 모델별·에이전�
 import json, glob, os, sys, argparse, collections
 
 JSON_SCHEMA_VERSION = 3
-FAST_ELIGIBLE = {"claude-opus-4-8", "claude-opus-4-7"}
+FAST_ELIGIBLE = {"claude-opus-5-5", "claude-opus-4-8", "claude-opus-4-7"}
 HOME = os.path.expanduser("~")
 PROJ_GLOB = os.path.join(HOME, ".claude", "projects", "*", "*.jsonl")
 PRICING_PATH = os.path.join(HOME, ".claude", "config", "model-pricing.json")
@@ -287,13 +287,15 @@ def render(args, note):
     model_main, model_agent, external, proj_tokens = aggregate(led_msgs, led_tasks, noid_main, noid_task)
     rows, computed, fb = build_rows(model_main, model_agent, models, fallback)
     authoritative = coralline_grand_total() if args.all else coralline_session_total(session_ids)
+    unverified = [{"model": row[0], "key": k} for row in rows
+                  for k in sorted(k for k in models.get(row[0], {}) if k.startswith("_unverified"))]
 
     if args.json:
         out = {"schema_version": JSON_SCHEMA_VERSION, "scope": "all" if args.all else "session",
                "authoritative_total_usd": round(authoritative, 4) if authoritative is not None else None,
                "computed_breakdown_usd": round(computed, 4),
                "coverage_pct": round(100*computed/authoritative, 1) if authoritative else None,
-               "fallback_priced_models": sorted(fb),
+               "fallback_priced_models": sorted(fb), "unverified": unverified,
                "dedup_removed": {"assistant": stats["dup_msg"], "task": stats["dup_task"]},
                "ledger_detail_used": used_ledger, "models": [], "external": []}
         for model, mc, macc, mcost, agents in rows:
@@ -338,6 +340,8 @@ def render(args, note):
     print(f"  합계 ${computed:.2f}{ext}")
     if fb:
         print(f"  ⚠️  요금표 미등재(fallback): {', '.join(sorted(short(m) for m in fb))}")
+    for u in unverified:   # 요금표 항목의 _unverified* 키 → 미확인 경고
+        print(f"  ⚠️  {short(u['model'])}: {u['key']} 미확인")
     if args.all and proj_tokens:
         print("\n  📁 프로젝트별 (원시 토큰 합, ledger+라이브):")
         for proj, acc in sorted(proj_tokens.items(), key=lambda kv: -total_tokens(kv[1]))[:12]:

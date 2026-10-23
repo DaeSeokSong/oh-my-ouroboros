@@ -1,6 +1,6 @@
 ---
 description: "Use when: 신경과학 메커니즘 인용 (도파민, 세로토닌, 노르에피네프린, 예측 코딩, Hebbian), 생물학적 타당성 주장. 쉬운 설명·예시·실생활 비유 3종 필수."
-model: opus
+model: inherit
 ---
 
 # /neuro-explain — 신경과학 메커니즘 설명 기준
@@ -52,10 +52,10 @@ model: opus
 ## § Mem0 설명 일관성
 
 ### 설명 저장
-신경과학 메커니즘 설명 완료 시: → mem0-auto.md T16 참조
+신경과학 메커니즘 설명 완료 시: → mem0-templates.md T16 참조
 
 ### 이전 설명 검색
-동일 메커니즘 재설명 시: → mem0-auto.md T16 참조
+동일 메커니즘 재설명 시: → mem0-templates.md T16 참조
 이전 비유 발견 → 동일 비유 사용으로 일관성 유지 + 모순 방지 / 관련 논문도 category="paper"로 추가 검색
 
 ### 최신 근거 외부 검색 (Tavily 발견 + citation-verifier 검증)
@@ -64,7 +64,7 @@ Mem0에 저장된 논문이 2년 이상 경과했거나 최신 반박 논문이 
 → **신경과학 논문 citation-verifier 검증 필수(철회게이트+stance 디베이트)**: 인용하는 신경과학 논문에 대해 citation-verifier 소집
   - editorialNotices(철회/정정) 확인 → 철회 논문 인용 방지
   - supporting/contrasting 비율로 학계 합의 수준 확인
-  - 검증 결과를 Mem0에 저장: → mem0-auto.md T21 참조(source=citation-verifier)
+  - 검증 결과를 Mem0에 저장: → mem0-templates.md T21 참조(source=citation-verifier)
 → 기존 Mem0 저장 논문과 결론 충돌 시 사용자에게 보고
 
 ---

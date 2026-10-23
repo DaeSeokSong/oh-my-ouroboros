@@ -14,7 +14,7 @@ allowed-tools:
 
 wandb 프로젝트의 다수 run을 3계층으로 정리한다 — 유의미 실험 대표만 남기고(visible+태그), 나머지는 눈 끄기(hidden). 실행 스크립트 **정본은 하네스 `~/.claude/tools/wandb_cleanup/`** (2026-07-28 승격 — git 전파로 전 서버·전 프로젝트 가용, 공개 미러 allowlist 밖).
 
-> **스크립트 위치 (2026-07-28 하네스 승격)**: 종전 "프로젝트 repo cwd 기준 + 없으면 타 repo 탐색·복사"는 원본 보유 repo(project-C)가 없는 서버·프로젝트에서 스킬이 반쪽이 되는 구조라 폐기. 이제 **`~/.claude/tools/wandb_cleanup/`이 정본**이며 프로젝트 venv로 직접 실행한다(작업 cwd=프로젝트 루트 — 산출물 `--out-dir` 기본값이 cwd 기준 `outputs/wandb_cleanup/`). 프로젝트별 차이는 `--entity`/`--project`/`--view-id`/`--view-internal-name` 인자로 지정(기본값=원 프로젝트 실측값). ★단 3계층 분류 상수(`KEEP_*`/`PILLAR_KEYWORDS`)는 아직 코드 내 하드코딩(원 프로젝트 기준) — 다른 프로젝트에서 3계층 전체 정리를 하려면 정본을 프로젝트 `tools/`로 복사해 상수만 교체하거나(정본은 무수정 유지), 상수 무관한 § 경량 경로·`wandb_hide3`(개별 눈끄기)를 사용. 상수의 `--config` 외부화는 후속 개선 항목. 핵심 메커니즘(selections.tree·upsertView UPDATE)은 프로젝트 무관.
+> **스크립트 위치 (2026-07-28 하네스 승격)**: 종전 "프로젝트 repo cwd 기준 + 없으면 타 repo 탐색·복사"는 원본 보유 repo가 없는 서버·프로젝트에서 스킬이 반쪽이 되는 구조라 폐기. 이제 **`~/.claude/tools/wandb_cleanup/`이 정본**이며 프로젝트 venv로 직접 실행한다(작업 cwd=프로젝트 루트 — 산출물 `--out-dir` 기본값이 cwd 기준 `outputs/wandb_cleanup/`). 프로젝트별 차이는 `--entity`/`--project`/`--view-id`/`--view-internal-name` 인자로 지정(기본값=원 프로젝트 실측값). ★단 3계층 분류 상수(`KEEP_*`/`PILLAR_KEYWORDS`)는 아직 코드 내 하드코딩(원 프로젝트 기준) — 다른 프로젝트에서 3계층 전체 정리를 하려면 정본을 프로젝트 `tools/`로 복사해 상수만 교체하거나(정본은 무수정 유지), 상수 무관한 § 경량 경로·`wandb_hide3`(개별 눈끄기)를 사용. 상수의 `--config` 외부화는 후속 개선 항목. 핵심 메커니즘(selections.tree·upsertView UPDATE)은 프로젝트 무관.
 
 ## 트리거
 "wandb 정리", "run 태그 정리", "눈 끄기/숨기기", 프로젝트 run 수백 개 시각 정리 요청. 학습 사이클 종료 시 정리 게이트(`skills/experiment/SKILL.md` § 학습 사이클 종료 후 정리 게이트)에서 사용자 선택 시.
@@ -67,13 +67,13 @@ wandb 프로젝트의 다수 run을 3계층으로 정리한다 — 유의미 실
 3계층 분류 상수를 아직 프로젝트에 맞게 조정하지 않은 새 프로젝트면, 이 경량 경로로 진행한다. **단 wandb run 삭제·수정 등 write 로직은 즉석 실행 금지(code-execution.md) — 임시 스크립트로 저장 후 사용자가 직접 실행**(read-only 조회는 탐색성 실행으로 허용). 영구 스크립트를 `tools/`에 만들지 않을 뿐, write 코드는 임시 폴더(scratchpad)에 파일로 저장해 실행 명령서로 넘긴다:
 
 0. **각 프로젝트의 personal workspace URL을 사용자에게 요청** — 실제 URL로 entity/project/view를 특정해 `from_url`의 -v/-w suffix 함정(§ 함정 2종 #1)을 우회한다. (URL만으로 write가 되는 건 아니고, 사용자가 실제 보는 view를 확실히 특정하는 용도. URL의 `nw=`/`workspace=` 파라미터 → view internal name.)
-1. `allViews(viewName="nw-nwuser<entity>-w"` 또는 URL에서 특정된 이름`)`으로 raw spec 조회 → 3계층 분류 + tree 계획을 inline python으로 산출(read-only dryrun, write 0).
-2. 사용자 검토(유의미 대표 목록 + 눈끄기 수 — **이 시점에 § 숨김 vs 삭제 선택 Q1·Q2 AskUserQuestion 필수**, 스크립트 경로와 동형) → 승인 후 **mutation 전 백업 저장 (MANDATORY)**: 원본 view spec 전체 + 변경 대상 run들의 현재 태그를 임시 폴더에 JSON으로 저장 — 스크립트 경로의 자동 백업과 동등한 원복 근거로, 이게 없으면 § 되돌리기가 불가능하다 → `json.loads(spec)` → tree append/remove → `upsertView`에 **원래 view id를 실어** UPDATE(inline) → 육안 확인.
+1. `allViews(viewName="nw-nwuser<entity>-w"` 또는 URL에서 특정된 이름`)`으로 raw spec 조회 → 3계층 분류 + tree 계획을 임시 스크립트로 산출(`.scratch/<세션 id>/` 에 파일로 저장 후 실행. 인라인·즉석 실행 금지, `rules/code-execution.md`. read-only dryrun, write 0).
+2. 사용자 검토(유의미 대표 목록 + 눈끄기 수 — **이 시점에 § 숨김 vs 삭제 선택 Q1·Q2 AskUserQuestion 필수**, 스크립트 경로와 동형) → 승인 후 **mutation 전 백업 저장 (MANDATORY)**: 원본 view spec 전체 + 변경 대상 run들의 현재 태그를 임시 폴더에 JSON으로 저장 — 스크립트 경로의 자동 백업과 동등한 원복 근거로, 이게 없으면 § 되돌리기가 불가능하다 → `json.loads(spec)` → tree append/remove → `upsertView`에 **원래 view id를 실어** UPDATE(위 임시 스크립트 파일로, 사용자 승인 뒤 실행) → 육안 확인.
 
 ## 절차 (분류 상수 조정 완료 프로젝트)
-1. **dryrun**: `.venv/bin/python3 ~/.claude/tools/wandb_cleanup/wandb_3tier_dryrun.py` — live 재조회 + 3계층 분류 + 계획 JSON 산출(write 0). 유의미 대표 목록·기둥 분포·tree 계획 검토. (프로젝트 루트에서 실행 — 프로젝트 사본으로 상수를 교체한 경우 그 경로 사용)
+1. **dryrun**: `.venv/bin/python3 ~/.claude/tools/wandb_cleanup/wandb_3tier_dryrun.py` — live 재조회 + 3계층 분류 + 계획 JSON 산출(write 0). **선행 입력**: 이전 세션 산출물 `wandb_tag_plan.json`(51개 ambiguous base_id 포함)이 `outputs/wandb_cleanup/` 에 있어야 한다(없으면 `--plan-in <경로>`, 상세 `tools/wandb_cleanup/README.md` ④). 유의미 대표 목록·기둥 분포·tree 계획 검토. (프로젝트 루트에서 실행 — 프로젝트 사본으로 상수를 교체한 경우 그 경로 사용)
 2. **사용자 검토** (MANDATORY): 유의미 대표 전체 목록 + 눈끄기 대상 수를 사용자에게 보여주고 승인받는다. → **이 시점에 § 숨김 vs 삭제 선택(Q1·Q2) AskUserQuestion 필수** — 나머지 tier·기존 hidden run을 숨김만 할지 삭제할지 확정 후 다음 단계.
-3. **plan sanity check**: `... wandb_3tier_apply.py --plan` — 태그 변경 대상 수가 dryrun과 일치하는지 확인(write 0).
+3. **plan sanity check**: `... wandb_3tier_apply.py`(**`--apply` 없이** 실행 = plan 모드, write 0; `--plan` 은 argparse 에 없는 플래그이고 `--plan-in` 의 약어로 해석돼 값 누락으로 실패한다) — 태그 변경 대상 수가 dryrun과 일치하는지 확인.
 4. **apply**: `I_UNDERSTAND_THIS_WRITES_TO_WANDB=1 ... wandb_3tier_apply.py --apply` — 태그 + tree 실제 적용. 실행 전 태그/tree 자동 백업 JSON 저장.
 5. **육안 확인**: 사용자가 `wandb.ai/<entity>/<project>` 새로고침 → 대표만 visible인지 확인.
 
@@ -85,4 +85,4 @@ apply 시 자동 저장된 `*_tags_backup_before_apply.json` / `*_tree_backup_be
 ## 주의 (환경별 · 실행 규칙)
 - `--entity`/`--project`/`--view-id`/`--view-internal-name`는 프로젝트마다 다르다 — `allViews`로 personal default view(`nw-nwuser<entity>-w`)의 id를 먼저 조회해 지정.
 - 대표 선정 기본 = 그룹 내 최이른 `created_at`. 기둥 매핑 0매치 시 `model.name` 계열로 추론(프로젝트 도메인에 맞춰 보정 필요).
-- ★실제 mutation(태그/tree write)은 **사용자 승인 후** 실행 — wandb write는 코드 실행 규칙의 "검증(dry-run/lint/test) 예외"에 해당하지 않는다. dryrun/--plan은 read-only라 자동 실행 가능.
+- ★실제 mutation(태그/tree write)은 **사용자 승인 후** 실행 — wandb write는 코드 실행 규칙의 "검증(dry-run/lint/test) 예외"에 해당하지 않는다. dryrun과 plan 모드(`--apply` 없이 실행)는 read-only라 자동 실행 가능.

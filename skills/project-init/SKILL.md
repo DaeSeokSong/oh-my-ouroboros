@@ -19,6 +19,7 @@ model: sonnet
 
 1. 현재 cwd 구조 파악 (Glob으로 탐색)
 2. 기존 구조가 있으면 충돌 여부 분석 후 사용자에게 보고
+2.5. cwd 가 git 저장소가 아니면 `scope-gate.sh` 가 Write·Edit 를 막는다(허용 목록 `config/scope-allow.txt` 밖). 생성 전에 사용자에게 `git init`(사용자 직접) 또는 허용 목록 등록을 안내한다
 3. 표준 폴더 트리 중 필요한 부분만 생성 (사용자 승인 후)
 4. 프로젝트 루트 CLAUDE.md 초안 생성 (디렉토리 구조 + 주요 config + 실행 명령어)
 5. **graphify 초기 코드 그래프 생성** (3과 동일 승인 범위 내) — 프로젝트 루트에서 `graphify .` 1회 실행해 `graphify-out/` 생성. 신규 프로젝트는 보통 코드 파일뿐이라 semantic(LLM) 추출 없이 AST만으로 끝남 — 비용 사실상 0. (`code-graph.md` §0의 100파일 게이트는 **신규 프로젝트에 한해 예외** — 2026-07-09 사용자 결정, 근거는 §0 예외 각주. 기존 프로젝트 도입은 게이트 유지.) 이후 코드 파일을 Write/Edit할 때마다 `scripts/graphify-autoindex.sh`(PostToolUse 훅, 이미 배선됨)가 백그라운드에서 자동 재인덱싱한다 — 별도 `--watch` 데몬 불필요, graphify-out/ 존재 여부만으로 훅이 활성화된다. 문서/논문(docs/paper/*.tex 등) 변경은 훅이 자동 포함하지 않음 — 필요 시 `/graphify --update` 수동 실행.
@@ -33,6 +34,9 @@ model: sonnet
 
 ```
 project_root/
+│
+├── .claude/
+│   └── train.env                   # 학습 세션 접두 · 체크포인트 로컬 경로 · 원격 목적지 (rules-lazy/background-task.md § 학습 세션·체크포인트 배치)
 │
 ├── src/
 │   ├── train.py                    # 단일 실험 진입점 (Hydra @hydra.main)
@@ -90,12 +94,30 @@ project_root/
 │
 ├── run_trains.py                   # 배치 실험 실행기 (root 위치 고정)
 ├── run_tests.py
-├── pyproject.toml                  # uv 패키지 관리
+├── .python-version                 # uv 관리 파이썬 버전(메이저.마이너, 예 3.12) — rules-lazy/uv-env.md
+├── pyproject.toml                  # uv 패키지 관리 + [tool.uv] python-preference = "only-managed"
 ├── uv.lock                         # 반드시 commit
 └── README.md
 ```
 
 ## 필수 파일 내용 기준
+
+### .claude/train.env (학습 세션·체크포인트 배치 — 정본 `rules-lazy/background-task.md` § 학습 세션·체크포인트 배치)
+
+```
+TRAIN_TMUX_PREFIX=<프로젝트 슬러그>-mtl   # 학습 tmux 세션 이름 접두. 세션은 <접두>1, <접두>2 …
+CKPT_ROOT=/path/to/local-ssd/weights   # 로컬 SSD. NFS·NAS 경로 금지
+CKPT_REMOTE=/path/to/remote/weights   # 선택. 학습 뒤 rsync 목적지
+```
+이 파일이 없거나 tmux 세션 밖이거나 `CKPT_ROOT` 가 네트워크 파일시스템이면 main 은 발사 명령서를 내지 않는다(2026-09-13 사용자 지시).
+
+### .python-version + pyproject.toml [tool.uv] (인터프리터 출처 고정 — 정본 `rules-lazy/uv-env.md`)
+스캐폴드 순서: `uv python install 3.12` → `.python-version` 에 `3.12`(메이저.마이너만) → `pyproject.toml` 에 아래 블록 → `uv sync`. 시스템·anaconda 파이썬이 venv `home` 으로 박히면 다른 서버에서 venv 가 죽는다(2026-08-27 실사고).
+```toml
+[tool.uv]
+python-preference = "only-managed"
+```
+- **ML 학습 프로젝트**는 위 블록 대신 `config/uv-baseline/pyproject.template.toml` 을 `pyproject.toml` 로 복사해 시작한다(기반 버전 128개 제약 + 위 블록 포함, 2026-09-30 사용자 결정). 사용법: 같은 폴더 `README.md`.
 
 ### configs/config.yaml (메인 진입점)
 ```yaml
@@ -141,7 +163,7 @@ def build_{model}(config: DictConfig) -> nn.Module:
 
 ## § Mem0 프로젝트 패턴 참조
 
-신규 프로젝트 초기화 시 과거 프로젝트 구조 자동 검색: → mem0-auto.md T14 참조
+신규 프로젝트 초기화 시 과거 프로젝트 구조 자동 검색: → mem0-templates.md T14 참조
 이전 구조 패턴 발견 → 템플릿으로 제안 / 사용자 피드백도 category="feedback"으로 추가 검색하여 선호 반영
 
 ---

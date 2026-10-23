@@ -8,9 +8,9 @@
 
 <p>
 <img src="https://img.shields.io/badge/license-MIT-10b981?style=flat-square" alt="MIT license"/>
-<img src="https://img.shields.io/badge/skills-25-8b5cf6?style=flat-square" alt="25 skills"/>
-<img src="https://img.shields.io/badge/agents-10-06b6d4?style=flat-square" alt="10 agents"/>
-<img src="https://img.shields.io/badge/lazy__rules-40-f59e0b?style=flat-square" alt="40 lazy rules"/>
+<img src="https://img.shields.io/badge/skills-32-8b5cf6?style=flat-square" alt="32 skills"/>
+<img src="https://img.shields.io/badge/agents-13-06b6d4?style=flat-square" alt="13 agents"/>
+<img src="https://img.shields.io/badge/lazy__rules-50-f59e0b?style=flat-square" alt="50 lazy rules"/>
 <img src="https://img.shields.io/badge/self--audit-monthly-22c55e?style=flat-square" alt="monthly self-audit"/>
 <img src="https://img.shields.io/badge/PRs-welcome-ec4899?style=flat-square" alt="PRs welcome"/>
 </p>
@@ -19,15 +19,15 @@
 
 ---
 
-Like the mythic serpent coiled into a ring, this harness **feeds on its own output**: every session leaves feedback traces, a monthly audit consumes them, and the rules that emerge are forced through a hard token budget before they can live in context. It is not a plugin or a framework — it is a **sanitized one-way mirror of a real daily-driver `~/.claude`**, used across multiple servers for ML research and engineering.
+Like the mythic serpent coiled into a ring, this harness **feeds on its own output**: every session leaves feedback traces, a monthly audit consumes them, and the rules that emerge are weighed against a token budget before they can live in context. It is not a plugin or a framework — it is a **sanitized one-way mirror of a real daily-driver `~/.claude`**, used across multiple servers for ML research and engineering. Project-specific material (internal projects, documents, datasets, incident details) is removed on export; only the general-purpose harness is published.
 
-> 🔒 Nothing here is hand-edited. A fail-closed export pipeline (allowlist → sanitize → forbidden-pattern gate → fresh-history sync) regenerates this repo on each release. Even the logo is code-generated — see [`assets/gen_ouroboros.py`](assets/gen_ouroboros.py).
+> 🔒 Nothing here is hand-edited. A fail-closed export pipeline (allowlist → line/phrase removal → sanitize → syntax gate → forbidden-pattern gate → secret scan → fresh-history sync) regenerates this repo on each release. Even the logo is code-generated — see [`assets/gen_ouroboros.py`](assets/gen_ouroboros.py).
 >
 > 🇰🇷 The rules and skills are written in **Korean** — this is a real production config, not a localized demo. The architecture, file layout, and this README are English; the patterns (budget hooks, audit loop, two-tier rules) read the same in any language.
 
 ## ✨ Why it's different
 
-- 🧮 **Hard token budget with a zero-sum rule** — always-on context (`CLAUDE.md` + `rules/`) has a byte ceiling enforced by a commit hook. Adding a rule means shrinking another. The context never silently bloats.
+- 🧮 **Token budget with a zero-sum habit** — always-on context (`CLAUDE.md` + `rules/`) has a byte ceiling that a commit hook checks on every commit. Going over it raises a warning rather than a block (a deliberate choice: losing a key rule sentence to fit the ceiling costs more), and the audit's diet cycle pays the overage back. The context never bloats silently.
 - 🔍 **A self-audit loop with recorded baselines** — a monthly audit skill measures inventory drift, pointer integrity, doc/implementation mismatch, and *built-but-unused rot* against numbers written down last cycle. Fixes are classified (structural vs parameter) and hit-tracked next time.
 - 🧾 **Evidence-gated "done"** — no success claims without verification output; subagent claims that change downstream actions are re-checked against `file:line` before adoption.
 - 🧠 **Judgment rationale lives in artifacts** — trade-offs, failure-mode definitions, and tool-selection measurements are written into the rule/skill/script that embodies them, so any future session can reproduce the reasoning from files alone.
@@ -40,7 +40,7 @@ flowchart LR
     W["⚙️ Daily work<br/>sessions · experiments"] --> F["📥 Feedback capture<br/>QA fails · corrections · repeated patterns"]
     F --> A["🔍 Monthly self-audit<br/>baselines · pointer integrity · rot check"]
     A --> D["✂️ Zero-sum diet<br/>token budget · rule compression"]
-    D --> B["🧪 Bench gate<br/>before/after behavior check"]
+    D --> B["🧪 Bench (when rules change)<br/>before/after check on a temp branch"]
     B --> W
 ```
 
@@ -51,14 +51,14 @@ The tail feeds the mouth: waste found by the audit becomes the budget for the ne
 | Layer | Contents |
 |-------|----------|
 | 📌 `CLAUDE.md` + `rules/` | Always-on tier: routing, model delegation (opus/sonnet/haiku), code-execution policy, memory triggers, prompt preprocessing |
-| 💤 `rules-lazy/` | 40 lazy-loaded policies: QA process, context management, error handling, untrusted-content quarantine, secret handling, … |
-| 🤖 `agents/` | 10 specialized subagents (scout · coder · qa · planner · researcher · searcher · docs · gitops · designer · citation-verifier) with spawn-prompt contracts |
-| 🧰 `skills/` | 25 skills: experiment workflow, paper reading, multi-perspective discussion, harness audit & bench, wandb/checkpoint cleanup, cost breakdown, … |
+| 💤 `rules-lazy/` | 50 lazy-loaded policies: QA process, context management, error handling, untrusted-content quarantine, secret handling, decision sovereignty, … |
+| 🤖 `agents/` | 13 specialized subagents (scout · coder · qa · security · reviewer · planner · researcher · searcher · docs · gitops · designer · citation-verifier · tutor) with spawn-prompt contracts |
+| 🧰 `skills/` | 32 skills: intent docs, experiment workflow, paper reading, multi-perspective discussion, harness audit & bench, wandb/checkpoint cleanup, cost breakdown, … |
 | 🔩 `scripts/` | Hooks & automation: commit gates, session-start pattern mining, nightly ontology refresh, cost snapshots, this export pipeline |
-| ⚙️ `settings.json` + `_audit/history.md` | The receipts: actual hook wiring, and the audit history with recorded baselines |
+| ⚙️ `settings.json` | The receipts: the actual hook wiring |
 
 <details>
-<summary><b>🤖 The 10 agents, one line each</b></summary>
+<summary><b>🤖 The 13 agents, one line each</b></summary>
 <br/>
 
 | Agent | Model | Role |
@@ -66,6 +66,8 @@ The tail feeds the mouth: waste found by the audit becomes the budget for the ne
 | `scout` | haiku | Read-only recon — finds the files, symbols, and wiring before anyone edits |
 | `coder` | sonnet | Implementation — writes and modifies code to spec |
 | `qa` | sonnet | Verification — tests, call-site impact analysis, causal bug tracing |
+| `security` | sonnet | Code vulnerability review (4 lenses) — runs alongside qa by default, same evidence bar |
+| `reviewer` | opus | Depth-first code review, one function at a time — where the code drifts from its stated design |
 | `planner` | opus | Architecture & experiment design consulting; final calls stay with main |
 | `researcher` | opus | Paper writing, result analysis, adversarial design review |
 | `searcher` | sonnet | The only agent that touches the open web — returns quarantined summaries |
@@ -73,11 +75,12 @@ The tail feeds the mouth: waste found by the audit becomes the budget for the ne
 | `gitops` | sonnet | Commits, branches, diffs, tags — push always stays with the human |
 | `designer` | sonnet | Figures — TikZ diagrams and matplotlib plots |
 | `citation-verifier` | sonnet | Retraction gate + supporting/contrasting stance debate before any paper is cited |
+| `tutor` | opus | Teaches from finished artifacts: quiz → diagnose → re-explain → re-quiz until every answer is right |
 
 </details>
 
 <details>
-<summary><b>🧰 The 25 skills, one line each</b></summary>
+<summary><b>🧰 The 32 skills, one line each</b></summary>
 <br/>
 
 | Skill | What it does |
@@ -87,8 +90,9 @@ The tail feeds the mouth: waste found by the audit becomes the budget for the ne
 | `experiment` | Experiment lifecycle: design → dry-run → launch → analysis → cleanup gates |
 | `workflow` | Phase-based workflow design with auto-generated rubric gates |
 | `harness-audit` | The monthly self-audit: baselines, pointer integrity, recurring-defect catalog |
-| `harness-bench` | Before/after behavior measurement when rules change |
-| `learn-from-feedback` | Corrections accumulate into rule proposals after 3+ hits |
+| `harness-bench` | Before/after measurement tool for rule changes, run on a temporary branch before approval; self-reported; one bench is on record so far (from the October 2026 audit) |
+| `learn-from-feedback` | Hooks log corrections and repeated patterns into a candidate ledger; 3+ hits become rule proposals the user accepts or rejects |
+| `intent` | Writes the "why" doc (problem, outcome, constraints, open questions, premises) before non-trivial work; feature commits must cite it |
 | `paper-read` | 9-source parallel paper search + full-PDF close reading + review doc |
 | `paper` | Paper writing: abstract, sections, review responses |
 | `research` | Deep multi-source research with citation verification |
@@ -107,15 +111,20 @@ The tail feeds the mouth: waste found by the audit becomes the budget for the ne
 | `project-init` | New research project scaffolding |
 | `quick-skill` | Define a new rule/skill/agent quickly, with a write-time bloat gate |
 | `setup-panels` | tmux panel layouts for teammate sessions |
+| `grok` | Second opinions from Grok through an isolated wrapper, behind a send-level gate |
+| `drawio-skill` | Editable draw.io diagrams (imported, MIT) |
+| `experimental-design` | Study design before data: randomization, blocking, factorial layouts (imported, MIT) |
+| `statistical-analysis` | Test selection, assumption checks, effect sizes, reporting (imported, MIT) |
+| `statistical-power` | Sample-size and power calculations (imported, MIT) |
+| `pydicom` | Reading and preflighting DICOM data safely, with bounded de-identification review (imported, MIT) |
 
 </details>
 
 ## 🧪 Battle-tested details you won't find in most harnesses
 
-- 📉 **Measured, not vibes** — a token-diet cycle found and removed ~3KB of *per-session* waste (stale index blocks, uncapped hook injections, over-verbose skill descriptions) because baselines made the growth visible.
-- 🪤 **A catalog of defects that actually recur** — the audit greps first for the five patterns that have really bitten before: label/reality drift, catalog desync, hook cache isolation, MCP tool renames, and built-but-unused rot (including "trigger conditions no real utterance can reach").
+- 📉 **Measured, not vibes** — every audit writes down always-on bytes and rule counts, so growth is visible from one cycle to the next and diet cycles have a baseline to beat.
+- 🪤 **A catalog of defects that actually recur** — the audit greps first for nine patterns that have really bitten before, among them label/reality drift, catalog desync, hook cache isolation, MCP tool renames, built-but-unused rot (including "trigger conditions no real utterance can reach"), and one-sided symlink resolution in path guards.
 - 🧹 **ML lifecycle cleanup gates** — after a training cycle: wandb run triage (3-tier tagging + workspace visibility) and checkpoint purge planning (KEEP/DELETE/HOLD matched against run states), destructive steps always user-executed.
-- 🗃️ **Convention-based document format registry** — per-project Confluence/doc templates detected by directory existence, so any server or new project picks up the right format with no central table to maintain.
 - 🖼️ **Media-preserving Confluence edits** — verbatim fetch → literal single-match substitution → node-count check, encoded as a rule after a real incident where full-body regeneration destroyed every image on a page.
 
 ## 🛠️ Using this
@@ -127,7 +136,7 @@ Read it as a **reference architecture**. The pieces most worth stealing:
 3. 💤 the two-tier rule layout (always-on summary → lazy detail) with pointer-integrity checks,
 4. 📋 the spawn-prompt 4-element contract (objective / output format / tools / task boundary).
 
-Paths and identifiers are genericized; a few private layers (project knowledge, internal doc formats, personal memory) are intentionally absent, and some pointers to them are left dangling on purpose.
+Paths and identifiers are genericized. Private layers are intentionally absent: project knowledge, internal document formats and the skeleton gate built on them, the audit history, and personal memory. Some pointers to them are left dangling on purpose; `scripts/confluence_patch_page.py` still expects that gate's stamp, so it refuses to apply edits in this mirror.
 
 ## 🤝 Feedback
 

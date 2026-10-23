@@ -54,6 +54,7 @@ $ARGUMENTS 를 파싱하여 아래 순서로 실행:
 | 혼동 행렬 / 히트맵 | **seaborn.heatmap** | 색상 스케일 자동 처리 |
 | 통계 비교 (boxplot/violin) | **seaborn** | 통계 요약 내장 |
 | 임베딩 시각화 (t-SNE/UMAP) | **matplotlib scatter** | 3D 지원 |
+| 코드·인프라·API 정의에서 뽑는 편집 가능 구조도(논문 외) | **drawio-skill** (designer 전용, 설치 시) | `.drawio` XML 산출 · 렌더링은 draw.io CLI 필요 · 논문 Figure 엔 미적용 |
 
 > TikZ 스크립트: `docs/paper/figures/scripts/gen_fig_{name}_tikz.py` (파일명에 `_tikz` 접미사 필수)
 
@@ -96,10 +97,10 @@ $ARGUMENTS 를 파싱하여 아래 순서로 실행:
 ## § Mem0 Figure 스타일 일관성
 
 ### 스타일 저장
-Figure 생성 완료 시: → mem0-auto.md T15 참조
+Figure 생성 완료 시: → mem0-templates.md T15 참조
 
 ### 스타일 검색
-새 Figure 생성 시 동일 논문/프로젝트의 이전 스타일 자동 검색: → mem0-auto.md T15 참조
+새 Figure 생성 시 동일 논문/프로젝트의 이전 스타일 자동 검색: → mem0-templates.md T15 참조
 이전 스타일 발견 → 동일 색상·폰트·레이아웃 자동 적용 / 미발견 → 사용자에게 스타일 질문
 
 ---

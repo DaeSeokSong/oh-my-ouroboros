@@ -54,22 +54,26 @@ uv run python {스크립트 경로}
 - 흑백 인쇄 대응: 색상 외 선 스타일 병용
 - 컬럼 폭: Single 3.5in, Double 7.0in (NeurIPS/ICLR 기준)
 
-## 허용 스킬 화이트리스트 (4-Gate 통과 시 자율 호출 가능)
+## 허용 스킬 화이트리스트 (4-Gate 통과 시 main 이 호출)
+
+> **호출 경로**: Skill·Agent 도구가 없으므로 아래 스킬은 직접 호출하지 않고 `NEEDS_SKILL: <스킬> <사유>`(진행 불가면 `BLOCKED`)로 main 에 돌려준다. main 이 4-Gate 로 호출하거나 사용자에게 한 줄로 묻는다.
+
 - `/figure` — Figure 품질 기준·저장 경로 확인 필요 시
 - `example-skills:frontend-design` — **웹 UI·HTML 아티팩트·대시보드 작업 시만** (Anthropic 공식 — AI 기본값 미학 탈피용). 논문 figure(TikZ/matplotlib)에는 **미적용**: 학술 figure는 본 문서 § 품질 기준(DPI·색각·흑백 인쇄)이 우선이며 웹 미학 원칙과 충돌 (예: 대담한 타이포는 8pt 학술 규격 위반)
 - `taste-skill` (leonxlnx/taste-skill, MIT) — **설치 시 활성, 웹 프론트엔드 한정** (안티슬롭 디자인 게이팅: 3다이얼 + Pre-Flight 체크). frontend-design과 중복 영역 있음 — 둘 다 로드하지 말고 작업당 하나만. 논문 figure 미적용 (Out of Scope에 대시보드·데이터 테이블도 명시 — 데이터 시각화엔 사용 금지)
+- `drawio-skill` (Agents365-ai/drawio-skill, MIT) — **설치 시 활성, designer 전용**(2026-09-14 사용자 결정). 코드·설정 파일(Terraform·SQL·OpenAPI 등)이나 문장 설명에서 **편집 가능한 `.drawio` 구조도**를 만들 때만. 논문 Figure는 여전히 `/figure`(TikZ·matplotlib)이고 이 스킬은 미적용. 렌더링(PNG·SVG·PDF)은 draw.io 데스크톱 CLI가 있을 때만, 없으면 `.drawio` XML만 산출하고 그 사실을 보고. 아이콘 스크립트는 `--embed`로 오프라인 처리(기본값이 CDN 참조). 격리 검토 근거는 intent/2026-09-14-external-skill-intake.md
 
 > `animate-skill`(delphi-ai)은 2026-07-09 검토 후 **미적용 결정** (라이선스 불명 — 사용자 판단, decisions.md 참조). 재검토 없이 편입 금지.
 
-> 위 2종 공통: 웹 작업 전용 — 격리 검토 근거는 decisions.md 2026-07-09. 미설치 스킬 감지 시 `rules-lazy/tool-dependency-gate.md` 3택 게이트 적용.
+> 위 frontend-design·taste-skill 2종 공통: 웹 작업 전용 — 격리 검토 근거는 decisions.md 2026-07-09. 미설치 스킬 감지 시 `rules-lazy/tool-dependency-gate.md` 3택 게이트 적용.
 
 > **SKILL_DEPTH guard**: SKILL_DEPTH=1 시 이 목록의 모든 스킬 호출 금지
 
 ## MCP 연동 (Mem0)
 
-### Mem0 자동 트리거 (mem0-auto.md 참조)
+### Mem0 자동 트리거 (정본: mem0-auto MANDATORY·mem0-templates OPTIONAL)
 - **Figure 스타일 확정** (T15): `add_memory(text="Figure 스타일: [프로젝트] [스타일 내용]", metadata={"category": "code_pattern", "source": "figure"})` — 스타일 컨벤션 저장
-- **Figure 생성 완료** (T31): 파일명·유형·스크립트 경로·용도를 Mem0에 저장 → `mem0-auto.md` T31 참조
+- **Figure 생성 완료** (T31): 파일명·유형·스크립트 경로·용도를 Mem0에 저장 → `mem0-templates.md` T31 참조
 
 ### Figure 작업 전 검색 (MANDATORY)
 새 Figure 작성 전 기존 Figure 스타일 이력 검색:
@@ -82,13 +86,14 @@ search_memories(query="[프로젝트명] Figure 스타일 TikZ matplotlib", filt
 ## 수학적·공학적 분석 PDF (LaTeX 자동 생성)
 
 ### 트리거
-main으로부터 "수식 기반 분석 PDF 생성" 요청 수신 시 (보고 스타일 선택지 B 선택)
+main으로부터 "수식 기반 분석 PDF 생성" 요청 수신 시 (사용자가 수식 기반 분석 PDF 를 명시 요청한 경우만. 옛 «보고 스타일 선택지 B» 는 폐지)
 
 ### 동작 흐름
 1. 분석 내용을 LaTeX 문서로 작성 (`article` 클래스, `amsmath`·`amssymb`·`physics` 패키지)
 2. 파일 저장: `docs/analysis/{주제}_{YYYYMMDD}.tex`
-3. PDF 컴파일: `latexmk -pdf -interaction=nonstopmode {파일}.tex`
+3. PDF 컴파일: `latexmk -norc -pdf -interaction=nonstopmode {파일}.tex` (`-norc`: `.latexmkrc` 실행 차단)
    - `latexmk` 미설치 시: `pdflatex {파일}.tex` 2회 실행 (참조 해결)
+   - 실행 근거: `rules/code-execution.md` § 예외: Figure 스크립트 AI 직접 실행 허용 (TeX 줄, shell-escape 금지)
 4. 생성된 PDF 경로 main에 보고
 
 ### 저장 경로
@@ -116,3 +121,6 @@ main으로부터 "수식 기반 분석 PDF 생성" 요청 수신 시 (보고 스
 - 레이블 위치가 연관 요소와 명확히 분리
 - TikZ: 동일 앵커 양방향 화살표 금지, 노드 관통 금지, 출발·도착 앵커 명시
 - 이상 발견 시 스크립트 수정 → 재생성 → 재검수 반복 (CLEAN 확인까지)
+
+## 최종 보고 (T41 계약, MANDATORY)
+최종 보고의 마지막 text 블록 안에 행두 `RESULT: <값>` 한 줄을 둔다(예: `RESULT: DONE`). 값은 `PASS|DONE|DONE_WITH_CONCERNS|FAIL|BLOCKED|NEEDS_CONTEXT|REJECT` 중 `RESULT:` 뒤 첫 토큰. 굵게·따옴표·코드펜스·번호 항목 안 금지(행두 판정 탈락).

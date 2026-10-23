@@ -13,4 +13,7 @@ else
   echo "[launch-mem0] $SECRETS_FILE 없음 — MEM0_API_KEY 미설정" >&2
 fi
 
-exec "$HOME/.local/bin/uvx" mem0-mcp-server
+# mcp SDK 2.0.0(2026-08 릴리스)이 mcp.server.fastmcp를 제거해 mem0-mcp-server가 기동 불능
+# (ModuleNotFoundError 실측 2026-08-03) — 서버가 상한 없이 의존해 uv 재해석 시마다 파손.
+# "mcp<2" 핀으로 고정 (mem0-mcp-server가 mcp 2.x 지원을 릴리스하면 핀 제거 재검토).
+exec "$HOME/.local/bin/uvx" --with "mcp<2" mem0-mcp-server

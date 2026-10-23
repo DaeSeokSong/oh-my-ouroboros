@@ -81,6 +81,24 @@ else:
 
 ---
 
+## §C-2 쓰기 provenance — 사용자 속성·선호·피드백 (MANDATORY, 2026-08-18)
+
+LLM은 개인화 맥락에서 증거 이상으로 사용자 속성을 지어낸다(12모델 전원 35~49%, Personalization Mirage arXiv 2608.04570 + 독립 지지 문헌 — citation-verifier 검증 2026-08-18). 쓰기 시점 방어 3규칙:
+
+1. **근거 동봉**: user·feedback 계열 저장 text에 사용자 원문 인용 1구절(또는 발화 시점)을 포함한다 — "무엇에서 나온 결론인지"가 파일만으로 재현되게.
+2. **추론 태그**: 사용자가 말하지 않은 것을 추론해 저장할 땐 `(추정)` 태그를 붙인다 — 추론이 맞을 수도 있으므로 버리지 말고 표시한다.
+3. **양식 ≠ 증거**: 템플릿 필드를 채울 근거가 없으면 그 필드는 비우거나 "없음"으로 — task 양식이 요구한다는 사실은 증거가 아니다.
+
+4. **저장 금지 내용 (D5, 2026-10-01)**: Mem0 는 외부 SaaS 라 `text` 에 자격증명·환자 식별자·DICOM UID 를 넣지 않는다. 1번의 사용자 원문 인용에 들어 있으면 그 부분을 가린 뒤 저장한다. 정확한 config·수치는 허용한다(출구별 표: `rules-lazy/untrusted-quarantine.md` §7).
+
+recall 시 `(추정)` 항목은 §1.5 advisory보다 한 단계 더 낮게 취급(사용자 확인 전 단정 금지).
+
+## §C-3 advisory 원칙의 근거·실측 경위 (mem0-auto §1.5 상세)
+
+- 근거: Dual-Brain (sleeplesshan, github.com/sleeplesshan/dual-brain) — *"memory는 advisory context이고, 현재 코드와 공식 문서가 stale memory보다 우선한다."* Claude Code 기본 메모리 가이드와도 일치.
+- 이중 저장소(메모리+하네스 파일)에서 한쪽만 읽는 incomplete loading(불완전 로딩)이 축적 이득을 상쇄한다는 실측: FinEvo-Bench, 2026-08-18 검증. 히트가 룰·스킬·knowledge 파일을 지목하면 그 파일도 함께 로드해 대조하는 규칙의 출처.
+- 특히 경로·API·config는 추천·실행 전 존재 여부 검증 — stale 경로 추천이 재작업의 주 원인.
+
 ## §D Smart Retrieval 상세 (3축 검색 — 관련성 필터 + 프로파일)
 
 > 3축(History/Current/Future) 검색은 MANDATORY (mem0-auto.md §1.4). 아래는 검색 결과 필터링과 작업 유형별 채널 프로파일 상세.
@@ -116,5 +134,5 @@ search_memories(query="[프로젝트] 다음 단계 TODO 계획 예정", filters
 | **코드 수정** | code_pattern (QA 이슈) | decision (활성 설계) | context (다음 Phase) |
 | **실험 실행** | experiment (이전 결과) + paper (관련 논문) | decision (활성 config) | context (다음 실험) |
 | **논문 작업** | paper (기존 리뷰) + discuss (관련 토론) | decision (논문 구조) | context (제출 계획) |
-| **토론/discuss** | discuss + decision + experiment + paper + feedback (5채널) | decision (활성 결정) | context (후속 작업) |
+| **토론/discuss** | discuss + decision + experiment + paper + feedback (5채널 — T07 은 이를 병합 쿼리 3회로 실행: discuss+decision / experiment+paper / feedback) | decision (활성 결정) | context (후속 작업) |
 | **세션 복원** | context (이전 세션 상태) | decision + experiment (최신) | context (미완료 TODO) |

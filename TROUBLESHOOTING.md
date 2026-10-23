@@ -32,7 +32,7 @@ cat ~/.claude/settings.json | grep -A5 mcpServers
    ps aux | grep mem0
    ```
 
-**Fallback**: If MCP is unavailable, rules fall back to file-based memory (`short-term/decisions.md`). See `rules-lazy/mcp-fallback.md`.
+**Fallback**: If MCP is unavailable, rules fall back to file-based memory (`short-term/decisions.md`). See `rules-lazy/mcp-fallback.md`. For OAuth-based MCP servers, availability is checked via ToolSearch immediately before each call — on disconnect the user is given a 3-way choice (reconnect / skip with fallback / abort). See `rules-lazy/mcp-health-check.md`.
 
 ---
 
@@ -45,7 +45,7 @@ cat ~/.claude/settings.json | grep -A5 mcpServers
 **Fix**:
 - Check what triggered the block: look for patterns like `sk-`, `key=`, `/home/username/` in the command
 - If the block is a false positive, add an exception comment in the command
-- For legitimate execution: Claude will ask for explicit approval — respond with the command and `# APPROVED` prefix
+- For legitimate execution: Claude will ask for explicit approval — respond with the command, then re-issue it with a first line `# APPROVED "quoted user utterance, 8+ chars"` (the quoted text must match something the user actually said in the prompt log)
 
 **Common false positives**:
 | Pattern | Why blocked | Fix |
@@ -53,6 +53,42 @@ cat ~/.claude/settings.json | grep -A5 mcpServers
 | `echo "test_key=abc"` | Matches `key=` pattern | Use `echo "test-key: abc"` |
 | Path with username | Absolute path with `/home/user/` | Use `$HOME` variable |
 | Long hex string | Looks like API key | Add `# not-a-secret` comment |
+
+---
+
+## read-once Blocking a File Read
+
+**Symptom**: Read tool call blocked with reason `이미 읽은 파일 — 변경 없음. 메모리에서 참조하세요.`
+
+**Diagnosis**: `scripts/read-once.sh` (PreToolUse Read) blocks a full re-read of the same file path + same mtime within a 1200-second (20-minute) session-scoped TTL cache.
+
+**Fix**:
+1. If the content is already in context — reuse it, do not re-read (this is the intended behavior)
+2. If only part of the file is needed, or re-verification is required (`mem0-auto.md` §1.5 "current code first") — pass `offset`/`limit` to Read (partial reads are not cached), or use Grep
+3. If the file actually changed, its mtime changes and the block clears automatically. A block that persists after an edit means the edit was not actually saved.
+
+See `~/.claude/rules/code-execution.md` § Read 차단(read-once 훅) 복구 절차.
+
+---
+
+## external-model-gate Rejecting a Codex/Grok Call
+
+**Symptom**: A `grok-ask.sh` or `codex exec` Bash call is blocked by `scripts/external-model-gate.py`.
+
+**Diagnosis**: The gate requires the model string and effort word to appear **literally in the current user message** (not in memory, a prior session's answer, a spawn prompt, or a code comment). It reads the last real user message in the main transcript, not subagent spawn prompts.
+
+**Fix**: Present the model/effort options as a boilerplate question (`rules-lazy/codex-model-gate.md` §1) and wait for the user to answer with the model and effort in that message, then re-issue the call.
+
+---
+
+
+## korean-style-gate Rejecting a Confluence Publish
+
+**Symptom**: Confluence page create/update blocked by `scripts/korean-style-gate.sh`.
+
+**Diagnosis**: Korean prose in the page body violates one of the 3 mandatory style rules (no em-dash inside a sentence, split sentences with 2+ commas, particle choice after English/numeral tokens follows pronunciation).
+
+**Fix**: Run `python3 ~/.claude/scripts/korean_style_check.py <파일>` locally, fix every reported line (target: 0 blocking findings; warnings are acceptable), then re-attempt the publish. See CLAUDE.md § 한국어 문체 3규칙.
 
 ---
 

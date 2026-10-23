@@ -2,13 +2,12 @@
 # CI Gate: PostToolUse 후속 자동 리뷰
 # Edit/Write 도구 사용 후 수정된 파일 lint 검사 + 결과 출력 (non-blocking)
 # 입력: stdin JSON (tool_name + tool_input.file_path)
-# 출력: stderr (Claude Code가 사용자에게 표시)
+# 출력: stdout JSON hookSpecificOutput.additionalContext (2026-10-01 감사: 종전 stderr 는 모델에 안 닿았다)
 # 종료: 항상 0 (비차단)
 
 set -uo pipefail
 
 INPUT=$(cat)
-TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
 
 # 입력 검증
@@ -59,16 +58,23 @@ case "$EXT" in
         fi
         ;;
     md|markdown)
-        if command -v markdownlint &>/dev/null; then
+        # 2026-10-17 G6-2: 설치된 것은 markdownlint-cli2 다(종전 `markdownlint` 만 찾아 린트가 0회 실행됐다).
+        # 설정은 ~/.claude/.markdownlint-cli2.jsonc(공백 양식 규칙 끔). cli2 는 배너·요약을 항상 찍으므로
+        # 지적 줄(`경로:줄 error|warning MDxxx`)만 남기고 10줄로 자른다(모델 입력 보호).
+        if command -v markdownlint-cli2 &>/dev/null; then
+            MDL_CFG="$HOME/.claude/.markdownlint-cli2.jsonc"
+            RESULT=$(markdownlint-cli2 --config "$MDL_CFG" "$FILE_PATH" 2>&1 \
+                | grep -E '^[^ ]+:[0-9]+(:[0-9]+)? (error|warning) MD[0-9]{3}' | head -10)
+        elif command -v markdownlint &>/dev/null; then
             RESULT=$(markdownlint "$FILE_PATH" 2>&1 | head -20)
-        else
-            # markdownlint 없으면 단순 검사: 빈 링크, 미닫힘 코드 펜스
-            # grep -c는 무매치에도 "0"을 출력하고 exit 1 → $()안 `|| echo 0`은 "0\n0"을 만들어
-            # 산술 abort(hook 실패). `||`를 밖으로 빼서 단일 숫자 보장 (2026-07-18 Codex).
-            FENCE_COUNT=$(grep -c '^```' "$FILE_PATH" 2>/dev/null); FENCE_COUNT=${FENCE_COUNT:-0}
-            if [ $((FENCE_COUNT % 2)) -ne 0 ]; then
-                RESULT="⚠️ Code fence imbalance detected (count: $FENCE_COUNT)"
-            fi
+        fi
+        # 미닫힘 코드 펜스 검사는 린터 유무와 무관하게 항상 한다(markdownlint 계열은 문서 끝까지 열린 펜스를 지적하지 않는다).
+        # grep -c는 무매치에도 "0"을 출력하고 exit 1 → $()안 `|| echo 0`은 "0\n0"을 만들어
+        # 산술 abort(hook 실패). `||`를 밖으로 빼서 단일 숫자 보장 (2026-07-18 Codex).
+        FENCE_COUNT=$(grep -c '^```' "$FILE_PATH" 2>/dev/null); FENCE_COUNT=${FENCE_COUNT:-0}
+        if [ $((FENCE_COUNT % 2)) -ne 0 ]; then
+            RESULT="${RESULT:+$RESULT
+}⚠️ Code fence imbalance detected (count: $FENCE_COUNT)"
         fi
         ;;
     *)
@@ -78,10 +84,10 @@ esac
 
 # 결과 출력
 if [ -n "$RESULT" ] && [ "$RESULT" != "All checks passed!" ]; then
-    echo "" >&2
-    echo "🔍 [ci-gate] $FILE_PATH:" >&2
-    echo "$RESULT" >&2
-    echo "" >&2
+    # 2026-10-01 감사: PostToolUse 의 exit 0 stderr 는 모델에 전달되지 않는다. lint 결과가 닿으려면
+    # hookSpecificOutput.additionalContext JSON 이어야 한다(경고가 «닿게» 하는 수정 — 새 차단 아님, D2).
+    jq -nc --arg m "🔍 [ci-gate] $FILE_PATH:
+$RESULT" '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $m}}'
 fi
 
 exit 0

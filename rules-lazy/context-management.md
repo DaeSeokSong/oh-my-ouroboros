@@ -6,10 +6,10 @@
 
 ### autocompact 발동 조건 (2026-07-19 근원 규명·수정)
 
-`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75`는 **단독으로는 로컬 Opus 4.8/Fable 5 세션에서 무효**다 — 공식 env-vars 문서 실측 확인. 원문 취지: 로컬 Opus 4.8 세션 등에서는 override 값과 무관하게 "대화가 모델 context limit에 도달할 때" autocompact가 발동한다. override가 실제로 임계를 낮추려면 **`CLAUDE_CODE_AUTO_COMPACT_WINDOW`를 함께 설정**해야 한다 — 이 변수가 statusline `used_percentage`의 분모(denominator)를 모델 실제 윈도우에서 분리해, override의 % 계산이 그 분모 기준으로 동작하게 만든다.
+`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75`는 **단독으로는 1M 컨텍스트 창 세션(예: 로컬 Opus 4.8/Fable 5)에서 무효**다 — 공식 env-vars 문서 실측 확인. 원문 취지: 1M 컨텍스트 창 세션(예: 로컬 Opus 4.8) 등에서는 override 값과 무관하게 "대화가 모델 context limit에 도달할 때" autocompact가 발동한다. override가 실제로 임계를 낮추려면 **`CLAUDE_CODE_AUTO_COMPACT_WINDOW`를 함께 설정**해야 한다 — 이 변수가 statusline `used_percentage`의 분모(denominator)를 모델 실제 윈도우에서 분리해, override의 % 계산이 그 분모 기준으로 동작하게 만든다.
 
 - **현재 설정 (settings.json `env`)**: `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75` + `CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000` → 분모 1M 고정 → 75%가 **statusline 750K(=75%)** 에서 발동. 이전에는 window 변수 부재로 override=75가 **줄곧 무효**였고, 그래서 이 세션이 86%까지도 미발동이었음(실측). 이 조합으로 수정.
-- override는 임계를 **낮추기만** 가능(높일 수 없음). override 단독 발동은 Sonnet 4.6/Opus 4.6(200K 경계)·클라우드 세션 한정 — 로컬 Opus 4.8/Fable 5는 window 변수 필수.
+- override는 임계를 **낮추기만** 가능(높일 수 없음). override 단독 발동은 200K 컨텍스트 창 모델(예: Sonnet 4.6/Opus 4.6)·클라우드 세션 한정 — 1M 컨텍스트 창 세션(예: 로컬 Opus 4.8/Fable 5)은 window 변수 필수.
 - **정합 조건**: "statusline 75% = compact"가 성립하려면 window 값이 statusline이 쓰는 분모와 같아야 한다. statusline(claudenews HUD)이 다른 분모를 쓰면 발동점이 어긋난다 — 다음 장기 세션에서 statusline 75% 근처 미발동 시 이 값을 재점검.
 
 - `~/.claude/CLAUDE.md`의 Compact Instructions 섹션 기준 적용
@@ -21,7 +21,7 @@
 ### ⚠️ `[1m]` 세션 — autocompact보다 200K 에러가 먼저 터질 위험
 
 `[1m]` 변형은 200K를 넘겨 1M 영역에 진입할 수 있으나, Extra usage 미활성 시 200K 경계에서 API 에러가 autocompact 발동보다 **먼저** 터질 수 있다:
-- window를 1M로 두면 statusline 분모가 1M이 되어 75% 발동점이 **750K로 밀린다** — 200K Extra-usage 경계보다 뒤이므로, Extra usage가 없으면 compact 발동 전에 에러가 먼저 난다. **`[1m]` + Extra usage 미활성 머신에서는 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`를 `200000`으로 낮춰** 200K 전에 compact가 돌게 하거나, 아래 실시간 추적 수단을 병행한다. (현재 메인 세션은 `[1m]` 변형이 아니라 이 경합에 해당하지 않음 — window=1M 유지.)
+- window를 1M로 두면 statusline 분모가 1M이 되어 75% 발동점이 **750K로 밀린다** — 200K Extra-usage 경계보다 뒤이므로, Extra usage가 없으면 compact 발동 전에 에러가 먼저 난다. **`[1m]` + Extra usage 미활성 머신에서는 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`를 `200000`으로 낮춰** 200K 전에 compact가 돌게 하거나, 아래 실시간 추적 수단을 병행한다. settings.local.json(없으면 settings.json)의 model 값에 `[1m]` 이 없으면 이 경합에 해당하지 않으므로 window=1M 을 유지한다.
 - **autocompact만 믿고 장기 세션 운영 금지** — 반드시 아래 실시간 추적 수단 병행
 
 ### 실시간 추적 수단 (MANDATORY)
@@ -34,17 +34,17 @@ autocompact 미발동 리스크를 상쇄하기 위해 아래 수단을 병행�
 | StatusLine 표시 | ⚠️ 현재 settings.json statusLine은 claudenews HUD(`~/.claude/hud/claudenews-hud.mjs`)가 점유 — ctx % **미표시**. ctx % 상시 표시가 필요하면 대체 statusline `~/.claude/scripts/statusline-context.sh`로 statusLine 필드를 교체 (claudenews HUD와 동시 사용 불가) | claudenews 미사용 머신에서만 교체 권장 |
 | `/compact` 수동 선행 | 임계 근접 시 사전 압축 | 150K 추정 돌파 + 대용량 작업 예정 시 |
 
-**MANDATORY 체크포인트** (⚠️ `/context`·`/compact`는 슬래시 커맨드 = **사용자만 실행** — Claude는 자동 실행 불가(:70). Claude는 아래 시점에 사용자에게 `/context` 실행을 **요청**하고 결과를 받아 판단):
+**MANDATORY 체크포인트** (⚠️ `/context`·`/compact`는 슬래시 커맨드 = **사용자만 실행** — Claude는 자동 실행 불가, § 자가 트리거 한계). Claude는 아래 시점에 사용자에게 `/context` 실행을 **요청**하고 결과를 받아 판단):
 - 장기 세션 진입 후 첫 대용량 작업(Read/Write 100줄+ 또는 subagent 3개+) 전 → 사용자에게 `/context` 요청해 현재 상태 확인
 - `/context` 실측 150K(15%) 돌파 시 → 사용자에게 "/compact 선행 권장" 1줄 보고 — 현 statusline은 ctx %를 표시하지 않으므로 StatusLine 감시에 의존 금지
 - 180K+ 도달 감지 → memory-write.md Step 1~6 + Mem0 T02 + handover.md 강제 + 사용자에게 `/compact` 즉시 요청
 
 ### 모델 식별
 
-세션 시작 시 시스템 프롬프트의 model ID 확인:
+세션 시작 시 settings.local.json(없으면 settings.json)의 model 값 확인(시스템 프롬프트의 표시 ID 는 `[1m]` 접미를 보여 주지 않는다):
 - `[1m]` suffix 포함 → "1M 세션"으로 분류, 아래 임계 관리 발동
-- 로컬 Opus 4.8/Fable 5 (비-`[1m]`) → override 단독 무효, `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 필요 (§ 자동 compact)
-- Sonnet 4.6/Opus 4.6 등 200K 경계 모델·클라우드 세션 → override 단독으로 75% 발동
+- 컨텍스트 창 1M(비-`[1m]`이어도 실제 창이 1M) → override 단독 무효, `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 필요 (예: 로컬 Opus 4.8/Fable 5) (§ 자동 compact)
+- 컨텍스트 창 200K 경계 모델·클라우드 세션 → override 단독으로 75% 발동 (예: Sonnet 4.6/Opus 4.6)
 
 ### 입력 누적 임계 관리
 
@@ -87,6 +87,8 @@ autocompact 미발동 리스크를 상쇄하기 위해 아래 수단을 병행�
 4. **긴 코드/스크립트 생성 전 컨텍스트 50%+ 상태** (TikZ, matplotlib, LaTeX 등 100줄+)
 5. 수동 실행 시 반드시 지시 명시: `/compact 실험 config와 수정 내역 보존, 도구 출력 요약`
 
+**Phase 경계 위생 (2026-08-06 이식 — 출처: mattpocock/skills `ask-matt`, MIT)**: 작업 phase가 끝날 때마다 용량과 무관하게 ①그냥 이어가기 ②/clear ③handover 후 새 세션 ④subagent 위임 ⑤/compact 5택을 의식적으로 고른다 — 원문 요지: "이어가기가 정답인 경우가 가장 적다". 75% 트리거(용량 기준)의 보완 축(작업 경계 기준).
+
 ### /discuss 활성 중 compaction 주의 (MANDATORY)
 
 `/discuss` 진행 중 compaction이 발생하면 tmux pane이 소멸하거나 subagent 컨텍스트가 손실될 수 있다.
@@ -116,9 +118,11 @@ compact 직전 필수 절차 (순서 준수):
   Step 1~2: 미기록 합의 기록 (기존)
   Step 2.5: Mem0 백업 (MANDATORY — 스킵 금지)
     → mem0-auto.md T02 실행: 진행률+활성 결정+config+TODO 포함
-    → Mem0 불가 시: mcp-fallback.md § Mem0 Fallback 적용 (handover.md만으로 진행)
+    → Mem0 불가 시: mcp-fallback-mem0.md § Mem0 Fallback 적용 (handover.md만으로 진행)
   Step 3~6: handover.md 작성 + 만료 정리 + compact (기존)
 ```
+
+> 자동 compact 는 이 순서를 밟을 턴 없이 발동할 수 있다. PreCompact 훅 `scripts/precompact-handover-check.sh` 가 cwd 저장소의 `short-term/handover.md` 가 60분을 넘으면 경고 한 줄을 낸다(차단 없음 — compact 를 막으면 세션이 진행 불능이 된다).
 
 #### Step 7 — 세션 시작 시 Mem0 Smart Retrieval 3축 복원
 
@@ -128,19 +132,19 @@ compact 직전 필수 절차 (순서 준수):
 세션 시작 시 복원 절차:
   1. handover.md 읽기 (존재 시)
   2. Mem0 3축 검색 (MANDATORY):
-     History: search_memories(query="세션 상태 이전 작업 진행률", category="context")
-     Current: search_memories(query="활성 결정 합의 config", category="decision")
-     Future:  search_memories(query="다음 단계 TODO 예정 작업", category="context")
+     History: search_memories(query="세션 상태 이전 작업 진행률", filters={"metadata": {"category": "context"}})
+     Current: search_memories(query="활성 결정 합의 config", filters={"metadata": {"category": "decision"}})
+     Future:  search_memories(query="다음 단계 TODO 예정 작업", filters={"metadata": {"category": "context"}})
   3. handover.md + Mem0 결과 교차 확인
   4. 충돌 시: Mem0(더 상세) 우선, 사용자에게 차이점 보고
 ```
 
 - handover.md + Mem0 이중 안전망: 둘 중 하나만 있어도 복구 가능
-- Mem0 불가 시: handover.md 단독 복구 + mcp-fallback.md § Mem0 Fallback 적용
+- Mem0 불가 시: handover.md 단독 복구 + mcp-fallback-mem0.md § Mem0 Fallback 적용
 
-### 자동 compact 트리거 시 Mem0 백업 강제 실행 (MANDATORY)
+### main이 75%를 감지한 경로에서 강제. 자동 발동은 PreCompact 경고만 (MANDATORY)
 
-> **핵심**: 75% 도달로 자동 compact가 발동될 때, Mem0 백업이 누락되면 다음 세션에서 복구 불가능한 컨텍스트 소실이 발생한다. 아래 순서는 **예외 없이** 준수한다.
+> **핵심**: main이 75%를 감지했을 때 Mem0 백업이 누락되면 다음 세션에서 복구 불가능한 컨텍스트 소실이 발생한다. 아래 순서를 **예외 없이** 준수한다. 자동 발동은 PreCompact 경고만 낸다.
 
 #### 강제 순서 (위반 시 compact 실행 금지)
 
@@ -152,7 +156,7 @@ compact 직전 필수 절차 (순서 준수):
             - 실행 주체: Haiku 위임 가능 (단순 Write)
   → Step B: memory-write.md § Compact / Clear 전 필수 절차 Step 1~6 실행
             - Step 3 handover.md 작성 완료 확인 필수
-  → Step C: compact 실행 (**사용자가 `/compact` 실행** — 슬래시 커맨드는 Claude 자동 실행 불가, § 자가 트리거 한계 :70. Claude는 Step A·B 완료 후 사용자에게 실행 요청)
+  → Step C: compact 실행 (**사용자가 `/compact` 실행** — 슬래시 커맨드는 Claude 자동 실행 불가, § 자가 트리거 한계. Claude는 Step A·B 완료 후 사용자에게 실행 요청)
 ```
 
 #### 위반 금지 사항
@@ -178,7 +182,7 @@ compact 직전 필수 절차 (순서 준수):
 
 - [ ] Mem0에 category="context" + source="compact_handover" 항목 신규 저장 확인
 - [ ] short-term/handover.md 갱신 일자가 오늘로 기록됨
-- [ ] 7일 만료 항목 삭제 실행됨
+- [ ] 7일 만료 항목이 아카이브로 이동됨(SessionStart 정리 스크립트)
 - [ ] MEMORY.md 인덱스 최근 갱신일 업데이트됨
 
 ### 긴 출력 생성 전 compact 흐름 (MANDATORY)
@@ -352,36 +356,6 @@ cache 감지 시 응답 첫 줄에 반드시 1줄 보고:
 
 ---
 
-## Subagent 반환 누적 카운터 (planner 제안 C — 수동 추정 지침)
+## Subagent 반환 누적 추정 (수동 휴리스틱)
 
-> **목적**: 토큰 기반 임계값(autocompact 75%) 외에 **subagent 호출 빈도** 기반 사각지대 보완.
-> ⚠️ **정합화 (2026-07-10)**: 자동 카운터 스크립트·훅은 미배선 — 이 절은 추정 휴리스틱이지 강제 메커니즘이 아니다 (구 MANDATORY 표기는 실행 수단 없는 선언). 실질 방어는 subagent 반환 1,500자 상한(`agent-routing-mcp.md`)과 75% autocompact이 담당.
-
-### 카운터 인프라
-
-세션 내 subagent 반환 횟수를 _cache/ 파일에 기록:
-- 위치: `~/.claude/_cache/subagent-counter/{session_id}.txt` (단순 카운트)
-- 또는: Mem0 `context` 카테고리에 저장 (검색 가능)
-
-### 매 subagent 반환 직후 카운터 +1
-
-```bash
-# 파일명은 세션 격리 — session_id 미확보 시 날짜로 폴백 (스펙: {session_id}.txt)
-COUNTER_FILE="$HOME/.claude/_cache/subagent-counter/${SESSION_ID:-$(date +%Y%m%d)}.txt"
-mkdir -p "$(dirname "$COUNTER_FILE")"
-COUNT=$(cat "$COUNTER_FILE" 2>/dev/null || echo 0)
-echo $((COUNT + 1)) > "$COUNTER_FILE"
-```
-
-### 임계값 도달 시 알림 (MANDATORY)
-
-| 누적 횟수 | 동작 |
-|----------|------|
-| **20회** | 사용자 알림 1줄: "지금까지 subagent 반환 20회 누적 — compact 권장" |
-| **35회** | 강력 권장 + 자동 compact 트리거 |
-| **50회** | 강제 compact (autocompact 75%와 무관) |
-
-### 카운터 리셋
-- compact 직후 자동 0으로 리셋
-- 새 세션 시작 시 0
-- 사용자 명시: "카운터 리셋해" 시 0
+subagent 반환이 세션 내 20회를 넘어가면 compact를 권장한다(35회+ 강력 권장). 자동 카운터는 미배선(2026-07-10 정합화 — 구 MANDATORY 표기는 실행 수단 없는 선언이라 폐지)이며, 실질 방어는 subagent 반환 1,500자 상한(`agent-routing-mcp.md`)과 75% autocompact이 담당한다.
