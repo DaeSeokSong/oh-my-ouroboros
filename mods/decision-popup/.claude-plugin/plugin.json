@@ -1,0 +1,7 @@
+{
+  "name": "decision-popup",
+  "version": "0.1.0",
+  "description": "결정 항목을 대화창처럼 한 항목씩 띄워 선택지를 고르고 확인하면 이 세션에 답을 보낸다",
+  "author": { "name": "harness" },
+  "types": "./types/index.d.ts"
+}

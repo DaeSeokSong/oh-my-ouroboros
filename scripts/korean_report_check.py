@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# ruff: noqa: EXE001
 """Stop hook helper: block a turn end once when the final report has an English sentence (CLAUDE.md principle 1).
 
 Contract: stdin = Stop-hook JSON. Prints {"decision":"block","reason":...} when the last assistant
 message has a Hangul-free sentence of >= 6 Latin words or a whole-message Hangul ratio < 0.4;
 otherwise prints nothing. Always exits 0 (fail-open). Skips non-Stop events and stop_hook_active.
 Rationale: intent/2026-10-16-korean-report-guard.md (corpus: 9 of 843 turn-end messages were English).
+Also blocks on Korean typos (korean_style_check.find_typos: dictionary + doubled particles; 2026-10-23 user order).
 Text source: last_assistant_message, else the last assistant message of the transcript tail.
 """
 import json
@@ -16,7 +18,7 @@ MIN_RATIO = 0.4
 MIN_LATIN_FOR_RATIO = 20
 SNIPPET_LEN = 60
 
-FENCE = re.compile(r"```.*?(?:```|\Z)", re.S)
+FENCE = re.compile(r"```.*?(?:```|\Z)", re.DOTALL)
 INLINE = re.compile(r"`[^`\n]*`")
 URL = re.compile(r"\S*/\S*")  # URLs and any slash-containing path token
 SKIP_LINE = re.compile(r"^\s*[>|]")
@@ -50,7 +52,7 @@ def prose_latin(line):
     """
     n = 0
     for tok in line.split():
-        word = tok.strip("()[]{}«»\"'',;!?")
+        word = tok.strip("()[]{}«»\"'',;!?")  # noqa: B005  # 문자 집합 strip 이 의도(접두 문자열 제거 아님)
         if not word or IDENT.search(word) or (len(word) > 1 and word.isupper()):
             continue
         n += len(LATIN.findall(word))
@@ -92,8 +94,26 @@ def last_message_from_transcript(path):
     return last
 
 
+QUOTE_LINE = re.compile(r"^\s*>")
+TYPO_REASON = "직전 보고에 오탈자가 있습니다. 고쳐서 같은 내용을 다시 보고하십시오. {pairs}"
+MAX_TYPOS = 8
+
+
+def find_typo_pairs(text):
+    """Return up to MAX_TYPOS unique '오탈자: wrong → right' strings (rules 4-5 of korean_style_check).
+
+    Rationale: dictionary and exclusions (code, URL, quotes) live in korean_style_check.find_typos so there is one
+    list to maintain. Quote lines (>) are skipped like the English rule. Warnings (repeated words) are not checked here.
+    """
+    from korean_style_check import find_typos
+
+    body = "\n".join("" if QUOTE_LINE.match(ln) else ln for ln in text.split("\n"))
+    pairs = dict.fromkeys(f"오탈자: {w} → {r}" for _, w, r in find_typos(body))
+    return list(pairs)[:MAX_TYPOS]
+
+
 def main():
-    """Read the hook JSON from stdin and print a block decision when the report is not Korean."""
+    """Read the hook JSON from stdin and print a block decision when the report is not Korean or has typos."""
     data = json.load(sys.stdin)
     if data.get("hook_event_name") != "Stop" or data.get("stop_hook_active"):
         return
@@ -103,14 +123,23 @@ def main():
     if not text.strip():
         return
     offenders, _ = find_english(text)
+    reasons = []
     if offenders:
         snippet = offenders[0][:SNIPPET_LEN].replace("\n", " ")
-        print(json.dumps({"decision": "block", "reason": REASON.format(snippet=snippet)}, ensure_ascii=False))
+        reasons.append(REASON.format(snippet=snippet))
+    try:
+        pairs = find_typo_pairs(text)
+    except Exception:  # noqa: BLE001  # fail-open: Stop 훅은 예외로 작업을 막지 않는다
+        pairs = []  # fail-open: a typo-check failure must not hide or replace the English check
+    if pairs:
+        reasons.append(TYPO_REASON.format(pairs="; ".join(pairs)))
+    if reasons:
+        print(json.dumps({"decision": "block", "reason": " ".join(reasons)}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
     try:
         main()
-    except Exception:
+    except Exception:  # noqa: BLE001, S110  # fail-open: Stop 훅은 예외로 작업을 막지 않는다
         pass
     sys.exit(0)

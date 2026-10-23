@@ -1,0 +1,1 @@
+{ "description": "harness-mod hooks module", "modules": ["./register.js"] }

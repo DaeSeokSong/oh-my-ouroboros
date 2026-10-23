@@ -1,0 +1,2 @@
+# Claude Code 가 mod 를 로드할 때마다 다시 쓰는 편집기용 설정(gitignore 된 .claude-plugin/types/ 를 extends 한다)
+tsconfig.json

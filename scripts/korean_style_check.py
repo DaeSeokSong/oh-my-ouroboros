@@ -6,10 +6,15 @@
 증거다. 그래서 기억이 아니라 **게이트**로 바꾼다. 게시 경로(confluence_patch_page.py)가
 이 검사를 통과해야만 쓰기가 진행된다.
 
-■ 검사 3종
+■ 검사 6종
   ① 산문 문장 안 삽입 대시 (—, &mdash;)   → 차단
   ② 한 문장에 쉼표 2개 이상               → 경고
   ③ 영문·숫자 토큰 뒤 조사 (발음 기준)     → 경고
+  ④ 오탈자 사전 (TYPO_DICT, 틀린 꼴만)     → 차단
+  ⑤ 같은 조사 겹침 (을을·를를·는는·에서에서) → 차단
+  ⑥ 같은 어절 연속 (작업 작업)             → 경고
+  ④⑤⑥ 은 코드 블록·인라인 코드·URL·인용(«» “” "")을 뺀 전체 텍스트(표 셀 포함)에서 줄 단위로 본다.
+  `korean_report_check.py`(Stop 훅)가 find_typos 를 import 해 같은 사전을 쓴다. 2026-10-23 사용자 지시.
 
 ■ 제외 (룰 § 제외 그대로)
   표 셀(td/th) · 불릿의 `**라벨** — 설명` 형식 · 코드 · 하네스 룰 .md · 영문 문장
@@ -25,6 +30,7 @@
 
 from __future__ import annotations
 
+import itertools
 import re
 import sys
 
@@ -33,6 +39,53 @@ DASH = re.compile(r"(?:&mdash;|—)")
 LABEL_FORM = re.compile(r"^\s*(?:<strong>|<b>).{1,40}?(?:</strong>|</b>)\s*"
                         r"(?:&mdash;|—|:)")
 HANGUL = re.compile(r"[가-힣]")
+
+# 문맥과 무관하게 틀린 꼴만 넣는다. 오탐이 Stop 훅에서 반복 차단을 만들면 작업이 멈추므로
+# 사전을 넓히지 않는다(바른 낱말과 겹치는 꼴 금지). 2026-10-23 사용자 지시.
+TYPO_DICT = {
+    "됬": "됐", "됀": "된", "되요": "돼요", "되서": "돼서", "않돼": "안 돼",  # «않되» 는 «~지 않되» 연결 어미라 뺐다(2026-10-23 coder 지적)
+    "할께요": "할게요", "할께": "할게", "줄께": "줄게", "갈께": "갈게", "볼께": "볼게", "올께": "올게",
+    "할려고": "하려고", "몇일": "며칠", "어떻해": "어떡해", "웬지": "왠지", "왠만": "웬만",
+    "금새": "금세", "역활": "역할", "희안": "희한", "일일히": "일일이", "깨끗히": "깨끗이",
+    "오랫만": "오랜만", "어의없": "어이없", "뵈요": "봬요", "설겆이": "설거지", "녹녹치": "녹록지",
+    "서슴치": "서슴지", "탠데": "텐데", "읍니다": "습니다",
+}
+TYPO_RE = re.compile("|".join(re.escape(k) for k in sorted(TYPO_DICT, key=len, reverse=True)))
+# 같은 조사 겹침. «의의·은은·이이» 는 바른 낱말이 있어 뺐고, «가을을·마을을·고을을» 은 바른 꼴이라 앞 글자로 거른다.
+DOUBLE_RE = re.compile(r"(?<![가마고])을을|를를|는는|에서에서")
+
+# 검사 제외 구역: 코드 블록·인라인 코드·URL·태그·인용. 사용자 원문 인용은 틀린 글자도 원문 그대로 두는 것이 규칙이다.
+_EXCLUDE = [re.compile(x, f) for x, f in (
+    (r"```.*?(?:```|\Z)", re.DOTALL), (r"<(code|pre)\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE),
+    (r"<ac:plain-text-body>.*?</ac:plain-text-body>", re.DOTALL), (r"<ac:link[^>]*>.*?</ac:link>", re.DOTALL),
+    (r"`[^`\n]*`", 0), (r"https?://\S+", 0), (r"<[A-Za-z/!][^>]*>", 0),
+    (r"«[^»\n]*»", 0), (r"“[^”\n]*”", 0), (r'"[^"\n]*"', 0),
+)]
+
+
+def mask_excluded(text: str) -> str:
+    """Blank out excluded zones with spaces, keeping newlines so line numbers survive."""
+    for rx in _EXCLUDE:
+        text = rx.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+    return text
+
+
+def find_typos(text: str):
+    """Return [(line, wrong, right)] for the typo dictionary (rule 4) and doubled particles (rule 5)."""
+    out = []
+    for no, line in enumerate(mask_excluded(text).split("\n"), 1):
+        out += [(no, m.group(0), TYPO_DICT[m.group(0)]) for m in TYPO_RE.finditer(line)]
+        out += [(no, m.group(0), m.group(0)[: len(m.group(0)) // 2]) for m in DOUBLE_RE.finditer(line)]
+    return out
+
+
+def find_repeats(text: str):
+    """Return [(line, word)] where the same 2+ char word repeats back to back (rule 6, warning only)."""
+    out = []
+    for no, line in enumerate(mask_excluded(text).split("\n"), 1):
+        toks = [re.sub(r"^\W+|\W+$", "", t) for t in line.split()]
+        out += [(no, a) for a, b in itertools.pairwise(toks) if a == b and len(a) >= 2 and re.search(r"[A-Za-z가-힣]", a)]
+    return out
 
 
 def _strip_cells(html: str) -> str:
@@ -44,17 +97,17 @@ def _strip_cells(html: str) -> str:
       제목 자체를 바꾸려면 그 페이지를 개명해야 하므로 이 게이트의 소관이 아니다.
     · `<code>` — 코드·경로는 룰상 제외.
     """
-    html = re.sub(r"<t[dh][^>]*>.*?</t[dh]>", " ", html, flags=re.S)
-    html = re.sub(r"<ac:link[^>]*>.*?</ac:link>", " ", html, flags=re.S)
-    return re.sub(r"<code[^>]*>.*?</code>", " ", html, flags=re.S)
+    html = re.sub(r"<t[dh][^>]*>.*?</t[dh]>", " ", html, flags=re.DOTALL)
+    html = re.sub(r"<ac:link[^>]*>.*?</ac:link>", " ", html, flags=re.DOTALL)
+    return re.sub(r"<code[^>]*>.*?</code>", " ", html, flags=re.DOTALL)
 
 
 def _blocks(html: str):
     """검사 단위(문단·리스트항목·제목)를 (종류, 원문) 으로 뽑는다."""
-    for m in re.finditer(r"<(p|li|h[1-6])[^>]*>(.*?)</\1>", html, flags=re.S):
+    for m in re.finditer(r"<(p|li|h[1-6])[^>]*>(.*?)</\1>", html, flags=re.DOTALL):
         inner = m.group(2)
         # 중첩 리스트는 바깥 li 가 안쪽까지 삼키므로 안쪽은 지우고 본다
-        inner = re.sub(r"<(ul|ol)[^>]*>.*?</\1>", " ", inner, flags=re.S)
+        inner = re.sub(r"<(ul|ol)[^>]*>.*?</\1>", " ", inner, flags=re.DOTALL)
         yield m.group(1), inner
 
 
@@ -97,7 +150,7 @@ def md_to_html(md: str) -> str:
         if not st:
             flush()
             continue
-        if st.startswith("|") or st.startswith("<"):
+        if st.startswith(("|", "<")):
             flush()
             continue
         m = re.match(r"^(#{1,6})\s+(.*)$", st)
@@ -118,10 +171,13 @@ def md_to_html(md: str) -> str:
 HARNESS_EXCLUDED = ("/.claude/CLAUDE.md", "/.claude/rules/", "/.claude/rules-lazy/", "/.claude/skills/", "/.claude/agents/")
 
 
-def check(html: str):
-    """(차단 목록, 경고 목록) 반환."""
+def check(html: str, typo_src: str | None = None):
+    """(차단 목록, 경고 목록) 반환. typo_src 는 ④⑤⑥ 을 볼 원문(마크다운 원본, 없으면 html)."""
     body = _strip_cells(html)
     blocked, warned = [], []
+    src = html if typo_src is None else typo_src
+    blocked += [("오탈자", "typo", f"{n}: {w} → {r}") for n, w, r in find_typos(src)]
+    warned += [("같은 어절 연속", "repeat", f"{n}: {w} {w}") for n, w in find_repeats(src)]
     for kind, inner in _blocks(body):
         txt = _text(inner)
         if not txt or not HANGUL.search(txt):
@@ -153,6 +209,11 @@ def check(html: str):
     return blocked, warned
 
 
+def _line_free(x):
+    """Drop the line-number prefix of a typo entry so a line shift is not counted as a new violation."""
+    return (x[0], x[1], x[2].split(": ", 1)[-1]) if x[0] == "오탈자" else x
+
+
 def regression(before: str, after: str, label: str = "", strict: bool = True) -> int:
     """치환 **전후**를 비교해 새로 생긴 위반만 막는다.
 
@@ -161,7 +222,8 @@ def regression(before: str, after: str, label: str = "", strict: bool = True) ->
     """
     b_old, w_old = check(before)
     b_new, w_new = check(after)
-    added = [x for x in b_new if b_new.count(x) > b_old.count(x) or x not in b_old]
+    ko, kn = [_line_free(x) for x in b_old], [_line_free(x) for x in b_new]
+    added = [x for x, k in zip(b_new, kn) if kn.count(k) > ko.count(k)]
     head = f"[한국어 문체 점검{' · ' + label if label else ''}]"
     print(f"{head} 차단 위반 {len(b_old)} → {len(b_new)}건 · "
           f"경고 {len(w_old)} → {len(w_new)}건")
@@ -174,8 +236,8 @@ def regression(before: str, after: str, label: str = "", strict: bool = True) ->
     return 1 if strict else 0
 
 
-def report(html: str, label: str = "", strict: bool = True) -> int:
-    blocked, warned = check(html)
+def report(html: str, label: str = "", strict: bool = True, typo_src: str | None = None) -> int:
+    blocked, warned = check(html, typo_src)
     head = f"[한국어 문체 점검{' · ' + label if label else ''}]"
     if not blocked and not warned:
         print(f"{head} 통과 — 위반 0건")
@@ -200,13 +262,15 @@ if __name__ == "__main__":
         sys.exit("사용: korean_style_check.py <html 또는 md 파일> [--warn-only]")
     import os
     path = sys.argv[1]
-    src = open(path, encoding="utf-8").read()
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
     strict = "--warn-only" not in sys.argv
     label = path
+    raw = None
     if path.endswith(".md"):
-        src = md_to_html(src)
+        raw, src = src, md_to_html(src)
         real = os.path.realpath(path)
         if any(k in real for k in HARNESS_EXCLUDED):
             label = path + " (하네스 룰/스킬 .md — 정본 § 한국어 문체 제외 대상, 참고용)"
             strict = False
-    raise SystemExit(report(src, label, strict=strict))
+    raise SystemExit(report(src, label, strict=strict, typo_src=raw))

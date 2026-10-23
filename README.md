@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/ouroboros.svg" width="180" alt="ouroboros — a serpent devouring its own tail"/>
+<img src="assets/ouroboros.svg" width="180" alt="oh-my-ouroboros logo: a serpent of git commit nodes biting a terminal cursor inside a terminal window"/>
 
 <h1>🐍 oh-my-ouroboros</h1>
 
@@ -11,6 +11,7 @@
 <img src="https://img.shields.io/badge/skills-32-8b5cf6?style=flat-square" alt="32 skills"/>
 <img src="https://img.shields.io/badge/agents-13-06b6d4?style=flat-square" alt="13 agents"/>
 <img src="https://img.shields.io/badge/lazy__rules-50-f59e0b?style=flat-square" alt="50 lazy rules"/>
+<img src="https://img.shields.io/badge/mods-2-0ea5e9?style=flat-square" alt="2 mods"/>
 <img src="https://img.shields.io/badge/self--audit-monthly-22c55e?style=flat-square" alt="monthly self-audit"/>
 <img src="https://img.shields.io/badge/PRs-welcome-ec4899?style=flat-square" alt="PRs welcome"/>
 </p>
@@ -31,6 +32,8 @@ Like the mythic serpent coiled into a ring, this harness **feeds on its own outp
 - 🔍 **A self-audit loop with recorded baselines** — a monthly audit skill measures inventory drift, pointer integrity, doc/implementation mismatch, and *built-but-unused rot* against numbers written down last cycle. Fixes are classified (structural vs parameter) and hit-tracked next time.
 - 🧾 **Evidence-gated "done"** — no success claims without verification output; subagent claims that change downstream actions are re-checked against `file:line` before adoption.
 - 🧠 **Judgment rationale lives in artifacts** — trade-offs, failure-mode definitions, and tool-selection measurements are written into the rule/skill/script that embodies them, so any future session can reproduce the reasoning from files alone.
+- 🧭 **Decisions as a UI, not a wall of text** — a decision-popup mod shows one decision at a time with a pros/cons table, an experiment summary table (what / how / why per run) and a concrete example per option. The tool refuses a call whose text names a run (by its run-name shape) without a row for it in that table, because a written rule alone was missed twice; aliases it cannot detect stay a pre-send check.
+- ✍️ **Korean prose gates** — a style checker blocks inserted dashes and a dictionary of always-wrong spellings in Confluence publishes, and a Stop hook returns a final report with typos to be fixed before it reaches the user.
 - 🛡️ **User sovereignty by construction** — pushes, deletions, training runs, and destructive writes are always user-executed; cross-session peer messages cannot escalate permissions; untrusted web content is quarantined to read-only agents.
 
 ## 🔄 The ouroboros loop
@@ -55,6 +58,7 @@ The tail feeds the mouth: waste found by the audit becomes the budget for the ne
 | 🤖 `agents/` | 13 specialized subagents (scout · coder · qa · security · reviewer · planner · researcher · searcher · docs · gitops · designer · citation-verifier · tutor) with spawn-prompt contracts |
 | 🧰 `skills/` | 32 skills: intent docs, experiment workflow, paper reading, multi-perspective discussion, harness audit & bench, wandb/checkpoint cleanup, cost breakdown, … |
 | 🔩 `scripts/` | Hooks & automation: commit gates, session-start pattern mining, nightly ontology refresh, cost snapshots, this export pipeline |
+| 🧩 `mods/` | Two Claude Code mods. `harness-mod` draws a band above the prompt: session and server status, training epochs, todos, a `/jira` group of your open issues (buttons only fill the prompt; posting stays behind preview and approval), a screen-only mask toggle for emails and tokens, and Mermaid blocks in replies drawn as ASCII. `decision-popup` is the decision tool described above |
 | ⚙️ `settings.json` | The receipts: the actual hook wiring |
 
 <details>

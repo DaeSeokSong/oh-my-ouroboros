@@ -242,7 +242,7 @@ CASES = [
     ("A6 systemctl restart", "systemctl restart nginx", True),
     ("A6 crontab -e", "crontab -e", True),
     ("A6 sudo mount", "sudo mount -t nfs a:/b /c", True),
-    ("A6 umount", "umount /data_hub", True),
+    ("A6 umount", "umount /mnt/data", True),
     ("A6 sysctl -w", "sysctl -w vm.swappiness=10", True),
     ("A6 kill pid (통과)", "kill 12345", False),
     ("A6 kill -0 (통과)", "kill -0 12345", False),

@@ -42,7 +42,7 @@ OOMD_RX = re.compile(r"systemd-oomd\[\d+\]: Killed (\S+) due to (.*)$")
 
 
 def scope_label(unit: str) -> str:
-    """memguard-exp-r58-123.scope → exp-r58"""
+    """memguard-exp-mtl-14j-r58t-123.scope → exp-mtl-14j-r58t"""
     s = unit[len("memguard-"):] if unit.startswith("memguard-") else unit
     s = s[: -len(".scope")] if s.endswith(".scope") else s
     return re.sub(r"-\d+$", "", s)

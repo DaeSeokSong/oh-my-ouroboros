@@ -159,6 +159,23 @@ claude plugin install claude-security@claude-plugins-official
 
 ---
 
+## 하네스 mod (화면 기능)
+
+하네스 화면 기능은 Claude Code mod 두 개로 들어 있습니다(`mods/`). 터미널 Claude Code v2.1.287 이상이 필요합니다.
+
+| mod | 하는 일 |
+|-----|---------|
+| `mods/harness-mod` | 입력창 위 «띠»: 작업·서버 상태, 학습 에폭, 할 일, `/jira` 이슈 묶음, 화면 표시용 가림 버튼(이메일·토큰을 화면에서만 가림, 모델은 원문을 봄), 응답 속 Mermaid 를 ASCII 도해로 그리기 |
+| `mods/decision-popup` | 결정 항목을 한 항목씩 띄우는 팝업 도구(`ask`): 선택지 장단점 표, 실험 정리 표, 선택지별 예시. 항목에 나온 판 이름을 실험 정리 표에서 빠뜨리면 도구가 거부 |
+
+`settings.json` 의 `env.CLAUDE_CODE_PLUGIN_DIRS` 가 두 폴더를 가리킵니다. 경로는 **절대 경로**여야 하므로 설치한 머신의 홈 경로로 고칩니다(`~` 는 풀리지 않습니다).
+```json
+"CLAUDE_CODE_PLUGIN_DIRS": "/home/<사용자>/.claude/mods/harness-mod:/home/<사용자>/.claude/mods/decision-popup"
+```
+점검: `cd ~/.claude/mods/harness-mod && claude plugin validate . && claude plugin test .`
+
+---
+
 ## ntfy 알림 설정
 
 알림 주제(topic)는 추적되는 스크립트가 아니라 gitignored 설정 파일에 둡니다. `config/env-config.template` 을 `~/.claude/config/env-config`(또는 `~/.claude/env-config`)로 복사한 뒤 `USER_NTFY_TOPIC` 키에 본인만 아는 고유한 이름을 적습니다. `claude-notify.sh` 가 이 키를 읽습니다. 서버를 직접 운영하면 같은 파일의 `NTFY_SERVER` 키를 씁니다.

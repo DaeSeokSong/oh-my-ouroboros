@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: EXE001
 """Jira 댓글 공용 게시 스크립트 (REST v3, 표준 라이브러리만).
 
 ■ 왜 이 스크립트인가 (판단 근거 이식 — 2026-10-01 실사고)
@@ -62,6 +63,8 @@
   #    그림 id = 기존 − 교체된 옛 id + 새 UUID. 스탬프는 항목별 replace 와 치환 목록 내용에 묶인다. 옛 첨부는 지우지 않는다.
   python3 ~/.claude/scripts/jira_comment.py preview --issue PROJ-988 --comment-id 32209 --patches 치환.json --figures 그림.json
   python3 ~/.claude/scripts/jira_comment.py update --issue PROJ-988 --comment-id 32209 --patches 치환.json --figures 그림.json
+  # ⑧ 내 미완료 이슈 목록 (읽기 전용, 스탬프 무관). --max 기본 10, 1~30 으로 자른다. 오류는 rc 2 (--json 이면 stdout 에 {"error": ...})
+  python3 ~/.claude/scripts/jira_comment.py mine [--json] [--max N]
 """
 
 import argparse
@@ -77,8 +80,8 @@ import struct
 import sys
 import time
 import urllib.error
-import urllib.request
 import urllib.parse
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -89,7 +92,7 @@ STAMP_KEEP, BACKUP_KEEP = 7 * 86400, 30 * 86400
 MAX_READ = 5 * 1024 * 1024
 MAX_FIG_BYTES, MAX_FIGS, MAX_FIG_DIM = 10 * 1024 * 1024, 20, 20000
 FIG_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
-MEDIA_UUID_RE = re.compile(r"/file/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:/|\?|$)", re.I)
+MEDIA_UUID_RE = re.compile(r"/file/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:/|\?|$)", re.IGNORECASE)
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 MAX_ATTACH, MAX_ATTACH_BYTES = 10, 50 * 1024 * 1024
 ATTACH_TYPES = {"csv": "text/csv", "tsv": "text/tab-separated-values", "txt": "text/plain", "json": "application/json",
@@ -156,7 +159,8 @@ def read_credentials():
     except OSError:
         pass
     try:
-        lines = [x.strip() for x in open(path, encoding="utf-8") if x.strip()]
+        with open(path, encoding="utf-8") as f:
+            lines = [x.strip() for x in f if x.strip()]
     except OSError:
         raise Fail(5, f"자격증명 파일을 읽을 수 없습니다: {path}") from None
     if len(lines) < 2:
@@ -169,7 +173,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         """Never build a follow-up request."""
-        return None
+        return
 
 
 def _open(req, timeout=30):
@@ -461,7 +465,8 @@ def text_nodes(node):
 def load_patches(path):
     """Load and validate the [{anchor, new}] patch file."""
     try:
-        patches = json.load(open(path, encoding="utf-8"))
+        with open(path, encoding="utf-8") as f:
+            patches = json.load(f)
     except (OSError, ValueError) as e:
         raise Fail(2, f"치환 파일을 읽을 수 없습니다: {path} ({type(e).__name__})") from None
     if not isinstance(patches, list) or not all(
@@ -544,7 +549,7 @@ def canonical(adf):
 def stamp_hash(issue, comment_id, adf):
     """Return the sha256 binding site, issue key, comment id (or 'new'), and the ADF to publish."""
     # 사이트도 묶는다: 미리보기 뒤 JIRA_SITE 를 바꿔 다른 사이트의 동명 이슈에 게시하는 길을 막는다(2026-10-01 감사).
-    return hashlib.sha256(f"{site()}\n{issue}\n{comment_id or 'new'}\n{canonical(adf)}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{site()}\n{issue}\n{comment_id or 'new'}\n{canonical(adf)}".encode()).hexdigest()
 
 
 def current_sha(cur):
@@ -602,7 +607,8 @@ def check_stamp(h, cur_sha=None):
     """Raise rc 3 unless a valid stamp (readable, not future, under 6 hours, same current comment) exists."""
     path = os.path.join(stamp_dir(), f"{h}.json")
     try:
-        rec = json.load(open(path, encoding="utf-8"))
+        with open(path, encoding="utf-8") as f:
+            rec = json.load(f)
         t = datetime.fromisoformat(rec["time"]).timestamp()
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         t = rec = None
@@ -1196,6 +1202,38 @@ def cmd_get(a):
     return 0
 
 
+def cmd_mine(a):
+    """List my unfinished issues (read-only); on failure print one-line error (stdout JSON with --json) and return 2."""
+    try:
+        base = site()
+        status, data = http("POST", f"{base}/rest/api/3/search/jql", {
+            "jql": "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
+            "maxResults": max(1, min(30, a.max)), "fields": ["summary", "status", "updated"]})
+        if status != 200:
+            raise Fail(2, f"Jira 조회 실패: HTTP {status}" if status else "Jira 조회 실패: 연결 실패")
+        try:
+            rows = [{"key": str(i["key"]), "summary": str(i["fields"].get("summary") or ""),
+                     "status": str((i["fields"].get("status") or {}).get("name") or ""),
+                     "updated": str(i["fields"].get("updated") or ""), "url": f"{base}/browse/{i['key']}"}
+                    for i in data["issues"]]
+        except (KeyError, TypeError, AttributeError):
+            raise Fail(2, "Jira 응답 형식 오류") from None
+    except Exception as e:   # noqa: BLE001 — Fail 포함. 예기치 못한 예외는 형식 이름만(트레이스백·토큰 노출 없음)
+        name = type(e).__name__
+        msg = e.msg if isinstance(e, Fail) else name
+        if a.json:
+            print(json.dumps({"error": msg}, ensure_ascii=False))
+        else:
+            print(msg if isinstance(e, Fail) else f"예기치 못한 오류: {name}", file=sys.stderr)
+        return 2
+    if a.json:
+        print(json.dumps(rows, ensure_ascii=False))
+    else:
+        for r in rows:
+            print(esc(f"{r['key']}  [{r['status']}]  {r['summary']}"))
+    return 0
+
+
 def cmd_preview(a):
     """Print format rules, the rendered preview and warnings, then write the stamp."""
     given = lambda v: v is not None   # 빈 문자열 인자도 «준 것» 으로 본다(빈 경로는 읽기 단계에서 rc 2)
@@ -1307,7 +1345,12 @@ def main(argv=None):
     up.add_argument("--body-file")
     up.add_argument("--patches")
     up.add_argument("--figures")
+    mi = sub.add_parser("mine")
+    mi.add_argument("--json", action="store_true")
+    mi.add_argument("--max", type=int, default=10)
     a = ap.parse_args(argv)
+    if a.cmd == "mine":
+        return cmd_mine(a)
     try:
         if not ISSUE_RE.fullmatch(a.issue):
             raise Fail(2, f"이슈 키 형식이 올바르지 않습니다(예: PROJ-972): {esc(a.issue)[:40]}")

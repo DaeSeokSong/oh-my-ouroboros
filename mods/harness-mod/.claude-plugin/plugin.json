@@ -1,0 +1,4 @@
+{ "name": "harness-mod", "version": "0.1.0",
+  "description": "Harness band above the prompt (stage 1 of intent/2026-10-15-harness-mods.md)",
+  "author": { "name": "harness" },
+  "types": "./types/index.d.ts" }

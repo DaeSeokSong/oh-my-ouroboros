@@ -6,7 +6,7 @@
     "DISABLE_ERROR_REPORTING": "1",
     "DISABLE_FEEDBACK_COMMAND": "1",
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
-    "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/harness-mod:~/.claude/mods/decision-popup"
+    "CLAUDE_CODE_PLUGIN_DIRS": "/home/<user>/.claude/mods/harness-mod:/home/<user>/.claude/mods/decision-popup"
   },
   "attribution": {
     "commit": "",

@@ -244,8 +244,8 @@ def test_parse_compute_apps_and_uuids():
     assert srv.parse_gpu_uuids("garbage\n\n") == {}
 
 def test_run_name_from_cgroup():
-    cg = "0::/user.slice/user-1000.slice/memguard-exp-r72-2731642.scope\n"
-    assert srv.run_name_from_cgroup(cg) == "exp-r72"
+    cg = "0::/user.slice/user-1000.slice/memguard-exp-mtl-14t-r72-1t-2731642.scope\n"
+    assert srv.run_name_from_cgroup(cg) == "exp-mtl-14t-r72-1t"
     assert srv.run_name_from_cgroup("0::/user.slice/session-3.scope\n") is None
     assert srv.run_name_from_cgroup("0::/memguard-bad name;x-12.scope") is None   # 이상한 글자
     assert srv.run_name_from_cgroup("0::/memguard-" + "a" * 70 + "-12.scope") is None   # 60자 초과
@@ -586,7 +586,7 @@ def test_collect_carries_recent_train_when_stuck(monkeypatch, tmp_path):
 
 # ---- 와쳐 · 세션 작업(개정 11, 2026-10-16) ----
 def test_runner_pid_from_cgroup():
-    assert srv.runner_pid_from_cgroup("0::/user.slice/memguard-exp-r72-2731642.scope\n") == 2731642
+    assert srv.runner_pid_from_cgroup("0::/user.slice/memguard-exp-mtl-14t-r72-1t-2731642.scope\n") == 2731642
     assert srv.runner_pid_from_cgroup("0::/user.slice/session-3.scope\n") is None
     assert srv.runner_pid_from_cgroup("0::/memguard-bad name;x-12.scope") is None
     assert srv.runner_pid_from_cgroup(None) is None

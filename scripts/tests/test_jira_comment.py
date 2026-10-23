@@ -16,13 +16,13 @@ from types import SimpleNamespace
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import jira_comment as jc  # noqa: E402
+import jira_comment as jc
 
 REAL_HTTP = jc.http
 REAL_OPEN = jc._open
 ROOT = Path(__file__).resolve().parents[2]
 SAMPLE = ROOT / ".scratch/9d9904f7/jira/nrs972_32105.adf.json"
-FAKE_CRED = "-".join(["FAKE", "CRED", "123"])   # 시험용 가짜 값. 리터럴 한 덩어리로 쓰면 커밋 시크릿 검사가 오탐한다(2026-10-01)
+FAKE_CRED = "-".join(["FAKE", "CRED", "123"])   # noqa: FLY002  # 시험용 가짜 값. 리터럴 한 덩어리로 쓰면 커밋 시크릿 검사가 오탐한다(2026-10-01)
 TOKEN = FAKE_CRED
 SKILL = (
     "# x\n\n## Jira 댓글 자동 기록 (MANDATORY)\n\n댓글 형식 규칙:\n* 줄 수: 10줄 이내\n\n"
@@ -129,7 +129,7 @@ def test_md_urls_card_vs_link_and_plain_paragraph():
     adf = jc.md_to_adf("* 문서 https://your-company-prod.atlassian.net/wiki/spaces/A/pages/1 참고 https://example.com/p.\n설명 문단\n")
     nodes = adf["content"][0]["content"][0]["content"][0]["content"]
     assert {"type": "inlineCard", "attrs": {"url": "https://your-company-prod.atlassian.net/wiki/spaces/A/pages/1"}} in nodes
-    link = [n for n in nodes if n.get("marks")][0]
+    link = next(n for n in nodes if n.get("marks"))
     assert link["text"] == "https://example.com/p"
     assert nodes[-1]["text"] == "."
     assert adf["content"][1]["type"] == "paragraph"
@@ -139,7 +139,7 @@ def test_md_urls_card_vs_link_and_plain_paragraph():
 def test_sample_adf_renders_three_numbered_items():
     adf = json.loads(SAMPLE.read_text(encoding="utf-8"))
     text = jc.adf_to_text(adf)
-    assert len(re.findall(r"^\d+\. ", text, re.M)) == 3
+    assert len(re.findall(r"^\d+\. ", text, re.MULTILINE)) == 3
     assert "[이미지]" in text
 
 
@@ -232,7 +232,7 @@ def test_update_body_file_notify_false_and_backup(env):
     env.fake.comments["7"] = jc.md_to_adf("* 옛 본문\n")
     run("preview", "--issue", "PROJ-1", "--comment-id", 7, "--body-file", env.body)
     assert run("update", "--issue", "PROJ-1", "--comment-id", 7, "--body-file", env.body) == 0
-    put = [c for c in env.fake.calls if c[0] == "PUT"][0]
+    put = next(c for c in env.fake.calls if c[0] == "PUT")
     assert put[1].endswith("/comment/7?notifyUsers=false")
     backups = list((env.home / ".claude/_audit/jira-preview").glob("backup-PROJ-1-7-*.adf.json"))
     assert len(backups) == 1
@@ -290,6 +290,64 @@ def test_get_summary_and_save(env, capsys):
     out = capsys.readouterr().out
     assert "bulletList" in out and "요약 대상 문장" in out and "uuid-1" in out
     assert json.loads(out_path.read_text()) == media_adf("요약 대상 문장")
+
+
+# ---------------------------------------------------------------- mine
+
+def _issues(n):
+    return {"issues": [{"key": f"PROJ-{i}", "fields": {"summary": f"제목 {i}", "status": {"name": "진행 중"},
+                                                       "updated": "2026-10-23T01:00:00.000+0900"}} for i in range(1, n + 1)]}
+
+
+def test_mine_json_shape_and_request(env, capsys):
+    env.fake.override["POST"] = (200, _issues(2))
+    assert run("mine", "--json") == 0
+    out = capsys.readouterr().out
+    assert json.loads(out) == [
+        {"key": f"PROJ-{i}", "summary": f"제목 {i}", "status": "진행 중", "updated": "2026-10-23T01:00:00.000+0900",
+         "url": f"https://your-company-prod.atlassian.net/browse/PROJ-{i}"} for i in (1, 2)]
+    assert out.count("\n") == 1 and TOKEN not in out
+    method, url, body = env.fake.calls[0]
+    assert method == "POST" and url.endswith("/rest/api/3/search/jql") and body["maxResults"] == 10
+    assert body["jql"].startswith("assignee = currentUser()") and body["fields"] == ["summary", "status", "updated"]
+
+
+def test_mine_text_output(env, capsys):
+    env.fake.override["POST"] = (200, _issues(1))
+    assert run("mine") == 0
+    assert capsys.readouterr().out == "PROJ-1  [진행 중]  제목 1\n"
+
+
+@pytest.mark.parametrize("given,sent", [(0, 1), (31, 30), (5, 5)])
+def test_mine_max_clamped(env, given, sent):
+    env.fake.override["POST"] = (200, _issues(0))
+    assert run("mine", "--max", given) == 0
+    assert env.fake.calls[0][2]["maxResults"] == sent
+
+
+@pytest.mark.parametrize("reply", [(401, {"errorMessages": [TOKEN]}), (0, {"_raw": "연결 실패: URLError"}),
+                                   (200, {"nope": 1}), (200, {"issues": [{"fields": {}}]})])
+def test_mine_errors_rc2(env, capsys, reply):
+    env.fake.override["POST"] = reply
+    assert run("mine", "--json") == 2
+    cap = capsys.readouterr()
+    err = json.loads(cap.out)
+    assert list(err) == ["error"] and "\n" not in err["error"] and TOKEN not in cap.out + cap.err
+    assert run("mine") == 2
+    cap = capsys.readouterr()
+    assert cap.out == "" and cap.err.strip() and TOKEN not in cap.err
+
+
+def test_mine_unexpected_exception_prints_type_name_only_rc2(env, monkeypatch, capsys):
+    def boom(*a, **k):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, TOKEN)
+    monkeypatch.setattr(jc, "http", boom)
+    assert run("mine", "--json") == 2
+    cap = capsys.readouterr()
+    assert json.loads(cap.out) == {"error": "UnicodeDecodeError"} and cap.err == ""
+    assert run("mine") == 2
+    cap = capsys.readouterr()
+    assert cap.out == "" and cap.err == "예기치 못한 오류: UnicodeDecodeError\n" and "Traceback" not in cap.err and TOKEN not in cap.err
 
 
 def test_token_never_leaks(env, monkeypatch, capsys):
@@ -1399,7 +1457,7 @@ def test_attach_preview_first_line_is_escaped_truncated_and_bom_skipped(att, cap
     (att.dir / "b.csv").write_bytes(("﻿id\x1b[31m," + "y" * 300 + "\nsecond\n").encode("utf-8"))
     att.lst.write_text(json.dumps([{"file": "b.csv"}]))
     assert apreview(att) == 0
-    line = [x for x in capsys.readouterr().out.splitlines() if "첫 줄:" in x][0]
+    line = next(x for x in capsys.readouterr().out.splitlines() if "첫 줄:" in x)
     assert line.startswith("    첫 줄: id\\x1b[31m,yyy") and "second" not in line and "﻿" not in line and "\x1b" not in line
     assert line.count("y") == jc.PREVIEW_CHARS - len("id\x1b[31m,")   # 120자에서 자른다(esc 는 자른 뒤에 한다)
 
@@ -2037,7 +2095,7 @@ def test_replace_new_uuid_equal_to_remaining_old_id_blocks_put_after_upload(rep)
     rep.lst.write_text(json.dumps([{"anchor": "[그림 1]", "file": "a.png", "replace": True}]))
     assert rpreview(rep) == 0
     assert rupdate(rep) == 2
-    assert [c.method for c in rep.raw.calls][0] == "POST"   # 업로드까지는 갔다
+    assert next(c.method for c in rep.raw.calls) == "POST"   # 업로드까지는 갔다
     assert "PUT" not in rep.fake.methods() and backups_of(rep) == [] and len(stamp_files(rep.env)) == 1
     assert rep.fake.comments["7"] == adf
 
