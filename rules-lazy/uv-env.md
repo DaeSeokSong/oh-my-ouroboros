@@ -58,4 +58,4 @@ uv run pytest -q                  # 테스트가 있으면
 
 ## 근거 (2026-08-27 실사고)
 
-CLAUDE.md 원칙 5가 "uv 로 패키지 관리" 만 말하고 인터프리터 출처를 규정하지 않았다. 그 틈으로 uv 가 서버의 `~/anaconda3/bin/python3.12` 를 집어 프로젝트 `.venv/pyvenv.cfg` 의 `home` 이 서버 고유 경로가 됐고, 저장소를 다른 서버에 NFS 마운트했을 때 venv 가 동작하지 않았다.
+CLAUDE.md 원칙 5가 "uv 로 패키지 관리" 만 말하고 인터프리터 출처를 규정하지 않았다. 그 틈으로 uv 가 한 서버의 `~/anaconda3/bin/python3.12` 를 집어 한 프로젝트 `.venv/pyvenv.cfg` 의 `home` 이 서버 고유 경로가 됐고, 저장소를 다른 서버에 NFS 마운트했을 때 venv 가 동작하지 않았다. 같은 날 `~/workspace` 아래 `.venv` 6개 가운데 3개가 anaconda 의존이었다. 그 프로젝트는 `.python-version`(3.12) + `[tool.uv] python-preference = "only-managed"` 를 넣었다(서버 · 프로젝트 이름과 실측 목록: `knowledge/harness/rules-project-server-history-2026-11-10.md` § uv-env).

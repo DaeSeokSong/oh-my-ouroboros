@@ -2,6 +2,7 @@
 
 > **로드 시점**: 비가역 게이트에서 사용자 결정을 받는 시점, 서명 로그 집계·보고 시점.
 > **정본**: 이 파일. CLAUDE.md § 연구 환경 규칙의 한 줄은 포인터다.
+> **도입**: 2026-08-30 MANDATORY. tutor 카나리는 2026-09-14 사용자 요청 시만으로 하향했고 고의 오류 주입 방식은 기각했다(아래 § 카나리의 형태·§ 카나리 규율, 2026-11-10 상시에서 이관).
 
 ## 왜 이 규칙이 있는가 (판단 근거 이식)
 
@@ -16,7 +17,7 @@
 
 ## 서명 로그
 
-- 파일: `_audit/oversight.tsv` (기기 로컬, gitignored). 유일한 쓰기 경로는 `scripts/oversight-append.sh`다. 이 스크립트를 부르는 주체는 main(기본)과 도구들이다(대기 목록 도구 `launch_queue.py` 는 주체 `watcher-queue` 로, `harness-bench.sh` 도 기록한다). 손으로 파일에 적는 것은 쓰기 경로가 아니다. 손으로 적어 온 230행이 5열·6열·비게이트 어휘로 갈라져 어느 스키마로도 집계되지 않아 2026-09-14 신설했다.
+- 파일: `_audit/oversight.tsv` (기기 로컬, gitignored). 기록은 `scripts/oversight-append.sh` 스크립트로 쓴다. 기록은 `oversight-append.sh` 로만 한다. 매니저 밖 세션의 Write · Edit 는 scope-gate 가 막지만 Bash 로 직접 덧붙이는 쓰기는 훅이 막지 못하므로 문구 규율이다. 이 스크립트를 부르는 주체는 main(기본)과 도구들이다(대기 목록 도구 `launch_queue.py` 는 주체 `watcher-queue` 로, `harness-bench.sh` 도 기록한다). 손으로 파일에 적는 것은 쓰기 경로가 아니다. 손으로 적어 온 230행이 5열·6열·비게이트 어휘로 갈라져 어느 스키마로도 집계되지 않아 2026-09-14 신설했다.
 - 시점: 비가역 게이트에서 사용자 결정을 받은 직후 `bash ~/.claude/scripts/oversight-append.sh <게이트> "<대상>" "<근거>" [주체]`.
 - 정본 6열(2026-09-14 확정, 탭 구분): `일시 \t 프로젝트 \t 게이트 \t 대상 \t 근거 \t 주체`
   - 프로젝트: cwd 가 속한 저장소 이름(하네스 자신은 `harness`). 스크립트가 `git rev-parse --show-toplevel`로 자동 채운다.

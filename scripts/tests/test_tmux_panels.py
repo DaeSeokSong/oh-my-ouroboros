@@ -60,7 +60,7 @@ def tm(tmp_path):
     fake.chmod(0o755)
     proj = tmp_path / "proj" / ".claude"
     proj.mkdir(parents=True)
-    (proj / "train.env").write_text("TRAIN_TMUX_PREFIX=exp-mtl\nCKPT_ROOT=/x\n")
+    (proj / "train.env").write_text("TRAIN_TMUX_PREFIX=exp-demo\nCKPT_ROOT=/x\n")
 
     def pane(pid, title, win=0, wname="main", sess="work"):
         return {"pane_id": pid, "pane_title": title, "window_index": win, "window_name": wname, "session_name": sess}
@@ -70,7 +70,7 @@ def tm(tmp_path):
         pane("%2", "alice [coder]"),              # setup 패널
         pane("%3", "✳ Task"),                     # 자동 생성
         pane("%5", "✳ claude"),                   # 자기 자신(✳ 제목이어도 지우면 안 된다)
-        pane("%6", "✳ Task", sess="exp-mtl3"),    # 학습 세션 pane
+        pane("%6", "✳ Task", sess="exp-demo3"),    # 학습 세션 pane
         pane("%7", "w", win=1, wname="tm-1"),     # 오버플로우 창
         pane("%8", "self-win", win=2, wname="tm-2"),   # 자기 pane 이 든 오버플로우 창은 지우지 않는다
     ]}
@@ -83,7 +83,7 @@ def tm(tmp_path):
         env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "TMUX_PANE": self_pane,
                "FAKE_TMUX_STATE": str(tmp_path / "state.json"), "FAKE_TMUX_LOG": str(tmp_path / "log"),
                "CLAUDE_PROJECT_DIR": str(tmp_path / "proj")}
-        r = subprocess.run(["bash", str(SCRIPT), cmd], capture_output=True, text=True, env=env, cwd=tmp_path)
+        r = subprocess.run(["bash", str(SCRIPT), cmd], check=False, capture_output=True, text=True, env=env, cwd=tmp_path)
         assert r.returncode == 0, r.stderr
         log = (tmp_path / "log").read_text().splitlines() if (tmp_path / "log").exists() else []
         return r.stdout, [x for x in log if x.startswith("kill-")]
@@ -114,7 +114,7 @@ def test_cleanup_outside_tmux_exits_zero_with_notice_and_kills_nothing(tmp_path)
     env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
     env["PATH"] = "/usr/bin:/bin"                                    # tmux 가 없거나 서버가 없는 환경
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
-    r = subprocess.run(["bash", str(SCRIPT), "cleanup"], capture_output=True, text=True, env=env, cwd=tmp_path)
+    r = subprocess.run(["bash", str(SCRIPT), "cleanup"], check=False, capture_output=True, text=True, env=env, cwd=tmp_path)
     assert r.returncode == 0, r.stderr
     assert "tmux 밖" in r.stdout and "삭제 대상" not in r.stdout
 

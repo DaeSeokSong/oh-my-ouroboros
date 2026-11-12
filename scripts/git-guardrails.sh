@@ -24,6 +24,22 @@
 #   간접 우회 (2026-10-17 검수팀 보안): `git config include.path`·`includeIf.*.path`·`-c include.path=` / 환경변수 GIT_CONFIG_GLOBAL·GIT_CONFIG_SYSTEM·GIT_DIR·GIT_COMMON_DIR
 #   (명령 어디든) — 둘 다 다른 파일의 core.hooksPath 를 끌어들이므로 허용 예외 없이 막는다. 커밋 훅 건너뛰기는 `--no-v…` 접두 전부와 `-n` 묶음 어디든,
 #   브랜치 강제 삭제는 -D 와 삭제·강제의 조합 전부, push 우회는 `git config alias.*` 설정·`send-pack`·`http-push`·`remote/subtree … push`·`submodule foreach …push…` 를 막는다.
+#   + 확장 검사 (2026-11-09 5단계 — scripts/git_guard_ext.py 로 넘김, 맨 끝에서 호출): 1) `git -c` 허용 목록(출력 형식·신원·프로토콜 키만, 나머지는 프로그램 실행·설정 끌어오기 가능이라 차단)
+#   2) 같은 효과의 환경 변수(GIT_CONFIG_*·GIT_EXTERNAL_DIFF·GIT_SSH*·GIT_ASKPASS·pager/editor 류) 3) filter-repo·filter-branch·update-ref -d·gc --prune·prune·reflog expire/delete·rebase(--abort 제외)
+#   4) restore·checkout 경로 복구는 «커밋 안 된 변경이 있는 경로»만 차단(실제 git diff 로 확인, 확인 호출은 fsmonitor 등 저장소 설정 코드 실행을 끄고 환경을 정리해 부른다)
+#   5) 셸 -c·eval 페이로드 재귀. 판정 불가(따옴표 실패·cd 동반·git 이 명령 자리에 없음·확인 호출 실패)는 전부 차단(fail-closed). 한계: 저장소 config alias 로 감싼 하위명령·`repack -a -d` 류·셸 함수(R11 범위 밖의 것)·목록 밖 래퍼.
+#   검수 지적 보강 (2026-11-09 R1~R11, r5 H·C): 셸 확장·줄 이음 차단, heredoc 은 폐기된 판정(R2/R2b)을 버리고 «git 이 든 명령에 따옴표 밖 << 가 있으면 전부 차단»(커밋 메시지는 git commit -F <파일>),
+#   래퍼 확대(env -S·su·flock·script·watch·tmux 전 하위명령·here-string·따옴표 속 $()·따옴표 없는 백틱), 환경 변수 확대(HOME·PATH·GIT_DIR·GIT_*_PATHSPECS·GIT_ALLOW_PROTOCOL 류, `+=`),
+#   assume-unchanged·skip-worktree 로 숨긴 변경·checkout-index·read-tree -u·apply -R, 긴 옵션 약어, `2>&1` 숫자, git config 쓰기에도 -c 허용 목록, 저장소 filter.* 설정 시 경로 복구 차단,
+#   R11 셸 별칭·hash·함수·명령 자리 변수로 git 을 감싼 명령 차단.
+#   넓은 범위 (r5 C, 사용자 결정 «데이터 손실·ref 삭제·프로그램 실행 계열은 막는다»): 커밋 안 된 작업·색인을 버리거나(reset --hard/--merge/--keep·clean·rm -f·mv -f·worktree remove --force·checkout/restore --ours/--theirs·update-index --remove 류),
+#   ref·객체·reflog·설정을 되돌리기 어렵게 지우거나(tag -d/-f·branch -f/-D/-M/-C·remote remove·update-ref 비후손 이동·notes remove·replace·repack -d·config --unset 의 global/system/file 범위·worktree add -B),
+#   git 이 지정한 프로그램을 돌리는(clone -c·ext::·--upload-pack·difftool·bisect run·submodule foreach·send-email·instaweb·--output 덮어쓰기 포함) 형태를 막는다. 목록과 근거 표는 git_guard_ext.py docstring 규칙 11.
+#   sec4 (2026-11-09): 따옴표·백슬래시로 쪼갠 이름(`g"i"t`·`g\it`)도 git 으로 본다 — 아래 단락과 check_git 이 같은 사본으로 판정한다.
+#   r5fix (2026-11-09 stage5_fix_r5.md): zsh `=git` 도 git 낱말(GITB 경계에 `=`), 이 파일의 push·pull·stash·commit 훅 건너뛰기·checkout -f·전체 폐기 규칙은 git_guard_ext.py 에도 같은 판정으로 있다
+#   (`git-<하위명령>` 실행 파일 경로·`=bash -c` 페이로드는 이 파일의 정규식이 못 보기 때문). 그 밖의 r5fix 항목(apply·fetch --prune·merge-file·GIT_TRACE 값·glob 연산자 등)은 확장 파일 docstring 참조.
+#   r6fix (2026-11-09 stage5_fix_r6.md): 따옴표·백슬래시로 감싼 구두점(`';'`·`\|`)은 연산자가 아니라 인자 — strip_quoted 가 본문이 구두점뿐인 따옴표와 `\`+구두점을 자리표시자 낱말(QQ)로 바꾼다
+#   (되살리면 세그먼트 분리자가 돼 뒤 인자를 못 본다). SHC_RE 에 rbash. 그 밖의 r6fix 항목(source·`.` here-string, 변수 대입 자리, 값 받는 옵션, --skip 등)은 확장 파일 docstring 참조.
 # 우회: 첫 줄 "# APPROVED" (bash-write-check와 동일 규약 — 사용자 승인 후 재실행).
 #   `# APPROVED` 가 실제 사용자 승인 발화를 인용했는지 검사하는 일은 같은 PreToolUse 체인에서
 #   먼저 도는 bash-write-check.sh 가 한다(순서: bash-write-check → git-guardrails). 여기서 반복하지 않는다.
@@ -48,8 +64,9 @@ CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 # 사용자 승인 마커 (정확 매칭 — '# APPROVED_X' 오승인 방지, bash-write-check와 동일)
 echo "$CMD" | head -1 | grep -qE '^# APPROVED([[:space:]]|$)' && exit 0
 
-# git 토큰 자체가 없으면 즉시 통과 (저비용 단락)
-echo "$CMD" | grep -q 'git' || exit 0
+# git 토큰 자체가 없으면 즉시 통과 (저비용 단락). 따옴표·백슬래시로 쪼갠 이름(`g"i"t`·`g'i't`·`g\it`)은 셸이 벗긴 뒤 git 이 되므로,
+#   따옴표·백슬래시를 뗀 사본에서도 찾는다 (2026-11-09 5단계 sec4: 단락이 쪼갠 이름을 통과시켜 뒤 규칙 전체가 안 돌았다).
+echo "$CMD" | grep -q 'git' || printf '%s' "$CMD" | tr -d '"\047\134' | grep -q 'git' || exit 0
 
 deny() {
     jq -cn --arg r "[git 차단] $1 — 사용자 직접 실행 원칙. 목적을 설명하고 승인받은 뒤 첫 줄 '# APPROVED'로 재실행하세요 (code-execution.md § Hook 차단 시 처리)." \
@@ -77,7 +94,7 @@ strip_quoted() {
     tr '\n' '\001' | awk -v NL="$(printf '\001')" '{
         n = length($0); out = ""; i = 1
         while (i <= n) { c = substr($0, i, 1)
-            if (c == "\\") { out = out substr($0, i, 2); i += 2; continue }
+            if (c == "\\") { if (substr($0, i + 1, 1) ~ /[;&|()<>]/) out = out "QQ"; else out = out substr($0, i, 2); i += 2; continue }
             if (c == "#" && (i == 1 || substr($0, i - 1, 1) == NL || substr($0, i - 1, 1) ~ /[[:space:];&|(]/)) {
                 j = index(substr($0, i), NL); if (j == 0) { out = out substr($0, i); break }
                 out = out substr($0, i, j - 1); i += j - 1; continue }
@@ -88,7 +105,8 @@ strip_quoted() {
                     k++ }
                 if (k > n) { out = out substr($0, i); break }
                 body = substr($0, i + 2, k - i - 2)
-                if (index(body, NL) == 0 && body !~ /[[:space:]]/) out = out body
+                if (body ~ /^[;&|()<>]+$/) out = out "QQ"
+                else if (index(body, NL) == 0 && body !~ /[[:space:]]/) out = out body
                 i = k + 1; continue }
             if (c == "\"" || c == "\047") { k = i + 1
                 while (k <= n) { d = substr($0, k, 1)
@@ -97,7 +115,8 @@ strip_quoted() {
                     k++ }
                 if (k > n) { out = out substr($0, i); break }
                 body = substr($0, i + 1, k - i - 1)
-                if (index(body, NL) == 0 && body !~ /[[:space:]]/) out = out body
+                if (body ~ /^[;&|()<>]+$/) out = out "QQ"
+                else if (index(body, NL) == 0 && body !~ /[[:space:]]/) out = out body
                 i = k + 1; continue }
             out = out c; i++ }
         gsub(NL, ";", out); print out }'
@@ -116,7 +135,7 @@ HP_OK="(${HOME}/\.claude/\.git/hooks|${HP_REAL:-${HOME}/\.claude/\.git/hooks}|~/
 
 # 훅 경로 키(대소문자 무시)·git 앞 경계(서브셸 `(`·경로 접두 `/usr/bin/git`) — 아래 두 함수가 함께 쓴다.
 HPK='[Cc][Oo][Rr][Ee]\.[Hh][Oo][Oo][Kk][Ss][Pp][Aa][Tt][Hh]'
-GITB='(^|[[:space:];|&(])([^[:space:]]*/)?git'
+GITB='(^|[[:space:];|&(=])([^[:space:]]*/)?git'   # `=` : zsh `=git` (경로 펼침) 도 git 명령 낱말 (2026-11-09 r5fix 1)
 # 같은 명령이 HOME 을 다시 대입하면(`export HOME=…`·`HOME=… git …`) 허용값 HP_OK 의 `~`·`$HOME` 표기가 가리키는 곳이 바뀐다 → 예외 불인정 (2026-10-17 security 3차).
 HOME_REASSIGNED=""
 printf '%s' "$CMD" | grep -qE '(^|[[:space:];&|(])(export[[:space:]]+)?HOME=' && HOME_REASSIGNED=1
@@ -281,12 +300,18 @@ check_git_segment() {
 # 그래서 `;`·`&&`·`||`·`|`·`&`·개행으로 갈라 **조각마다 독립 판정**한다 — 허용 예외는 그 조각 안에서만 산다.
 # 규칙 전부를 이 경로로 옮긴다(일부만 세그먼트화하면 같은 구멍이 남는다).
 # 따옴표는 이미 지운 뒤라 인용문 속 구분자는 여기 오지 않는다(`git commit -m 'a; b'` 오탐 없음).
+# 백슬래시 쪼갠 이름(`g\it push`)은 strip_quoted 가 `\i` 를 그대로 둬 규칙에 안 걸리므로, 백슬래시를 뗀 사본도 같이 판정한다(sec4).
 check_git() {
-    local seg
-    while IFS= read -r seg; do
-        [ -n "${seg//[[:space:]]/}" ] || continue
-        check_git_segment "$seg" "$2"
-    done <<< "$(printf '%s' "$1" | sed -E 's/[;&|]/\n/g')"
+    local seg v bs variants
+    bs=$(printf '%s' "$1" | tr -d '\134')
+    variants=("$1")
+    [ "$bs" != "$1" ] && variants+=("$bs")
+    for v in "${variants[@]}"; do
+        while IFS= read -r seg; do
+            [ -n "${seg//[[:space:]]/}" ] || continue
+            check_git_segment "$seg" "$2"
+        done <<< "$(printf '%s' "$v" | sed -E 's/[;&|]/\n/g')"
+    done
     return 0
 }
 
@@ -348,7 +373,7 @@ check_raw_all "$CMD" ""
 # 인용 페이로드만 꺼내 겉따옴표를 벗기고 같은 전처리를 다시 돌린다. 그래서 페이로드 안의
 # 커밋 메시지(`bash -c 'git commit -m "docs: git push"'`)는 여전히 지워져 오탐이 나지 않는다.
 # 파이프 대신 here-string 을 쓰는 이유는 while 이 서브셸로 떨어지면 deny 의 종료가 본체에 안 닿기 때문이다.
-SHC_RE="(^|[[:space:];&|(])([^[:space:]]*/)?(ba|z|da|k)?sh([[:space:]]+-[^[:space:]]+)*[[:space:]]+-c[[:space:]]+('[^']*'|\"[^\"]*\")"
+SHC_RE="(^|[[:space:];&|(])([^[:space:]]*/)?(r?ba|z|da|k)?sh([[:space:]]+-[^[:space:]]+)*[[:space:]]+-c[[:space:]]+('[^']*'|\"[^\"]*\")"
 PAYLOADS=$(printf '%s\n' "$CMD" | grep -oE "$SHC_RE" | sed -E "s/^[^'\"]*//")
 while IFS= read -r payload; do
     [ -n "$payload" ] || continue
@@ -356,5 +381,10 @@ while IFS= read -r payload; do
     check_git "$P" " — 셸 -c 페이로드 안"
     check_raw_all "$(printf '%s' "$payload" | sed -E "s/^(['\"])(.*)\1\$/\2/")" " — 셸 -c 페이로드 안(원문 기준)"
 done <<< "$PAYLOADS"
+
+# 확장 검사 (2026-11-09 5단계): 기존 검사를 모두 통과한 명령만 넘긴다. 실행 실패는 막는 방향이다.
+EXT_OUT=$(printf '%s' "$INPUT" | python3 -I "$(dirname "$(readlink -f "$0")")/git_guard_ext.py"); EXT_RC=$?
+[ -n "$EXT_OUT" ] && { printf '%s\n' "$EXT_OUT"; exit 0; }
+[ "$EXT_RC" -ne 0 ] && deny "확장 검사(git_guard_ext.py) 실행 실패 — 판정할 수 없어 차단"
 
 exit 0

@@ -14,6 +14,9 @@
 #   ② stop_hook_active=true면 즉시 통과: 재시도는 1회로 한정 — 무한 루프 방지.
 #      (정상 응답이 오탐돼도 비용은 "추가 1턴" 한 번뿐)
 #   ③ 실패는 항상 exit 0 침묵 통과: 훅 자체 오류로 세션 종료를 막는 일이 없도록 fail-open.
+#
+# 단계 순서: 전파 확인 → 마크업 검사 → 한글 보고 검사 → needs input 팝업 근거 검사(needs_input_popup_check.py, 2026-10-28) → 세션 작업 현황 검사(handoff_check.py, 2026-10-23).
+#   앞 단계가 block 을 내면 뒤 단계는 부르지 않는다(한 턴에 block 하나). 현황 검사의 판단 근거는 맨 아래 블록 주석.
 set -uo pipefail
 
 INPUT=$(cat 2>/dev/null) || exit 0
@@ -66,8 +69,31 @@ fi
 # 훅이 죽어 영어 보고 차단이 통째로 빠진다). 남은 시간이 2초 미만이면 이번 턴은 판정을 건너뛴다.
 LEFT_SEC=$(( 13 - SECONDS ))
 [ "$LEFT_SEC" -gt 8 ] && LEFT_SEC=8
-if [ "$LEFT_SEC" -ge 2 ] && [ "$(printf '%s' "$INPUT" | jq -r '.hook_event_name // empty' 2>/dev/null)" = "Stop" ]; then
-  printf '%s' "$INPUT" | timeout "$LEFT_SEC" uv run -q --no-project python "$(dirname "$0")/korean_report_check.py" 2>/dev/null
+EVENT=$(printf '%s' "$INPUT" | jq -r '.hook_event_name // empty' 2>/dev/null)
+if [ "$LEFT_SEC" -ge 2 ] && [ "$EVENT" = "Stop" ]; then
+  KO_OUT=$(printf '%s' "$INPUT" | timeout "$LEFT_SEC" uv run -q --no-project python "$(dirname "$0")/korean_report_check.py" 2>/dev/null)
+  [ -n "$KO_OUT" ] && printf '%s\n' "$KO_OUT"
+fi
+
+# needs input 팝업 근거 검사 (Stop 전용, 한글 검사가 block 을 내지 않았을 때만 = 한 턴에 block 하나): scripts/needs_input_popup_check.py.
+# 사용자 원문(2026-10-28) «팝업 안 떴어 왜이래 피드백 보내고 다시 띄워». 선택을 최종 보고의 needs input 줄로만 물으면 block 한다.
+# 남은 시간은 앞 단계가 쓴 만큼 줄여 계산하고(상한 2초), 1초 미만이면 건너뛴다. 실패는 침묵 통과.
+NI_OUT=""
+LEFT_SEC=$(( 13 - SECONDS ))
+[ "$LEFT_SEC" -gt 2 ] && LEFT_SEC=2
+if [ "$LEFT_SEC" -ge 1 ] && [ "$EVENT" = "Stop" ] && ! printf '%s' "${KO_OUT:-}" | grep -q '"decision"'; then
+  NI_OUT=$(printf '%s' "$INPUT" | timeout "$LEFT_SEC" python3 -I "$(dirname "$0")/needs_input_popup_check.py" 2>/dev/null)
+  [ -n "$NI_OUT" ] && printf '%s\n' "$NI_OUT"
+fi
+
+# 세션 작업 현황 검사 (Stop 전용, 위 한글 검사가 block 을 내지 않았을 때만 = 한 턴에 block 하나): scripts/handoff_check.py.
+# 사용자 원문(2026-10-23) «토큰 다 사용할 수도 있으니 ... 그록이 보고 바로 작업 이어할 수 있는 작업 현황을 각 세션 별로 항상 남길 수 있도록 해».
+# 일한 턴인데 .scratch/handoff/<세션 앞 8자>.md 가 30분 넘게 묵었으면 block. settings.json 배선을 늘리지 않으려고 이 Stop 훅 안에서 부른다.
+# 남은 시간은 한글 검사가 쓴 만큼 줄여 계산하고, 1초 미만이면 건너뛴다. 실패는 침묵 통과.
+LEFT_SEC=$(( 13 - SECONDS ))
+[ "$LEFT_SEC" -gt 3 ] && LEFT_SEC=3
+if [ "$LEFT_SEC" -ge 1 ] && [ "$EVENT" = "Stop" ] && ! printf '%s' "${KO_OUT:-}" | grep -q '"decision"' && [ -z "$NI_OUT" ]; then
+  printf '%s' "$INPUT" | timeout "$LEFT_SEC" python3 -I "$(dirname "$0")/handoff_check.py" 2>/dev/null
 fi
 
 exit 0

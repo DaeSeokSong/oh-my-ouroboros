@@ -5,7 +5,7 @@
         AskUserQuestion 클릭 답(정상·Bash 위장·questions 없음·재사용·불일치·합친 라벨)·피어 세션 메시지 제외·
         셸 래퍼 1단계 추적(setsid 경유 분류·게이트 흐름·외부호출없음·인자위치 오탐 방지)·
         연속행 래퍼(줄 끝 백슬래시+따옴표 경로)·timeout 접두·주석 연속행 오삼킴 방지·게이트 내부 오류 fail-closed·
-        접두 옵션(`bash -e`·`nohup setsid bash -x`)·한 명령의 호출 2건·중복 옵션 차단·gen_gptimg.sh 게이트 예외·
+        접두 옵션(`bash -e`·`nohup setsid bash -x`)·한 명령의 호출 2건·중복 옵션 차단·gen_gptimg.sh 게이트 대상(2026-11-05, 면제 폐기)·
         새 머리말·구조화 답·스킬 본문(isMeta)·compact 요약·자동 알림·teammate 전달문 제외(2026-10-01).
 훅 규약이 바뀌면 이 파일도 같이 고친다(정본: rules-lazy/codex-model-gate.md, skills/grok/SKILL.md Step 1.5).
 """
@@ -68,14 +68,14 @@ class Runner:
         self.fail = 0
         self.n = 0
 
-    def run(self, name, lines, cmd=CMD_GROK, expect="DENY", sidechain=False, session_id="sid-test", why=None):
+    def run(self, name, lines, cmd=CMD_GROK, expect="DENY", sidechain=False, session_id="sid-test", why=None, extra=None):
         self.n += 1
         proj = self.tmp / "proj"
         (proj / session_id / "subagents").mkdir(parents=True, exist_ok=True)
         main_path = proj / f"{session_id}.jsonl"
         main_path.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in lines) + "\n", encoding="utf-8")
         tpath = proj / session_id / "subagents" / "agent-x.jsonl" if sidechain else main_path
-        payload = {"tool_name": "Bash", "tool_input": {"command": cmd}, "transcript_path": str(tpath), "session_id": session_id, "cwd": str(self.tmp)}
+        payload = {"tool_name": "Bash", "tool_input": {"command": cmd}, "transcript_path": str(tpath), "session_id": session_id, "cwd": str(self.tmp), **(extra or {})}
         r = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), check=False, capture_output=True, text=True, env=self.env)
         got = "DENY" if '"deny"' in r.stdout else ("SILENT" if not r.stdout.strip() else "OTHER")
         ok = got == expect and (why is None or why in r.stdout)   # why: 다른 사유의 deny 로 우연히 통과하지 않게 사유 문구를 못박는다
@@ -228,16 +228,53 @@ def main():
     t.run("codex -m 중복 → 차단", [user("코덱스 gpt-5.6-sol xhigh 로 검토시켜")],
           cmd=f'codex exec -m gpt-5.6-sol -m gpt-5.6-luna -c model_reasoning_effort="xhigh" -C {t.clean} "검토"')
 
-    real_gptimg = HOOK.resolve().parent / "gen_gptimg.sh"      # 하네스의 실경로만 면제 (2026-10-01 감사)
-    hit8 = gate.classify(f"bash {real_gptimg} '프롬프트' out.png")
-    t.check("하네스 scripts/gen_gptimg.sh 실경로 → 게이트 예외(분류 없음)", hit8 is None, f"got {hit8}")
+    # ── 2026-11-05 gen_gptimg.sh: 면제 폐기 → grok-ask.sh 와 같은 «알려진 래퍼» 게이트 대상 (의뢰서 intent/2026-11-05-gptimg-direct-generation.md) ──
+    real_gptimg = HOOK.resolve().parent / "gen_gptimg.sh"      # 하네스 실경로만 안쪽 codex exec 를 다시 읽지 않는다 (2026-10-01 감사의 후속)
+    GI = f"bash {real_gptimg} --model gpt-5.6-luna --effort high '그림 설명' /tmp/out.png"
+    gi_user = [user("그림은 gpt-5.6-luna high 로 그려줘")]
+    hit8 = gate.classify(GI)
+    t.check("하네스 scripts/gen_gptimg.sh 실경로 → gptimg 로 분류(모델·effort 추출)",
+            hit8 is not None and hit8[0] == "gptimg" and hit8[1] == "gpt-5.6-luna" and hit8[2] == "high", f"got {hit8}")
+    t.check("실경로는 안쪽 `codex exec -s workspace-write` 를 다시 스캔하지 않음(호출 1건)", len(gate.classify_all(GI)) == 1, f"got {gate.classify_all(GI)}")
+    t.run("gen_gptimg.sh, 사용자 글자 일치 → 통과", gi_user, cmd=GI, expect="SILENT")
+    t.run("gen_gptimg.sh, 사용자 글자 없음 → 차단", [user("그림 그려줘")], cmd=GI, why="이번 사용자 메시지에도")
+    t.run("gen_gptimg.sh --effort 없음 → 차단", gi_user, cmd=GI.replace("--effort high ", ""), why="명령에 모델·effort 가 없다")
+    t.run("gen_gptimg.sh --model 없음 → 차단", gi_user, cmd=GI.replace("--model gpt-5.6-luna ", ""), why="명령에 모델·effort 가 없다")
+    t.run("gen_gptimg.sh 서브에이전트(agent_id 있음)는 사용자 글자가 일치해도 → 차단", gi_user, cmd=GI, why="서브에이전트는 gen_gptimg.sh",
+          extra={"agent_id": "agent-abc123", "agent_type": "coder"})
+    t.run("gen_gptimg.sh agent_id 가 빈 문자열이면 main 으로 보고 → 통과", gi_user, cmd=GI, expect="SILENT", extra={"agent_id": ""})
+    t.run("서브에이전트의 codex exec 는 이 규칙 대상 아님(기존 게이트만) → 통과", [user("코덱스 gpt-5.6-sol xhigh 로 검토시켜")], expect="SILENT",
+          cmd=f'codex exec -m gpt-5.6-sol -c model_reasoning_effort="xhigh" -C {t.clean} -s read-only "검토"', extra={"agent_id": "agent-abc123"})
+    t.run("gen_gptimg.sh --model= · --effort= 꼴 → 통과", gi_user, expect="SILENT",
+          cmd=f"bash {real_gptimg} --model=gpt-5.6-luna --effort=high '그림 설명' /tmp/out.png")
+    t.run("gen_gptimg.sh effort 불일치(사용자는 medium) → 차단", [user("그림은 gpt-5.6-luna medium 으로")], cmd=GI, why="이번 사용자 메시지에도")
+    t.run("gen_gptimg.sh --model 중복 → 차단", gi_user, cmd=GI.replace("--model gpt-5.6-luna", "--model gpt-5.6-luna --model gpt-5.6-sol"), why="같은 옵션이 두 번")
+    t.run("gen_gptimg.sh 결정 팝업 답(선택지 이름) → 통과",
+          [user("그림 그려줘"), popup("- G1 gpt-image-2 모델 · effort: 1) gpt-5.6-luna · high")], cmd=GI, expect="SILENT")
+    t.run("gen_gptimg.sh 클릭 답 → 통과",
+          [user("그림 그려줘"), tool_use("g1", "AskUserQuestion"), result("g1", ANS.replace("grok-4.6", "gpt-5.6-luna").replace("xhigh", "high"))],
+          cmd=GI, expect="SILENT")
+    gi_cycle = [user("그림 그려줘"), popup("- G1 모델 · effort: 1) gpt-5.6-luna · high")]
+    t.run("gen_gptimg.sh 사이클 반복 호출 1/2 → 통과", gi_cycle, cmd=GI, expect="SILENT", session_id="sid-gi")
+    t.run("gen_gptimg.sh 사이클 반복 호출 2/2(재질문 없이 같은 값) → 통과", gi_cycle, cmd=GI, expect="SILENT", session_id="sid-gi")
+    t.run("gen_gptimg.sh 다음 사이클(새 사용자 메시지) → 차단", gi_cycle + [user("그림 하나 더 그려줘")], cmd=GI, session_id="sid-gi", why="이번 사용자 메시지에도")
+    t.run("gen_gptimg.sh $HOME 경로 꼴도 이름 판정으로 같은 게이트 → 차단", [user("그림 그려줘")], why="이번 사용자 메시지에도",
+          cmd='bash "$HOME/.claude/scripts/gen_gptimg.sh" --model gpt-5.6-luna --effort high "설명" /tmp/o.png')
+    t.run("gen_gptimg.sh $HOME 경로 꼴, 사용자 글자 일치 → 통과", gi_user, expect="SILENT",
+          cmd='bash "$HOME/.claude/scripts/gen_gptimg.sh" --model gpt-5.6-luna --effort high "설명" /tmp/o.png')
+    t.run("gen_gptimg.sh 설명문 본문 비밀값(sk-…) → 차단", gi_user, why="비밀값 꼴",
+          cmd=f"bash {real_gptimg} --model gpt-5.6-luna --effort high '키 {'sk-' + 'A1b2C3d4E5' * 2} 를 그려' /tmp/out.png")
+    t.run("gen_gptimg.sh 와 직접 codex exec -s workspace-write 를 한 명령에 → 직접 호출 쪽이 여전히 차단", gi_user, why="read-only",
+          cmd=f'{GI} && codex exec -m gpt-5.6-luna -c model_reasoning_effort="high" -C {t.clean} -s workspace-write "x"')
     fake_dir = t.tmp / "elsewhere"
     fake_dir.mkdir(exist_ok=True)
     gptimg = fake_dir / "gen_gptimg.sh"
     gptimg.write_text('#!/usr/bin/env bash\ncodex exec "검토"\n', encoding="utf-8")
-    hit8b = gate.classify(f"bash {gptimg} '프롬프트' out.png")
-    t.check("다른 폴더의 같은 이름 gen_gptimg.sh → 면제 아님(분류 유지)",
-            hit8b is not None and hit8b[0] == "codex-exec", f"got {hit8b}")
+    GF = f"bash {gptimg} --model gpt-5.6-luna --effort high '프롬프트' /tmp/out.png"
+    kinds8b = [h[0] for h in gate.classify_all(GF)]
+    t.check("다른 폴더의 같은 이름 gen_gptimg.sh → 이름 판정 + 안쪽 codex exec 도 분류",
+            kinds8b == ["gptimg", "codex-exec"], f"got {kinds8b}")
+    t.run("다른 폴더의 같은 이름 gen_gptimg.sh, 사용자 글자 일치여도 안쪽 codex exec 가 걸려 차단", gi_user, cmd=GF, why="codex-exec")
     other = t.tmp / "gen_other.sh"
     other.write_text('#!/usr/bin/env bash\ncodex exec "검토"\n', encoding="utf-8")
     hit9 = gate.classify(f"bash {other}")

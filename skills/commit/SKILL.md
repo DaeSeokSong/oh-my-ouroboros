@@ -85,7 +85,7 @@ Step 4. 전체 완료 후 git log --oneline -N 으로 커밋 목록 보고
 ```
 
 > ⛔ `<type>(<scope>):` 형식 금지 — scope 괄호 사용 금지
-> **하네스 `feat:` 커밋은 `Intent:` 줄 필수 (2026-09-06)**: CLAUDE.md·rules·rules-lazy·skills·agents·scripts·tools·config·settings.json 을 바꾸는 `feat:` 커밋은 본문에 `Intent: intent/YYYY-MM-DD-<slug>.md` 줄을 두고 그 파일이 stage 되었거나 추적 중이어야 한다. **`fix:`·`refactor:` 커밋도 rules·rules-lazy·agents·skills·scripts·tools·config 에 새 파일(신설)이 있으면 같은 `Intent:` 줄이 필요하다**(2026-09-14 — 타입만 바꿔 구조를 신설하는 우회 차단, 기존 파일 수정만이면 대상 아님). Jira 접두(`PROJ-1 feat: …`)는 `scripts/ci-gate-commit-msg.sh`(commit-msg 훅)가 벗겨낸 뒤 타입을 판별한다. 훅이 없으면 차단한다.
+> **하네스 `feat:` 커밋은 `Intent:` 줄 필수 (2026-09-06)**: CLAUDE.md·rules·rules-lazy·skills·agents·scripts·tools·config·settings.json 을 바꾸는 `feat:` 커밋은 본문에 `Intent: intent/YYYY-MM-DD-<slug>.md` 줄을 두고 그 파일이 stage 되었거나 추적 중이어야 한다. **`fix:`·`refactor:` 커밋도 rules·rules-lazy·agents·skills·scripts·tools·config 에 새 파일(신설)이 있으면 같은 `Intent:` 줄이 필요하다**(2026-09-14 — 타입만 바꿔 구조를 신설하는 우회 차단, 기존 파일 수정만이면 대상 아님). Jira 접두(`ABC-630 feat: …`)는 `scripts/ci-gate-commit-msg.sh`(commit-msg 훅)가 벗겨낸 뒤 타입을 판별한다. 훅이 없으면 차단한다.
 >
 > **선택 트레일러 `Candidate: <id>` (2026-10-17, 학습 후보 연결)**: 사용자가 «커밋해» 지시에 후보 id 를 **적었을 때만** 본문 끝에 `Candidate: <id>` 줄을 넣는다(후보와 무관하다고 밝힌 경우 `Candidate: none`). 모델이 대장을 보고 임의로 고르거나 끼워 넣지 않는다. 형식은 id 한 토큰이며 타입과 무관하다. commit-msg 훅이 id 존재·미결 상태·stage 의 규칙 경로(agents·rules·rules-lazy·skills·CLAUDE.md) 변경을 확인해 **어긋나면 경고만** 하고(커밋은 막지 않음), post-commit 훅(`scripts/ci-gate-post-commit.sh`)이 통과한 건을 `set <id> accepted --note commit=<해시>` 로 대장에 잇는다. AI 트레일러 금지(Co-Authored-By 등)와는 별개이며 이 줄은 AI 흔적이 아니다.
 
@@ -139,19 +139,20 @@ Step 4. 전체 완료 후 git log --oneline -N 으로 커밋 목록 보고
 커밋 메시지 추천 전 Jira 이슈 연결 여부 반드시 확인:
 
 ```
-연결할 Jira 이슈 번호가 있으신가요? (예: PROJ-1, PROJ-2)
+연결할 Jira 이슈 번호가 있으신가요? (예: ABC-630, ABC-631)
 없으면 생략합니다.
 ```
 
-- 이슈 있음: `PROJ-1 feat: Subject` (이슈 번호를 메시지 맨 앞에 스페이스로 구분)
-- 이슈 여러 개: `PROJ-1 PROJ-2 fix: Subject`
+- 예시의 `ABC` 자리는 그 프로젝트의 이슈 키 접두다. 사용자가 준 이슈 번호를 그대로 쓴다.
+- 이슈 있음: `ABC-630 feat: Subject` (이슈 번호를 메시지 맨 앞에 스페이스로 구분)
+- 이슈 여러 개: `ABC-630 ABC-631 fix: Subject`
 - 이슈 없음: 생략
 
 형식 예시:
 ```
-PROJ-1 feat: Add stratified split v2
+ABC-630 feat: Add stratified split v2
 
-PROJ-1 PROJ-2 fix: Fix device inconsistency in inferencer
+ABC-630 ABC-631 fix: Fix device inconsistency in inferencer
 ```
 
 > Jira 접두가 붙어도 `Intent:` 판정은 그대로 적용된다 — commit-msg 훅이 제목 앞 이슈 접두를 벗겨낸 뒤 `feat:`·`fix:`·`refactor:` 타입을 판별한다(§ 위 하네스 `feat:` 커밋 안내).
@@ -168,8 +169,9 @@ PROJ-1 PROJ-2 fix: Fix device inconsistency in inferencer
 - AI가 한 작업 단위가 완전히 끝났다고 판단한 시점
 - 사용자가 특정 Jira 이슈에 "기록해줘" 요청 시
 
-댓글 형식 규칙 (2026-10-01 사용자 결정. 종전 «10줄 이내 · 날짜 머리줄 4줄 틀»은 폐지):
+댓글 형식 규칙 (기준 표본: 2026-10-01 사용자 결정으로 고른 댓글 하나, 이슈 · 댓글 번호는 `knowledge/harness/rules-project-server-history-2026-11-10.md` § commit. 종전 «10줄 이내 · 날짜 머리줄 4줄 틀»은 폐지):
 - 본문은 목록만 쓴다. 목록 밖 문단, 날짜 머리줄, 보고용 머리말(«무엇을:»·«왜:»·«어떻게:»)을 붙이지 않는다.
+- 표는 허용한다(목록 아래 참고 표, 머리 줄 + 구분 줄 GFM 꼴, 2026-11-06 사용자 지시).
 - 최상위는 번호 목록이고 항목 하나가 주제 하나다(문제 이름이나 한 일을 한 줄로). 주제가 하나여도 번호 목록으로 쓴다.
 - 주제 아래는 글머리이고, 해당하는 줄만 이 순서로 둔다.
   - 원인: 왜 생겼는지
@@ -190,14 +192,14 @@ PROJ-1 PROJ-2 fix: Fix device inconsistency in inferencer
      * 예외가 나거나 폭이 0 이하이면 오류를 내지 않고 예비 경로로 계산했음
    * 수정: 엄격 모드에서는 예비 경로 없이 바로 오류를 냄
      * 이유: 측정 기준이 달라 다른 방식 값과 섞이면 안 됨
-   * 확인: 단위 테스트 8건 통과, 재실행에서 응답 동일
+   * 확인: 단위 테스트 8건 통과, ABC-962 63장 재실행에서 응답 동일
    * 정리 페이지: https://<사이트>/wiki/spaces/DR/pages/<ID>
    * 커밋: 9e531bb (코드·테스트), 142d5d0 (문서)
 ```
 
-왜 형식을 표본에 묶었나(2026-10-01 실사고): 한 댓글이 compact 뒤 남은 옛 스킬 사본(4줄 틀)만 보고 쓰여 머리말 «무엇을: · 왜: · 어떻게:» 이 붙었고 미리보기 승인 없이 게시됐다. 그래서 이 절을 `scripts/jira_comment.py preview` 가 실행 때마다 원문 그대로 찍는다(이 절을 고치면 출력도 바뀐다). 절 제목 «## Jira 댓글 자동 기록»은 스크립트가 찾는 표지라 바꾸지 않는다.
+왜 형식을 표본에 묶었나(2026-10-01 실사고): 한 이슈의 댓글이 compact 뒤 남은 옛 스킬 사본(4줄 틀)만 보고 쓰여 머리말 «무엇을: · 왜: · 어떻게:» 이 붙었고 미리보기 승인 없이 게시됐다. 그래서 이 절을 `scripts/jira_comment.py preview` 가 실행 때마다 원문 그대로 찍는다(이 절을 고치면 출력도 바뀐다). 절 제목 «## Jira 댓글 자동 기록»은 스크립트가 찾는 표지라 바꾸지 않는다.
 
-### Jira 댓글 쓰기·고치기 = REST (MANDATORY, 2026-09-29 사용자 지시)
+### Jira 댓글 쓰기·고치기 = REST (MANDATORY, 2026-09-29 사용자 지시 · 실측)
 
 **도구**: `~/.claude/scripts/jira_comment.py`(2026-10-01). `get`(구조 조회) · `preview`(형식 절 + 미리보기 + 스탬프) · `post` · `update`(`--body-file`, 이미지가 든 댓글용 `--patches`, 새 그림을 넣는 `--figures`) · `attach`(이슈 파일 첨부, 8번). 미리보기와 다른 본문·그림·파일은 게시되지 않는다. 즉석 curl·python 으로 직접 호출하지 않는다. 회신(6번, GraphQL)만 아직 스크립트 밖이다.
 
@@ -212,6 +214,7 @@ PROJ-1 PROJ-2 fix: Fix device inconsistency in inferencer
    - 호출: `mutation <이름> { jira { addComment(input: {issueId: <이슈 ARI>, threadParentId: "<부모 댓글 숫자 id>", content: {version: 1, jsonValue: <ADF doc>}}) { success errors { message } comment { ... on JiraPlatformComment { commentId threadParentId webUrl } } } } }`
    - 이슈 ARI 는 `ari:cloud:jira:<cloudId>:issue/<이슈 숫자 id>` 이고, cloudId 는 `GET https://<사이트>/_edge/tenant_info` 로 얻는다. 오퍼레이션 이름이 없으면 게이트웨이가 거부한다.
    - 확인: 응답의 `threadParentId` 와 부모의 `childComments` 를 되읽는다(`childComments` 는 루트 댓글에서만 조회된다). REST v3 도 읽을 때는 회신에 `parentId` 필드를 붙여 준다(명세 미기재). REST 로 `parentId` 를 줘서 만들 수 있는지는 시험하지 않았다.
+   - 실측: 기준 표본 댓글 아래 시험 회신 생성, 되읽기와 사용자 화면 확인(번호는 위 경위 노트 § commit).
    - 기존 최상위 댓글을 회신으로 옮기는 API 는 없다. 옮기기 = 원본 ADF 백업 → 같은 ADF 로 회신 게시 → 새 회신과 원본 ADF 를 `localId` 제외 기계 대조(글자 수·노드·media id) → 일치할 때만 원본 삭제. 작성 시각은 새 시각이 되고 작성자는 토큰 소유자가 된다(09-29 실측: 32106 → 32108).
    - 새 댓글로 몰래 대체하지 않는다. 회신 본문도 게시 전 미리보기 승인(2번)을 거친다.
 7. **새 이미지 넣기 = 도구의 `--figures` (REST 확인 2026-09-29, 도구화 2026-10-13)**: 사용자가 끌어다 놓지 않아도 된다. 별도 스크립트를 짜지 않는다(위 «즉석 호출 금지» 가 그림에도 적용된다).
@@ -220,8 +223,9 @@ PROJ-1 PROJ-2 fix: Fix device inconsistency in inferencer
    - 그림 교체(2026-10-14): 목록 항목에 `"replace": true` 를 붙이면 그 자리 문단 바로 뒤의 옛 그림을 새 그림으로 바꾼다. 글자도 함께 고칠 때는 `--patches 치환.json --figures 그림.json` 을 같이 준다(preview·update 모두). 치환이 먼저 적용되고 자리 문단은 치환 뒤 글로 찾는다. 교체는 그림만 바꾸고 옛 그림 블록의 설명 글·배치는 유지한다(미리보기에 옛 그림 id 와 설명 글이 찍힌다). 옛 첨부는 이슈에 남는다.
    - 보장: 미리보기는 Jira 에 아무것도 올리지 않는다. 승인한 파일 내용(해시)과 그때의 댓글 상태에서만 게시된다. 글자·인라인 카드는 그대로이고 그림만 늘어난다. 수정 전 본문은 백업되고 알림은 꺼진다.
    - 제한: PNG 만, 파일은 목록 JSON 이 있는 폴더 안의 것만(미리보기에 실제 경로가 찍힌다. 민감 영상 등 엉뚱한 파일이 올라가지 않게 경로를 확인한다). 올라가는 첨부 이름에는 내용 해시 앞자리가 붙고, 그 이름의 첨부가 이미 있으면 다시 올리지 않는다.
-   - 도구가 하는 일(판단 근거): ① `POST /rest/api/3/issue/{키}/attachments`(multipart, 헤더 `X-Atlassian-Token: no-check`)로 첨부 id 를 받는다 ② `GET /rest/api/3/attachment/content/{첨부id}` 를 리다이렉트 없이 불러 303 Location 주소 안의 미디어 UUID 를 꺼낸다(첨부 메타데이터에는 UUID 가 없고 `?redirect=false` 는 파일 본문을 돌려준다) ③ `mediaSingle > media(type file · id UUID · collection "" · width · height · alt)` 를 넣어 댓글을 고친다 ④ 되읽어 대조한다.
+   - 도구가 하는 일(판단 근거): 1) `POST /rest/api/3/issue/{키}/attachments`(multipart, 헤더 `X-Atlassian-Token: no-check`)로 첨부 id 를 받는다 2) `GET /rest/api/3/attachment/content/{첨부id}` 를 리다이렉트 없이 불러 303 Location 주소 안의 미디어 UUID 를 꺼낸다(첨부 메타데이터에는 UUID 가 없고 `?redirect=false` 는 파일 본문을 돌려준다) 3) `mediaSingle > media(type file · id UUID · collection "" · width · height · alt)` 를 넣어 댓글을 고친다 4) 되읽어 대조한다.
    - 렌더는 API 로 알 수 없으니 게시 뒤 사용자 화면 확인을 받는다. 댓글을 지워도 첨부는 이슈에 남는다.
+   - 실측: 한 이슈의 기존 이미지 3건에서 Location UUID 와 media id 가 모두 일치했다. 새 첨부를 넣은 댓글은 사용자 화면에서 그림이 보였다. 2026-10-13 다른 이슈 댓글에 그림 5장(도구화 전 임시 스크립트, 되읽기 대조 통과). 이슈 · 첨부 · 댓글 번호는 위 경위 노트 § commit.
 8. **이슈 파일 첨부 = 도구의 `attach` (2026-10-14)**: CSV 같은 일반 파일을 이슈에 붙일 때도 별도 스크립트를 짜지 않는다.
    - 쓰는 법: 올릴 파일을 `.scratch` 아래 폴더에 두고 같은 폴더에 목록 JSON `[{"file": "list.csv"}]` 을 만든다(민감 자료 폴더에서 바로 올리지 않는다, 목록이 `.scratch` 밖이면 거부) → `preview --issue 키 --attach 목록.json` → 미리보기를 사용자에게 보이고 승인받는다 → `attach --issue 키 --attach 목록.json`. 댓글에서 그 파일을 언급하려면 첨부 뒤 댓글을 따로 `post` 한다.
    - 미리보기: 파일마다 실제 경로·크기·해시·올라갈 이름이 찍힌다. CSV·TSV 는 첫 줄(120자)과 줄 수·열 수, JSON 은 최상위 키, TXT 는 첫 줄이 찍히고, 환자 식별로 보이는 열 이름(이름·생년·주민·등록번호·patient·mrn 등)이 있으면 경고가 붙는다. 그림·PDF 는 내용 단서가 없으니 경로로 확인한다.

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """ntfy-flush.sh 와 claude-notify.sh 큐 배송 전용 모드 회귀 테스트 (2026-10-01 신설).
 
 실제 네트워크·실제 ~/.claude 를 쓰지 않는다: HOME 을 임시 폴더로 바꾸고 PATH 앞에 가짜 curl 을 둔다.
@@ -41,7 +40,7 @@ def make_root(tmp):
         'data=$(printf "%s\\n" "$cfg" | sed -n \'s/^data-raw = "\\(.*\\)"$/\\1/p\' | sed \'s/\\\\\\(.\\)/\\1/g\')\n'
         'sleep "${FAKE_CURL_SLEEP:-0}"\n'
         'printf "%s\\n" "$data" >> "$FAKE_CURL_DATA"\n'
-        'printf "{}" > "$out"\n'
+        'printf "%s" "${FAKE_CURL_BODY:-{\\}}" > "$out"\n'
         'printf "%s 0.001" "${FAKE_CURL_HTTP:-200}"\n',
         encoding="utf-8",
     )
@@ -94,7 +93,7 @@ def send_log(root):
 
 
 def run_flush(env):
-    return subprocess.run(["bash", str(FLUSH)], env=env, capture_output=True, text=True,
+    return subprocess.run(["bash", str(FLUSH)], check=False, env=env, capture_output=True, text=True,
                           stdin=subprocess.DEVNULL, timeout=90)
 
 
@@ -177,7 +176,7 @@ def test_empty_queue_leaves_no_trace():
         root, env = make_root(tmp)
         env = with_topic(env)
         assert run_flush(env).returncode == 0
-        r = subprocess.run(["bash", str(NOTIFY)], env=dict(env, CLAUDE_NOTIFY_FLUSH_ONLY="1"),
+        r = subprocess.run(["bash", str(NOTIFY)], check=False, env=dict(env, CLAUDE_NOTIFY_FLUSH_ONLY="1"),
                            stdin=subprocess.DEVNULL, capture_output=True, text=True, cwd="/")
         assert r.returncode == 0
         assert sent_msgs(root) == [] and not send_log(root).exists()
@@ -278,7 +277,7 @@ def fake_calls(root):
 
 
 def run_fake(script, env):
-    return subprocess.run(["bash", str(script)], env=env, stdin=subprocess.DEVNULL,
+    return subprocess.run(["bash", str(script)], check=False, env=env, stdin=subprocess.DEVNULL,
                           capture_output=True, text=True, timeout=60)
 
 
@@ -338,7 +337,7 @@ def test_hook_path_keeps_line_during_outage():
         add_queue(root, "old", ts="2026-09-30T00:00:00Z")
 
         def hook():
-            return subprocess.run(["bash", str(NOTIFY), "Proj", "현재"], env=env, cwd="/",
+            return subprocess.run(["bash", str(NOTIFY), "Proj", "현재"], check=False, env=env, cwd="/",
                                   stdin=subprocess.DEVNULL, capture_output=True, text=True)
 
         for _ in range(4):
@@ -346,7 +345,7 @@ def test_hook_path_keeps_line_during_outage():
         assert [r[7] for r in queue_rows(root) if r[6] == "old"] == ["0"]
         assert "retry_drop" not in log_tails(root)
         down_removed = with_topic(dict(env, FAKE_CURL_HTTP="200"))
-        subprocess.run(["bash", str(NOTIFY), "Proj", "복구"], env=down_removed, cwd="/",
+        subprocess.run(["bash", str(NOTIFY), "Proj", "복구"], check=False, env=down_removed, cwd="/",
                        stdin=subprocess.DEVNULL, capture_output=True, text=True)
         assert "old" in sent_msgs(root)
 
@@ -372,11 +371,130 @@ def test_flush_counts_spill_lines():
     # 2026-10-01 감사 D4: 잠금 실패분(.spill)이 큐 파일과 별도라도 배송기가 비우고 합쳐 보낸다.
     with tempfile.TemporaryDirectory() as tmp:
         root, env = make_root(tmp)
-        row = "\t".join(("2026-09-30T00:00:00Z", "s", "final", "default", "tag", "[t: P]", "spilled", "0"))
+        row = "2026-09-30T00:00:00Z\ts\tfinal\tdefault\ttag\t[t: P]\tspilled\t0"
         (root / ".claude" / "_usage" / "ntfy-queue.tsv.spill").write_text(row + "\n", encoding="utf-8")
         run_flush(with_topic(env))
         assert sent_msgs(root) == ["spilled"]
         assert not (root / ".claude" / "_usage" / "ntfy-queue.tsv.spill").exists()
+
+
+RATE_BODY = '{"code":42908}'
+
+
+def halt_path(root):
+    return root / ".claude" / "_usage" / f"ntfy-{DAY}.halt"
+
+
+def age_halt(root, seconds):
+    """halt 파일을 만들고 수정 시각을 seconds 초 전으로 돌린다."""
+    halt = halt_path(root)
+    halt.write_text("")
+    old = time.time() - seconds
+    os.utime(halt, (old, old))
+    return halt
+
+
+def run_hook(env, text="현재"):
+    return subprocess.run(["bash", str(NOTIFY), "Proj", text], check=False, env=env, cwd="/",
+                          stdin=subprocess.DEVNULL, capture_output=True, text=True)
+
+
+def test_halt_expiry_fresh_halt_blocks_hook():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, env = make_root(tmp)
+        age_halt(root, 60)
+        run_hook(with_topic(env))
+        assert sent_msgs(root) == [] and "queued" in log_tails(root)
+
+
+def test_halt_expiry_expired_halt_tries_one_and_clears_on_success():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, env = make_root(tmp)
+        halt = age_halt(root, 3601)
+        run_hook(with_topic(env))
+        assert len(sent_msgs(root)) == 1
+        assert not halt.exists(), "2xx 성공이면 halt 를 지운다"
+
+
+def test_halt_expiry_expired_halt_hit_again_refreshes_and_logs_rate_halt():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, env = make_root(tmp)
+        halt = age_halt(root, 3601)
+        run_hook(with_topic(dict(env, FAKE_CURL_HTTP="429", FAKE_CURL_BODY=RATE_BODY)))
+        assert len(sent_msgs(root)) == 1
+        assert halt.exists() and time.time() - halt.stat().st_mtime < 60, "halt 갱신"
+        rows = [r for r in send_log(root).read_text(encoding="utf-8").splitlines()]
+        assert rows[-1].split("\t")[-1] == "rate_halt" and rows[-1].split("\t")[3] == "429"
+        run_hook(with_topic(env))  # 갱신된 halt 는 다시 유효: 보내지 않는다
+        assert len(sent_msgs(root)) == 1
+
+
+def test_halt_expiry_zero_keeps_whole_day_halt():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, env = make_root(tmp)
+        age_halt(root, 7200)
+        run_hook(with_topic(dict(env, NTFY_HALT_RETRY_SEC="0")))
+        assert sent_msgs(root) == [] and halt_path(root).exists()
+
+
+def test_halt_expiry_invalid_value_defaults_to_3600():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, env = make_root(tmp)
+        age_halt(root, 3601)
+        run_hook(with_topic(dict(env, NTFY_HALT_RETRY_SEC="abc")))
+        assert len(sent_msgs(root)) == 1
+
+
+def test_halt_trial_claim_blocks_second_hook():
+    # 만료 직후 훅이 겹쳐도 첫 훅이 시험 권리를 선점해 두 번째는 보내지 않는다(같은 IP 에서 N건 방지).
+    with tempfile.TemporaryDirectory() as tmp:
+        root, env = make_root(tmp)
+        age_halt(root, 3601)
+        env = with_topic(dict(env, FAKE_CURL_SLEEP="2", FAKE_CURL_HTTP="429", FAKE_CURL_BODY=RATE_BODY))
+        first = subprocess.Popen(["bash", str(NOTIFY), "Proj", "첫째"], env=env, cwd="/",
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1)
+        run_hook(env, "둘째")
+        first.wait(timeout=30)
+        assert len(sent_msgs(root)) == 1
+        assert "queued" in log_tails(root)
+
+
+def test_halt_trial_failure_backdates_halt_for_five_minute_retry():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, env = make_root(tmp)
+        halt = age_halt(root, 3601)
+        run_hook(with_topic(dict(env, FAKE_CURL_HTTP="000")))
+        assert len(sent_msgs(root)) == 1 and halt.exists()
+        age = time.time() - halt.stat().st_mtime
+        assert 3600 - 300 - 60 < age < 3600 - 300 + 60, age  # 약 5분 뒤 재시험 꼴
+        run_hook(with_topic(dict(env, FAKE_CURL_HTTP="000")))
+        assert len(sent_msgs(root)) == 1, "되돌린 시각이 아직 유효라 재시도하지 않는다"
+        os.utime(halt, (time.time() - 3601, time.time() - 3601))
+        run_hook(with_topic(dict(env, FAKE_CURL_HTTP="000")), "셋째")
+        assert len(sent_msgs(root)) == 2
+
+
+def test_normal_day_creates_no_halt_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, env = make_root(tmp)
+        run_hook(with_topic(env))
+        run_hook(with_topic(dict(env, FAKE_CURL_HTTP="000")))
+        assert len(sent_msgs(root)) == 2 and not halt_path(root).exists()
+
+
+def test_halt_expiry_flush_follows_same_rule():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, env = make_root(tmp)
+        add_queue(root, "m0")
+        age_halt(root, 60)
+        run_flush(with_topic(env))
+        assert sent_msgs(root) == [] and queue_msgs(root) == ["m0"]
+        age_halt(root, 3601)
+        run_flush(with_topic(dict(env, NTFY_HALT_RETRY_SEC="0")))
+        assert sent_msgs(root) == [], "0 이면 만료 없이 하루 통째"
+        run_flush(with_topic(env))
+        assert sent_msgs(root) == ["m0"] and not halt_path(root).exists()
 
 
 TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

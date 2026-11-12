@@ -1,19 +1,19 @@
 {
-  "source": "knowledge/harness/gpu-placement-benchmark-2026-09-30.md «3차» 판 수별 최선 배치 표(2026-09-30 벤치, 기법 켬·배치 32, 판 1개 60에폭, 같은 길이 판 동시 시작 가정). 적용 조건은 rules-lazy/background-task.md «판 수별 GPU 배치 기본값» 주의 사항 1~6.",
-  "scope": "판 < GPU 일 때만 쓴다(판 ≥ GPU 는 대기 목록 자동 발사). 표는 측정 서버 구성(H100 2 + L40S 4)에서만 유효하다.",
+  "source": "예시 표(자기 서버에서 판 수별 배치를 다시 재서 채울 것). 적용 조건은 rules-lazy/background-task.md «판 수별 GPU 배치 기본값» 주의 사항 1~6.",
+  "scope": "판 < GPU 일 때만 쓴다(판 ≥ GPU 는 대기 목록 자동 발사). 표는 예시이며 자기 서버(H100 2 + L40S 4 가정)에서 다시 재서 채울 것.",
   "config": {"H100": 2, "L40S": 4},
   "kinds": {"H100": "H", "L40S": "L"},
   "needs_note": "DDP_READY=1: DDP 준비(주의 사항 1·2) / PROP_BATCH_READY=1: H100+L40S 비례 짝 구현(주의 사항 4). 둘 다 프로젝트 .claude/train.env 에서 선언한다.",
   "rows": {
-    "1": {"layout": "6장 혼합 비례 DDP(판 1개)", "needs": ["DDP_READY", "PROP_BATCH_READY"], "finish_h": 0.16, "parallel_h": 0.55,
+    "1": {"layout": "6장 혼합 비례 DDP(판 1개)", "needs": ["DDP_READY", "PROP_BATCH_READY"], "finish_h": 0.2, "parallel_h": 0.6,
           "groups": [{"gpus": ["H1", "H2", "L1", "L2", "L3", "L4"], "jobs": 1}]},
-    "2": {"layout": "기종별 DDP 두 묶음(H100×2 · L40S×4, 판 하나씩)", "needs": ["DDP_READY"], "finish_h": 0.32, "parallel_h": 0.55,
+    "2": {"layout": "기종별 DDP 두 묶음(H100×2 · L40S×4, 판 하나씩)", "needs": ["DDP_READY"], "finish_h": 0.3, "parallel_h": 0.6,
           "groups": [{"gpus": ["H1", "H2"], "jobs": 1}, {"gpus": ["L1", "L2", "L3", "L4"], "jobs": 1}]},
-    "3": {"layout": "비례 짝 2(H100+L40S) + L40S 짝 1, 판 하나씩", "needs": ["DDP_READY", "PROP_BATCH_READY"], "finish_h": 0.48, "parallel_h": 0.88,
+    "3": {"layout": "비례 짝 2(H100+L40S) + L40S 짝 1, 판 하나씩", "needs": ["DDP_READY", "PROP_BATCH_READY"], "finish_h": 0.5, "parallel_h": 0.9,
           "groups": [{"gpus": ["H1", "L1"], "jobs": 1}, {"gpus": ["H2", "L2"], "jobs": 1}, {"gpus": ["L3", "L4"], "jobs": 1}]},
-    "4": {"layout": "H100 단독 2 + L40S 짝 2, 판 하나씩", "needs": ["DDP_READY"], "finish_h": 0.55, "parallel_h": 0.88,
+    "4": {"layout": "H100 단독 2 + L40S 짝 2, 판 하나씩", "needs": ["DDP_READY"], "finish_h": 0.6, "parallel_h": 0.9,
           "groups": [{"gpus": ["H1"], "jobs": 1}, {"gpus": ["H2"], "jobs": 1}, {"gpus": ["L1", "L2"], "jobs": 1}, {"gpus": ["L3", "L4"], "jobs": 1}]},
-    "5": {"layout": "비례 짝 2(판 2개씩) + L40S 짝 1(판 1개)", "needs": ["DDP_READY", "PROP_BATCH_READY"], "finish_h": 0.73, "parallel_h": 0.88,
+    "5": {"layout": "비례 짝 2(판 2개씩) + L40S 짝 1(판 1개)", "needs": ["DDP_READY", "PROP_BATCH_READY"], "finish_h": 0.7, "parallel_h": 0.9,
           "groups": [{"gpus": ["H1", "L1"], "jobs": 2}, {"gpus": ["H2", "L2"], "jobs": 2}, {"gpus": ["L3", "L4"], "jobs": 1}]}
   }
 }

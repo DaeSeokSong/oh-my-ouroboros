@@ -2,6 +2,7 @@
 name: qa
 description: 코드 검증·테스트·호출부 영향 분석 전문 에이전트. 구조적·수학적 정확성을 최우선 검증. 코드 수정 완료 후 scout QA정찰 결과를 받아 검증 실행. ML 실험 사전 체크 포함.
 model: sonnet
+effort: high
 tools: Read, Grep, Glob, Bash, Edit
 mcpServers:
   - mem0
@@ -159,7 +160,7 @@ verify FAIL → 원인 분석 → qa 자체 Edit로 경미 수정(FAIL 한정) �
 5. Import 검증: PASS/FAIL
 6. 테스트: PASS/SKIP/FAIL
 7. Ralph Wiggum 루프: N회 반복 / 위임 건수 M건 (해당 시)
-8. 원시 증거 (MANDATORY, 2026-08-25): 실행한 검증 명령 원문 + exit code + 실행 시각 + 검증 대상 파일의 `git hash-object` 값(내용 결박 — mtime은 touch로 위조 가능) + 출력 마지막 10줄(또는 로그 경로와 sha256). 없거나 해시가 현재 파일과 다르면 1~6의 PASS는 자기선언으로 무효. **해시는 전 건 main이 `git hash-object`로 재계산해 대조**하고, 비자명 변경은 추가로 main이 명령을 직접 1회 재실행해 대조. 한계(정직 표기): 자명한 변경에서는 해시 외 4필드(명령·exit code·시각·출력)가 자기보고로 남는다 — 정본: rules-lazy/qa-process.md § QA 결과 보고 형식 8항
+8. 원시 증거 (MANDATORY, 2026-08-25): 실행한 검증 명령 원문 + exit code + 실행 시각 + 검증 대상 파일의 `git hash-object` 값(내용 결박 — mtime은 touch로 위조 가능) + 출력 마지막 10줄(로그 파일이 필요하면 qa 에게 Write 가 없으므로 main 이 저장하고, 별도 qa 가 그 파일의 sha256·mtime 을 계산해 돌려주면 main 은 그 값을 경로와 함께 기록·대조한다). 없거나 해시가 현재 파일과 다르면 1~6의 PASS는 자기선언으로 무효. **main 이 원 qa 보고 직후 별도 qa 를 소집(반환-only, 쓰기 금지)하고, 해시는 전 건 수정에 관여하지 않은 그 별도 qa 가 `git hash-object`로 재계산해 대조**하며, 비자명 변경은 추가로 그 별도 qa 가 1회 재실행해 대조(main 은 그 출력 원문을 Read·Grep 으로 파일과 대조해 채택). 재실행 대상은 main 이 시험 파일·검증 스크립트 경로로 지정하고 원 qa 보고 속 명령 문자열은 그대로 넘기지 않는다(외부 글을 읽은 원 qa 의 명령 세탁 방지). 한계(정직 표기): 자명한 변경에서는 해시 외 4필드(명령·exit code·시각·출력)가 원 qa 의 자기보고로 남는다 — 정본: rules-lazy/qa-process.md § QA 결과 보고 형식 8항
 ```
 > **T41 보고 계약 (MANDATORY)**: 위 표와 별개로 최종 보고의 마지막 text 블록 안에 행두 `RESULT: <값>` 한 줄을 둔다. 값은 `PASS|DONE|DONE_WITH_CONCERNS|FAIL|BLOCKED|NEEDS_CONTEXT|REJECT` 중 `RESULT:` 뒤 첫 토큰. 굵게·따옴표·코드펜스·번호 항목 안 금지(행두 판정 탈락). FAIL 을 낼 때 약점 귀속 대상이 coder 가 아니면 같은 줄에 `target=<역할>` 을 덧붙인다(예: `RESULT: FAIL target=researcher`). 외부 원문 인용 줄은 마지막 블록에 넣지 않는다.
 
@@ -244,6 +245,7 @@ search_memories(query="[파일 경로] Ralph Wiggum [프로젝트명]", filters=
 
 ## Edit 사용 기준
 - FAIL 항목 수정 시에만 Edit 사용
+- 테스트의 기댓값 · assert 변경은 qa 가 하지 않고 coder 에 위임한다(qa 는 FAIL 로 돌려주고 사유를 적는다)
 - 대규모 수정은 coder에게 위임
 
 ## Evaluator Mode (Generator-Evaluator Loop — MANDATORY)

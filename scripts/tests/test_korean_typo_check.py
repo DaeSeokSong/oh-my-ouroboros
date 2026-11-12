@@ -24,7 +24,18 @@ def wrongs(text):
 
 @pytest.mark.parametrize("wrong,right", WRONG_RIGHT)
 def test_every_dictionary_entry_is_caught(wrong, right):
-    assert (wrong, right) in wrongs(f"이 문장에 {wrong} 가 들어 있습니다.")
+    sample = {"읍니다": "있읍니다"}.get(wrong, wrong)  # «읍니다» 는 ㅅ · ㅆ · ㅄ 받침 뒤에서만 틀린 꼴(2026-10-28)
+    assert (wrong, right) in wrongs(f"이 문장에 {sample} 가 들어 있습니다.")
+
+
+@pytest.mark.parametrize("ok", ["그림을 숫자 순으로 모읍니다.", "물을 따릅니다 읍니다는 단독 낱말이 아닙니다"])
+def test_eup_after_open_syllable_is_not_a_typo(ok):
+    assert wrongs(ok) == []
+
+
+@pytest.mark.parametrize("bad", ["값이 없읍니다.", "잘 되었읍니다.", "곧 하겠읍니다."])
+def test_eup_after_s_batchim_is_a_typo(bad):
+    assert ("읍니다", "습니다") in wrongs(bad)
 
 
 def test_dictionary_size_is_pinned():

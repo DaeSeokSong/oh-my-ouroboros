@@ -1,18 +1,30 @@
 // 띠 데이터 → 줄(세그먼트 배열). 순수 함수만 둔다(시험: tests/band.test.ts).
 // 세그먼트 = { text, tone }. tone: label base run runBold ok ask warn hot no noBadge workBadge srvBadge sep dim self btn (view.js 가 팔레트 색으로 바꾼다).
-// 규칙의 정본: intent/2026-10-15-harness-mods.md 개정 5·6-3·7, 시안 .scratch/9d9904f7/band_design/design.md 최종본.
+// 규칙의 정본: intent/2026-10-15-harness-mods.md 개정 5·6-3·7, 시안 .scratch/0a1b2c3d/band_design/design.md 최종본.
 // 개정 13(2026-10-17): 접힌 띠 학습 칸은 판 이름 없이 GPU 별 `GPU2 (1/3/5)/60`, Codex·Grok 은 `작업N`. 펼친 보기는 판마다 GPU 라벨을 반복하고
 // last 유무를 판 줄에 두며, 왼쪽 «작업» · 오른쪽 «서버» 로 반을 가른다(정본: intent 개정 13).
 // 개정 15(2026-10-21): 접힌 띠 학습 칸은 GPU 별 «도는 판 수»만 `GPU5 3 ◉`(판이 여럿이면 에폭 묶음이 무엇이 몇 개 도는지 가렸다).
 // 에폭 진행은 펼친 보기의 판 줄에만 두고, 펼친 보기에서 지표(val metric)·체크포인트 줄을 뺀다. 좌우 경계는 끌어서 옮긴다(split, 셀 수).
-// GPU 메모리 G 는 MiB/1024 반올림(46068→45G), 메모리·디스크 G 는 바이트/2^30 반올림이다(시안의 46G 와 1 차이).
+// GPU 메모리 G 는 MiB/1024 반올림(46080→45G), 메모리·디스크 G 는 바이트/2^30 반올림이다(시안의 46G 와 1 차이).
 import { cellWidth, clip, lineWidth, splitAt } from './width.js'
 
 const GB = 2 ** 30
-// 개정 27(2026-10-23 사용자 지시 «상세/접기 버튼의 좌측에 여백 두고 별도 버튼»): 첫 줄 오른쪽에 «가림 켬/끔» 버튼(7칸)을 «상세/접기» 앞에 한 칸 이상 띄워 둔다.
-export const BTN_RESERVE = 16 // 접힌 띠 첫 행 오른쪽: «가림 켬»(7) + 여백 2 + «상세 ▸»(6) + 앞 간격 1
-const NARROW_LIMIT = 30 // 이보다 좁으면 접힌 띠는 가림 버튼 없이 «상세 ▸» 만(종전 폭 7)
-export const DETAIL_BTN_RESERVE = 24 // 펼친 보기 첫 줄 오른쪽 전체: «크게 ⇱»(6) + 2 + «가림 켬»(7) + 2 + «접기 ▾»(6) + 앞 간격 1. 오른쪽 반이 모자라면 detailButtons 가 줄인다
+// 개정 27(2026-10-23 사용자 지시 «상세/접기 버튼의 좌측에 여백 두고 별도 버튼»): 첫 줄 오른쪽에 화면 마스킹 켬/끔 버튼(2026-11-02 «🔒 마스킹 on/off»)을 «상세/접기» 앞에 둔다.
+// 2026-11-02(사용자 결정 N2 + 위치 정정): 접힌 띠 오른쪽 버튼 무리에 뉴스 켬/끔 버튼(«📰 on»/«📰 off»)을 펼친 띠 band-news 와 같은 자리에 둔다.
+// 2026-11-03(intent/2026-11-03-band-button-chips-mobile-toggle.md): 버튼마다 글자 앞뒤 한 칸 여백을 넣은 배경색 칩(view.js 가 칠한다)으로 구분하고,
+// 뉴스 다음에 «📱 모바일 on/off» 버튼을 더했다(순서: 뉴스 → 모바일 → 마스킹 → 상세). 켬/끔 버튼은 글자가 바뀌어도 폭이 같도록 «on» 은 뒤 여백 2, «off» 는 1을 둔다.
+// 폭은 칩 여백을 포함한다: 📰 칩 7/8 · 📱 칩 14/15 · 🔒 칩 14/15 · «상세 ▸» 칩 8 (이모지 2칸, 한글 2칸).
+export const NEWS_RESERVE = 9      // «📰 on»(칩 7)+2 / «📰 off»(칩 8)+1
+export const MOBILE_RESERVE = 16   // «📱 모바일 on»(칩 14)+2 / «📱 모바일 off»(칩 15)+1
+export const MASK_RESERVE = 16     // «🔒 마스킹 on»(칩 14)+2 / «🔒 마스킹 off»(칩 15)+1
+export const TOGGLE_RESERVE = 9    // «상세 ▸»(칩 8) + 앞 간격 1. 가장 좁은 폭에서도 남는 최소 예약
+export const BTN_RESERVE = NEWS_RESERVE + MOBILE_RESERVE + MASK_RESERVE + TOGGLE_RESERVE // 접힌 띠 첫 행 오른쪽 전체
+export const DETAIL_BTN_RESERVE = MOBILE_RESERVE + MASK_RESERVE + 9 + TOGGLE_RESERVE // 펼친 보기 첫 줄 오른쪽 전체(뉴스 제외): 모바일 · 마스킹 · «크게 ⇱»(칩 8)+1 · «접기 ▾»(8) + 앞 간격 1. 오른쪽 반이 모자라면 detailButtons 가 줄인다
+export const MIN_RESERVE = TOGGLE_RESERVE
+const MIN_WORK = 14 // 접힌 띠 작업 줄 최소 폭(종전과 같다)
+// 접힌 띠 단계: [뉴스, 모바일, 마스킹]. 좁아지면 마스킹 → 모바일 → 뉴스 순으로 빠지고 «상세 ▸» 는 끝까지 남는다.
+const COLLAPSED_TIERS = [[true, true, true], [true, true, false], [true, false, false], [false, false, false]]
+const tierReserve = ([n, m, k]) => TOGGLE_RESERVE + (n ? NEWS_RESERVE : 0) + (m ? MOBILE_RESERVE : 0) + (k ? MASK_RESERVE : 0)
 const MAX_CELLS = 40 // 캐시에서 온 문자열의 셀 폭 상한
 const MAX_DETAIL = 120 // 세션 작업 한 줄(detail)의 셀 폭 상한
 
@@ -306,7 +318,7 @@ function modelCell(work, level, collapsed = false) {
   return joinSegs(groups, TWO)
 }
 
-// 판 짧은 이름: «영문자 다음 숫자» 로 시작하는 첫 조각부터 끝까지(exp-mtl-14t-r72-1t → r72-1t). 없으면 전체.
+// 판 짧은 이름: «영문자 다음 숫자» 로 시작하는 첫 조각부터 끝까지(exp-demo-1a-x72-1t → x72-1t). 없으면 전체.
 export function shortName(name) {
   const parts = name.split('-')
   const i = parts.findIndex(p => /^[A-Za-z]\d/.test(p))
@@ -552,29 +564,38 @@ function detailRows(work, server, selfSid, buttons, limit, split, hidden, confir
 // 띠 Box 의 좌우 여백 1칸씩 때문에 쓸 수 있는 폭은 columns - 4 다.
 // hidden: 숨긴 세션 sid 집합(개정 20, 모든 세션 띠 공통). confirmSid: «제거할까요?» 를 띄울 세션.
 // big: 띠가 최대 높이인지(개정 21: «크게» 는 창이 아니라 띠를 이 세션의 최대 높이로, 다시 누르면 «작게» 로 원래 높이).
-// maskOn: 화면 가림 켬(개정 27): 첫 줄 오른쪽 «가림 켬/끔» 버튼의 글자. jira: { open, loading, error, items } — null 이면 Jira 묶음을 그리지 않는다.
-// 버튼 순서(왼쪽 → 오른쪽): 펼침 [크게/작게] · [가림] · [접기], 접힘 [가림] · [상세]. 사이는 빈 칸(spacer)이고 «가림» 은 «상세/접기» 바로 왼쪽이다.
+// maskOn: 화면 마스킹 켬(개정 27): 첫 줄 오른쪽 «🔒 마스킹 on/off» 버튼의 글자. jira: { open, loading, error, items } — null 이면 Jira 묶음을 그리지 않는다.
+// 버튼 순서(왼쪽 → 오른쪽): 펼침 [뉴스] · [모바일] · [마스킹] · [크게/작게] · [접기], 접힘 [뉴스] · [모바일] · [마스킹] · [상세]. 사이는 빈 칸(spacer)이다.
+// mobileOn: 모바일 모드 켬(2026-11-03): 버튼 글자 «📱 모바일 on/off». 정본은 decision-popup 이 쓰는 파일이고 register.js 가 읽어 넘긴다.
 const GAP = n => ({ text: ' '.repeat(n), tone: 'base', button: true, spacer: true })
-export function buildBand({ work: rawWork, server: rawServer, selfSid, columns, expanded, split = 0, hidden = new Set(), confirmSid = null, big = false, todosOpen = false, maskOn = true, jira = null }) {
+const CHIP = (text, key) => ({ text: ` ${text} `, tone: 'btn', button: true, key }) // 칩: 글자 앞뒤 한 칸 여백(배경색은 view.js)
+const onOffBlock = (label, on, key) => [CHIP(`${label} ${on ? 'on' : 'off'}`, key), GAP(on ? 2 : 1)] // 글자가 바뀌어도 폭이 같다
+export function buildBand({ work: rawWork, server: rawServer, selfSid, columns, expanded, split = 0, hidden = new Set(), confirmSid = null, big = false, todosOpen = false, maskOn = true, mobileOn = false, jira = null, news = '', newsState = 'max' }) {
   const { work, server } = sanitize(rawServer, rawWork)
   const limit = columns - 4
-  const button = { text: expanded ? '접기 ▾' : '상세 ▸', tone: 'btn', button: true, key: 'band-toggle' }
-  const maskBtn = { text: maskOn ? '가림 켬' : '가림 끔', tone: 'btn', button: true, key: 'band-mask' }
+  const button = CHIP(expanded ? '접기 ▾' : '상세 ▸', 'band-toggle')
+  const maskBlock = onOffBlock('🔒 마스킹', maskOn, 'band-mask')
+  const mobileBlock = onOffBlock('📱 모바일', mobileOn, 'band-mobile')
   if (expanded) {
-    const bigBtn = { text: big ? '작게 ⇲' : '크게 ⇱', tone: 'btn', button: true, key: 'band-big' }
-    // 오른쪽 반이 모자라면 여백 2 → 1, 그래도 모자라면 [크게] 를 빼고, 마지막에는 [접기] 만 남긴다(접기는 어떤 폭에서도 남는다).
+    const bigBlock = [CHIP(big ? '작게 ⇲' : '크게 ⇱', 'band-big'), GAP(1)]
+    // 뉴스 줄 보기 버튼(news 가 비어 있지 않을 때만, 크게·작게·끔 순환).
+    const newsBlock = news ? [CHIP(news, 'band-news'), GAP(1)] : []
+    // 오른쪽 반이 모자라면 [뉴스] → [모바일] → [크게] → [마스킹] 순으로 빼고, 마지막에는 [접기] 만 남긴다(접기는 어떤 폭에서도 남는다).
+    // 배지(« 서버 », detailRows 가 자리가 없으면 뺀다)보다 버튼이 먼저다: 80열에서는 칩 폭 때문에 배지가 빠지고 마스킹 · 크게 · 접기가 남는다.
     const detailButtons = w => {
-      for (const [withBig, g] of [[true, 2], [true, 1], [false, 2], [false, 1]]) {
-        const b = [...(withBig ? [bigBtn, GAP(g)] : []), maskBtn, GAP(g), button]
+      for (const [withNews, withMobile, withBig, withMask] of [[true, true, true, true], [false, true, true, true], [false, false, true, true], [false, false, false, true]]) {
+        const b = [...(withNews ? newsBlock : []), ...(withMobile ? mobileBlock : []), ...(withMask ? maskBlock : []), ...(withBig ? bigBlock : []), button]
         if (lineWidth(b) + 1 <= w) return b
       }
       return [button]
     }
     return detailRows(work, server, selfSid, detailButtons, limit, split, hidden, confirmSid, todosOpen, cleanJira(jira))
   }
-  const narrow = limit < NARROW_LIMIT
-  const reserve = narrow ? 7 : BTN_RESERVE
-  return [[...clip(workRow(work, server, selfSid, limit - reserve, hidden), limit - reserve), ...(narrow ? [] : [maskBtn, GAP(2)]), button], clip(serverRow(server, limit), limit)]
+  const tier = COLLAPSED_TIERS.find(t => limit >= tierReserve(t) + MIN_WORK) || COLLAPSED_TIERS[COLLAPSED_TIERS.length - 1]
+  const reserve = tierReserve(tier)
+  // 뉴스 켬/끔 버튼: 켬(크게·작게)이면 «📰 on», 끔이면 «📰 off».
+  const newsOnOff = onOffBlock('📰', newsState !== 'off', 'band-news-toggle')
+  return [[...clip(workRow(work, server, selfSid, limit - reserve, hidden), limit - reserve), ...(tier[0] ? newsOnOff : []), ...(tier[1] ? mobileBlock : []), ...(tier[2] ? maskBlock : []), button], clip(serverRow(server, limit), limit)]
 }
 
 // 펼친 보기 높이 창(개정 20, 사용자 지시 «상태창 자체의 세로폭을 조절» · «스크롤을 내려도 우측 상단 접기는 항상»).

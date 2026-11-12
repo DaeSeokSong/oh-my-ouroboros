@@ -5,11 +5,12 @@
 // model.js 의 clip 이 이미 한도에 맞추므로 이것은 폭 계산 오차(모호 폭 문자 등)를 받는 안전망이다.
 // 띠 바탕은 바깥 Box 의 backgroundColor 가 칠하고, Text 에도 같은 바탕을 명시해 Box 바탕이 글자 칸에 상속되지 않는 터미널에서도 얼룩이 없게 한다.
 // 배지·바탕 위의 글자색(on)은 두 팔레트 모두 진한 색이다.
+// chip(2026-11-03): 버튼 칩의 배경색. 어두운 테마는 바탕보다 밝은 회색, 밝은 테마는 바탕보다 어두운 회색이라 버튼 글자(btn)가 읽힌다.
 export const PALETTES = {
   dark: { bg: '#272A3A', fg: '#ECEBF5', label: '#AAA3CC', dim: '#8D8AA6', sep: '#4B4F68', run: '#A9D8FF', ok: '#A8E6C1', ask: '#F6E3A1',
-    no: '#FFA8C5', btn: '#FFC4A3', work: '#FFC4A3', srv: '#A9D8FF', noBg: '#FFA8C5', on: '#23202E' },
+    no: '#FFA8C5', btn: '#FFC4A3', chip: '#3a3a3a', work: '#FFC4A3', srv: '#A9D8FF', noBg: '#FFA8C5', on: '#23202E' },
   light: { bg: '#F2EFFA', fg: '#242132', label: '#7A6FA8', dim: '#8A879C', sep: '#C9C5DA', run: '#2F6FA8', ok: '#2E8A57', ask: '#94740F',
-    no: '#C23B6A', btn: '#B5582B', work: '#FFD2B8', srv: '#C2E2FF', noBg: '#FFC2D6', on: '#2A1F2A' },
+    no: '#C23B6A', btn: '#B5582B', chip: '#dcdcdc', work: '#FFD2B8', srv: '#C2E2FF', noBg: '#FFC2D6', on: '#2A1F2A' },
 }
 
 // 톤 이름 → Text 스타일. 모든 Text 가 같은 바탕(p.bg)을 갖고 배지만 제 바탕을 갖는다. 허용 prop 은 color·backgroundColor·bold 뿐.
@@ -19,7 +20,7 @@ function tones(p) {
   return {
     base: t(p.fg), label: t(p.label), dim: t(p.dim), sep: t(p.sep), run: t(p.run), runBold: { ...t(p.run), bold: true },
     ok: t(p.ok), ask: t(p.ask), warn: t(p.ask), hot: t(p.no), no: { ...t(p.no), bold: true }, self: { ...t(p.fg), bold: true },
-    btn: { ...t(p.btn), bold: true }, workBadge: badge(p.work), srvBadge: badge(p.srv), noBadge: badge(p.noBg),
+    btn: { color: p.btn, backgroundColor: p.chip, bold: true }, workBadge: badge(p.work), srvBadge: badge(p.srv), noBadge: badge(p.noBg),
   }
 }
 
@@ -41,7 +42,7 @@ function rowBox(el, TONE, row, r, side = '') {
       : s.button
       ? [...(i === firstBtn ? [Box({ key: 'band-fill' + r, flexGrow: 1 })] : []),
         Box({ key: 'band-btn' + r + '-' + i, flexShrink: 0, children: [s.spacer ? Text({ ...TONE.base, children: [s.text] })
-          : Button({ key: s.key || 'band-toggle', label: s.text, plain: true, onPress: () => {},
+          : Button({ key: s.key || 'band-toggle', label: s.text.trim(), plain: true, onPress: () => {},
             children: [Text({ ...TONE.btn, children: [s.text] })] })] })]
       // Text 는 공식 요소 표의 prop(color·backgroundColor·bold·dimColor·wrap 등)만 받는다. key·flexShrink 를 Text 에 넣으면
       // 엔진이 띠 전체를 거부하고 자기 그림을 그린다(2026-10-15 실측 «Text prop "flexShrink" is not allowed»).

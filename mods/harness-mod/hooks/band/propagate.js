@@ -65,6 +65,11 @@ export function noticeText(entries) {
     '필요하면 바뀐 규칙·스킬 파일을 다시 읽어 반영만 하십시오. 회신하거나 사용자에게 따로 보고하지 마십시오.'].join('\n')
 }
 
+// 이 mod 가 넣은 알림인가(깨어 있음 판정에서 뺀다): 출처가 이 플러그인이거나 글이 알림 머리로 시작한다.
+export function isOwnNotice(origin, text) {
+  return (origin && origin.kind === 'plugin' && origin.name === 'harness-mod') || String(text == null ? '' : text).trimStart().startsWith('[하네스 변경 알림')
+}
+
 // ack 파일의 새 내용: 앞 내용에 «해시 TAB 시각 TAB 방식» 줄을 더하고 마지막 500줄만 남긴다.
 export function ackText(prev, groups, now) {
   const add = []

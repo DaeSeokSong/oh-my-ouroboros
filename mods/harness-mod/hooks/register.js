@@ -9,7 +9,7 @@ import { maskOutput, maskText } from './band/mask.js'
 import { replaceMermaidBlocks } from './band/mermaid.js'
 import { BIG_HEIGHT, JIRA_KEY, buildBand, cleanJira, effectiveSplit, padRows, windowBand } from './band/model.js'
 import { needsCollect, validCache, wantsBand } from './band/poll.js'
-import { ackText, ackedSet, isSessionId, noticeText, parsePending, plan } from './band/propagate.js'
+import { ackText, ackedSet, isOwnNotice, isSessionId, noticeText, parsePending, plan } from './band/propagate.js'
 import { themeKind } from './band/theme.js'
 import { toTree, treeRows, treeTexts } from './band/view.js'
 
@@ -30,10 +30,21 @@ const MAX_HIDDEN = 200
 let lastWin = null                                 // 마지막으로 그린 높이 창(windowBand 결과): 키·끌기 값을 자를 때 쓴다
 let lastMaxRows = 12
 let todosOpen = false                              // 할 일 묶음 펼침(개정 22, $.store 'band-todos-open')
-// 개정 27(2026-10-23 사용자 결정): 화면 가림 켬/끔($.store 'band-mask', 기본 켬) · Jira 이슈 묶음(펼침 $.store 'band-jira-open', 결과 캐시는 이 세션 변수).
+// 개정 27(2026-10-23 사용자 결정): 화면 마스킹 켬/끔($.store 'band-mask', 기본 켬) · Jira 이슈 묶음(펼침 $.store 'band-jira-open', 결과 캐시는 이 세션 변수).
 // 가림은 화면 표시 전용이다: ui.render 훅이 그릴 글만 바꾸고 모델이 읽는 원문·대화 기록은 그대로다. MASK 를 읽는 그림(띠·응답)은 값이 바뀌면 자동으로 다시 그려진다.
 const MASK_REF = { plugin: 'harness-mod', key: 'mask' }
 const MASK = atom(MASK_REF, true)
+// 뉴스 줄 보기(2026-11-02, intent/2026-11-02-news-line-per-session.md): 이 세션의 claudenews 뉴스 줄을 크게(max) · 작게(min) · 끔(off).
+// 정본은 ~/.claudenews/view.<세션 id> 한 줄 파일(로컬 래퍼가 그릴 때마다 읽는다). $.state 는 버튼 글자를 다시 그리게 하는 사본이다.
+const NEWS_REF = { plugin: 'harness-mod', key: 'news' }
+const NEWS = atom(NEWS_REF, 'max')
+const NEWS_SID = /^[A-Za-z0-9_-]{1,64}$/
+const NEWS_NEXT = { max: 'min', min: 'off', off: 'max' }
+const NEWS_LABEL = { max: '📰 뉴스 크게', min: '📰 뉴스 작게', off: '📰 뉴스 끔' }
+// 모바일 모드 버튼(2026-11-03, intent/2026-11-03-band-button-chips-mobile-toggle.md): 정본은 decision-popup 의 mobileMode 이고, 그 mod 가 상태가 바뀔 때마다
+// ~/.claude/_usage/decision-popup/mobile/<세션 id> 에 on/off 한 줄을 쓴다. 이 mod 는 그 파일만 읽고(없으면 off) 눌리면 `/mobile-mode` 를 부른다. $.state 는 버튼 글자를 다시 그리게 하는 사본이다.
+const MOBILE_REF = { plugin: 'harness-mod', key: 'mobile' }
+const MOBILE = atom(MOBILE_REF, false)
 let jiraOpen = false
 let jira = { at: 0, items: null, error: null, loading: false } // items = jira_comment.py mine --json 의 배열(그릴 때 cleanJira 가 정화)
 const JIRA_REFRESH_MS = 300000                     // 펼친 동안 5분마다 다시 조회
@@ -44,7 +55,14 @@ const JOB_OK = /^[0-9a-f]{8}$/
 // 비어 있을 때만 정한다. 그 전 커밋은 받은 것으로만 치고(baseline) 알림을 쏟아 넣지 않는다.
 const PROP_START_REF = { plugin: 'harness-mod', key: 'propStart' }
 const PROP_START = atom(PROP_START_REF, 0)
+// «깨어 있음»(2026-11-02, intent/2026-11-02-no-work-in-spare-sessions.md): 이 mod 가 넣은 알림이 아닌 prompt.submit 을 한 번이라도 본 세션만 true.
+// 왜: 데몬이 미리 띄운 빈 spare 세션도 전파 알림을 첫 지시로 받아 깨어나 일을 시작했다(실측 18세션, «세션이 세션을 만든» 것처럼 보임).
+// 첫 지시 전에는 알림을 넣지 않고 받음 기록도 남기지 않는다(대기). 출처는 따지지 않는다(composer · bridge · 다른 플러그인 · 다른 세션 · 예약 모두 깨어 있음).
+const AWAKE_REF = { plugin: 'harness-mod', key: 'awake' }
+const AWAKE = atom(AWAKE_REF, false)
 let propBusy = false
+let asleepAt = 0        // 잠든 표지를 마지막으로 쓴 시각(ms)
+let awakeMarked = false // 깨어난 뒤 awake 표지를 썼는가
 
 // 경로는 서버마다 달라 refresh 에서 $.env.get('HOME') 으로 계산한다(각 서버에서 ~/.claude 가 하네스).
 let HARNESS = ''
@@ -106,6 +124,8 @@ async function refresh($) {
       await loadHidden($) // 다른 세션 띠에서 숨긴 것도 반영(모든 세션 공통, 개정 20)
       try { todosOpen = (await $.store.get('band-todos-open')) === true } catch { /* 지금 값 유지 */ } // 다른 세션의 펼침도 반영(qa 2026-10-23)
       await loadMask($) // 다른 세션에서 켜고 끈 가림도 반영(개정 27)
+      await loadNews($) // 파일을 직접 고친 뉴스 보기도 반영
+      await loadMobile($) // /mobile-mode 명령으로 켜고 끈 모바일 모드도 반영(사람 글로는 바뀌지 않는다, 2026-11-10)
       try { jiraOpen = (await $.store.get('band-jira-open')) === true } catch { /* 지금 값 유지 */ }
       if (jiraOpen && !jira.loading && (await nowMs($)) - jira.at >= JIRA_REFRESH_MS) void fetchJira($) // 펼친 동안 5분마다
     } else {
@@ -147,12 +167,25 @@ async function deliverPropagation($) {
     if (!home.startsWith('/') || home === '/') return
     const dir = home + '/.claude/_usage/propagate'
     const pending = dir + '/pending.jsonl'
-    if (!(await $.fs.exists(pending))) return
     const sid = await $.session.id()
     if (!isSessionId(sid)) return
+    const now = Math.floor(Date.now() / 1000)
+    // 잠든 표지(asleep/<sid>): 첫 지시 전에는 ack 가 없는 게 정상이라고 Stop 훅(scripts/propagate-gate.sh)에 알린다. 안 그러면 훅이 빈 세션에 직접
+    // SendMessage 하라고 시켜 빈 세션이 깨어난다. 30초마다 갱신하고(훅은 120초 안만 믿는다), 깨어난 뒤 첫 주기에 awake 로 덮어쓴다. 실패는 무시한다.
+    if (!(await $.state.get(AWAKE_REF)).value) {
+      if (Date.now() - asleepAt >= 30000) {
+        asleepAt = Date.now()
+        try { await $.fs.write(dir + '/asleep/' + sid, `asleep\t${now}\n`) } catch { /* 표지가 없으면 훅이 종전처럼 막을 뿐이다 */ }
+      }
+      return // 첫 지시 전: 대기 파일 · 받음 기록을 건드리지 않는다
+    }
+    if (!awakeMarked) {
+      awakeMarked = true
+      try { await $.fs.write(dir + '/asleep/' + sid, `awake\t${now}\n`) } catch { awakeMarked = false }
+    }
+    if (!(await $.fs.exists(pending))) return
     const ackPath = dir + '/ack/' + sid
     const prev = (await $.fs.exists(ackPath)) ? await $.fs.read(ackPath) : ''
-    const now = Math.floor(Date.now() / 1000)
     // 시작 시각을 못 정했으면(0) 지금을 시작으로 친다. 0 으로 두면 대기 파일의 지난 커밋 최대 500건이 한 알림으로 쏟아진다(qa 2026-10-21).
     let start = (await $.state.get(PROP_START_REF)).value || 0
     if (!start) {
@@ -211,7 +244,7 @@ async function loadMask($) {
   }
 }
 
-// [가림 켬/끔] 버튼: 상태를 뒤집어 $.state 에 쓰고($.state 를 읽는 띠·응답 그림이 다시 그려진다) $.store 에 남겨 다른 세션·다음 세션도 따른다.
+// [🔒 마스킹 on/off] 버튼: 상태를 뒤집어 $.state 에 쓰고($.state 를 읽는 띠·응답 그림이 다시 그려진다) $.store 에 남겨 다른 세션·다음 세션도 따른다.
 async function toggleMask($) {
   try {
     const next = (await $.state.get(MASK_REF)).value === false
@@ -368,13 +401,65 @@ async function setBig($, on) {
 
 const isBig = async $ => ((await $.state.get(HEIGHT_REF)).value || 0) >= BIG_HEIGHT
 
+// ---- 뉴스 줄 보기: 이 세션 id 의 파일만 읽고 쓴다(다른 세션 값은 보이지도 바뀌지도 않는다) ----
+async function newsFile($) {
+  const home = String((await $.env.get('HOME')) || '')
+  const sid = String(await $.session.id())
+  return home.startsWith('/') && home !== '/' && NEWS_SID.test(sid) ? `${home}/.claudenews/view.${sid}` : ''
+}
+
+async function loadNews($) {
+  try {
+    const f = await newsFile($)
+    const v = f ? String(await $.fs.read(f)).split('\n')[0].trim() : 'max'
+    const next = v === 'off' || v === 'min' ? v : 'max'
+    if ((await $.state.get(NEWS_REF)).value !== next) await update($, NEWS, () => next)
+  } catch {
+    // 못 읽으면 지금 값(없으면 크게)을 쓴다.
+  }
+}
+
+async function setNews($, want) {
+  try {
+    await loadNews($) // 파일을 직접 고친 경우도 반영한 뒤 순환한다
+    const cur = (await $.state.get(NEWS_REF)).value || 'max'
+    const next = want || NEWS_NEXT[cur] || 'max'
+    const f = await newsFile($)
+    if (f) await $.fs.write(f, next + '\n')
+    await update($, NEWS, () => next)
+    $.ui.invalidate('ui.render')
+  } catch {
+    // 띠는 멈추지 않는다.
+  }
+}
+
+// 모바일 상태 파일: 이 세션 id 의 파일만 읽는다. 첫 줄이 on 이면 켬, 없거나 그 밖이면 끔.
+async function loadMobile($) {
+  try {
+    const home = String((await $.env.get('HOME')) || '')
+    const sid = String(await $.session.id())
+    let next = false
+    if (home.startsWith('/') && home !== '/' && NEWS_SID.test(sid)) {
+      try { next = String(await $.fs.read(`${home}/.claude/_usage/decision-popup/mobile/${sid}`)).split('\n')[0].trim() === 'on' } catch { next = false }
+    }
+    if (((await $.state.get(MOBILE_REF)).value === true) !== next) await update($, MOBILE, () => next)
+  } catch {
+    // 못 읽으면 지금 값(없으면 끔)을 쓴다.
+  }
+}
+
+const NEWS_ARG = { off: 'off', 끄기: 'off', 끔: 'off', on: 'max', 켜기: 'max', max: 'max', 크게: 'max', min: 'min', 작게: 'min' }
+
 export function register(on) {
   on('session.start', async ($, e, next) => {
     try {
       await $.command.register({ name: 'band', description: '띠 상세 보기를 펼치거나 접습니다(«/band 크게» 는 이 세션 최대 높이로, «/band 작게» 는 원래 높이로)', immediate: true })
       await $.command.register({ name: 'jira', description: '내 Jira 이슈 묶음 펼치기·접기', immediate: true })
+      await $.command.register({ name: 'news', description: '이 세션의 뉴스 줄을 크게 · 작게 · 끔으로 바꿉니다(인자 없으면 차례로)', immediate: true })
       await syncTheme($)
       await loadMask($)
+      await loadNews($)
+      await loadMobile($)
       try {
         const saved = await $.store.get('band-split')
         if (typeof saved === 'number' && Number.isFinite(saved)) await update($, SPLIT, () => Math.round(saved))
@@ -395,6 +480,8 @@ export function register(on) {
       } catch {
         // 시작 시각을 못 정하면 deliverPropagation 이 첫 주기에 다시 정한다.
       }
+      asleepAt = 0
+      awakeMarked = false
       void deliverPropagation($)
       $.clock.every(3000, () => { void deliverPropagation($) })
       let surfaces
@@ -408,6 +495,16 @@ export function register(on) {
       // eslint-disable-next-line no-unsafe-finally
       return next(e)
     }
+  })
+
+  // 첫 지시 감지: 이 mod 자신의 알림이 아닌 글이 들어오면 깨어 있음. 어떤 실패도 글 전달을 막지 않는다.
+  on('prompt.submit', async ($, e, next) => {
+    try {
+      if (!isOwnNotice(e.origin, e.text) && !(await $.state.get(AWAKE_REF)).value) await update($, AWAKE, () => true)
+    } catch {
+      // 기억 실패는 글 전달을 막지 않는다.
+    }
+    return next(e)
   })
 
   on('command.run', { command: 'band' }, async ($, e) => {
@@ -424,7 +521,39 @@ export function register(on) {
     return {}
   })
 
-  // 가림 켬/끔 버튼(개정 27). 다른 플러그인이 같은 key 의 버튼을 그려도 반응하지 않게 이 mod 것만 받는다.
+  // /news: 이 세션의 뉴스 줄 보기. 인자(끄기·켜기·작게·크게 · off·on·min·max)가 있으면 그 상태로, 없으면 크게 → 작게 → 끔 → 크게.
+  on('command.run', { command: 'news' }, async ($, e) => {
+    // 자기 키만 본다: «/news constructor» 처럼 프로토타입 이름이 함수 객체로 풀리던 틈을 막는다(2026-11-02 보안 검수). 영어 인자는 대소문자 무관.
+    const arg = String((e && e.args) || '').trim().toLowerCase()
+    await setNews($, Object.prototype.hasOwnProperty.call(NEWS_ARG, arg) ? NEWS_ARG[arg] : '')
+    return {}
+  })
+
+  on('ui.press', { element: 'band-news' }, async ($, e, next) => {
+    if (e.plugin === 'harness-mod') await setNews($, '')
+    return next(e)
+  })
+
+  // 접힌 띠 오른쪽(펼친 띠와 같은 자리) «📰 on/off» 버튼(사용자 결정 N2, 위치는 11-02 사용자 지시): 끔 → 크게, 그 밖(크게·작게) → 끔. 이 세션 파일만 바꾼다.
+  on('ui.press', { element: 'band-news-toggle' }, async ($, e, next) => {
+    if (e.plugin === 'harness-mod') {
+      await loadNews($)
+      await setNews($, (await $.state.get(NEWS_REF)).value === 'off' ? 'max' : 'off')
+    }
+    return next(e)
+  })
+
+  // 모바일 on/off 버튼(2026-11-03): 인자 없는 `/mobile-mode`(뒤집기, `/mobile` 은 Claude Code 내장 명령이라 쓸 수 없다)를 같은 세션에서 부르고, decision-popup 이 쓴 상태 파일을 다시 읽어 글자를 바꾼다. 이 mod 의 버튼만 받는다.
+  on('ui.press', { element: 'band-mobile' }, async ($, e, next) => {
+    if (e.plugin === 'harness-mod') {
+      try { await $.command.run({ command: 'mobile-mode' }) } catch { /* decision-popup 이 없으면 글자가 그대로다 */ }
+      await loadMobile($)
+      $.ui.invalidate('ui.render')
+    }
+    return next(e)
+  })
+
+  // 마스킹 on/off 버튼(개정 27). 다른 플러그인이 같은 key 의 버튼을 그려도 반응하지 않게 이 mod 것만 받는다.
   on('ui.press', { element: 'band-mask' }, async ($, e, next) => {
     if (e.plugin === 'harness-mod') await toggleMask($)
     return next(e)
@@ -540,8 +669,11 @@ export function register(on) {
     const columns = e.props.bodyColumns || 80
     lastColumns = columns
     lastMaxRows = typeof e.props.maxRows === 'number' && e.props.maxRows > 0 ? e.props.maxRows : 12
-    const maskOn = (await read($, MASK)) !== false // 읽으면 가림 버튼 글자가 값이 바뀔 때 다시 그려진다
-    const rows = buildBand({ work, server, selfSid, columns, expanded, split, hidden, confirmSid: liveConfirm(), big: height >= BIG_HEIGHT, todosOpen, maskOn,
+    const maskOn = (await read($, MASK)) !== false // 읽으면 마스킹 버튼 글자가 값이 바뀔 때 다시 그려진다
+    const newsState = await read($, NEWS) // 읽으면 버튼 글자가 값이 바뀔 때 다시 그려진다
+    const news = NEWS_LABEL[newsState] || ''
+    const mobileOn = (await read($, MOBILE)) === true // 읽으면 모바일 버튼 글자가 값이 바뀔 때 다시 그려진다
+    const rows = buildBand({ work, server, selfSid, columns, expanded, split, hidden, confirmSid: liveConfirm(), big: height >= BIG_HEIGHT, todosOpen, maskOn, mobileOn, news, newsState,
       jira: { open: jiraOpen, loading: jira.loading, error: jira.error, items: jira.items } })
     let mine
     if (expanded) {
@@ -576,7 +708,7 @@ export function register(on) {
       w.termRows = termRows
       // 전체 화면 방식이면 엔진이 띠 상한(maxRows)을 터미널 절반으로 묶는다. 높이 줄 라벨에 그 사실을 적는다(개정 21).
       w.fullscreen = e.viewport?.isFullscreen === true
-      // 상한 내역(개정 21-1, 2026-10-23 «[PRJ] Manager 세션에서만 상한이 4줄»): 라벨에 엔진 줄 수와 다른 그림 줄 수를 보이고 진단 파일을 남긴다.
+      // 상한 내역(개정 21-1, 2026-10-23 «한 매니저 세션에서만 상한이 4줄»): 라벨에 엔진 줄 수와 다른 그림 줄 수를 보이고 진단 파일을 남긴다.
       w.engineRows = lastMaxRows
       w.other = other
       void writeDiag($, { ts: Math.floor(Date.now() / 1000), maxRows: lastMaxRows, otherRows: other, cap: w.cap, fits, termRows, height,
@@ -597,7 +729,7 @@ export function register(on) {
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     let props = e.props
     try {
-      const maskOn = (await read($, MASK)) !== false // 읽으면 가림 버튼을 누를 때 이미 그려진 응답도 다시 그려진다
+      const maskOn = (await read($, MASK)) !== false // 읽으면 마스킹 버튼을 누를 때 이미 그려진 응답도 다시 그려진다
       const text = props.text
       if (typeof text === 'string') {
         const cols = e.viewport && typeof e.viewport.columns === 'number' ? e.viewport.columns : 0

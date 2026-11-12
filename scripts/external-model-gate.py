@@ -23,6 +23,7 @@
 
 ■ 대상 명령
   · tools/grok-exchange/grok-ask.sh   (--model 기본 grok-4.7, --effort 기본 xhigh — 생략해도 기본값이 사용자 글자에 있어야 한다)
+  · scripts/gen_gptimg.sh              (--model, --effort 둘 다 필수 — 2026-11-05 게이트 대상 편입, 아래 «gen_gptimg.sh» 항)
   · codex exec …                       (-m/--model, -c model_reasoning_effort=…)
   · codex-companion.mjs task …         (--model, --effort — /codex:rescue 플러그인 경로)
   대상이 아니면 즉시 통과(출력 없음). 해석 불가(jq·json 오류·transcript 없음)는 fail-closed.
@@ -44,8 +45,17 @@
     이제 접두를 걷어낸 뒤 `-` 로 시작하는 토큰을 건너뛴다.
   · 한 명령의 여러 호출: 첫 일치에서 판정을 끝내 둘째 grok 호출이 무검사로 나갔다. classify_all 로 전부 본다.
   · 같은 옵션 중복(`-m a -m b`): 실제로 쓰이는 값은 뒤 값인데 앞 값만 읽었다. 정당한 용법이 없으므로 차단한다.
-  · 오탐 교정: `scripts/gen_gptimg.sh` 는 게이트 예외다(rules-lazy/codex-model-gate.md §3). 래퍼 안의 `codex exec` 줄
-    때문에 모델 없는 호출로 분류돼 차단됐다. 비용은 designer 승인 게이트가 따로 막는다.
+  · (옛 항목, 2026-11-05 폐기) `scripts/gen_gptimg.sh` 면제: 래퍼 안의 `codex exec` 줄이 모델 없는 호출로 분류돼 차단되던 오탐을 면제로 풀었으나,
+    그림이 사용자 직접 실행에서 main 직접 실행으로 바뀌어(그릴 주체 팝업 선택이 비용 승인) 모델·effort 질문을 건너뛸 이유가 사라졌다.
+    ■ gen_gptimg.sh (2026-11-05, 의뢰서 intent/2026-11-05-gptimg-direct-generation.md): grok-ask.sh 와 같은 «알려진 래퍼» 로 이름 판정한다.
+      · `--model`·`--effort` 가 둘 다 있어야 하고(없으면 차단) 이번 사용자 메시지나 그 뒤 팝업·AskUserQuestion 답에 글자가 있어야 통과한다.
+      · 래퍼 파일 안의 `codex exec … -s workspace-write`(그림을 쓰려면 read-only 일 수 없다)는 다시 스캔하지 않는다. 래퍼 밖에서 직접 부른
+        `codex exec -s workspace-write` 는 종전처럼 차단이다.
+      · 이름만 보면 아무 폴더의 같은 이름 파일이 안쪽 검사를 피한다(2026-10-01 감사). 그래서 실경로가 하네스 scripts/gen_gptimg.sh 가 아닌
+        같은 이름 파일은 모델·effort 판정에 더해 안쪽 줄도 분류한다. 실경로를 풀지 못하는 `$HOME/…` 꼴도 이 쪽이라 한 번 더 읽힌다.
+      · 서브에이전트(훅 입력에 agent_id 가 있음)의 호출은 사용자 글자와 무관하게 차단한다. 실행은 main 만 한다.
+      · 사전검사(트리)는 하지 않는다: 래퍼가 호출마다 만드는 빈 폴더(mktemp, 저장소 밖)만 Codex 에 열리므로 훑을 트리가 없다.
+        대신 그림 설명문(프롬프트)은 codex exec 와 같이 고신뢰 비밀값 패턴으로 거른다. 같은 한계: 명령문 리터럴만 본다.
 
   ■ 막지 못하는 것 (알려진 한계 — 이 목록 자체가 규약이다)
     · 래퍼 속 래퍼(깊이 2 이상). 셸 래퍼 1단계만 따라간다.
@@ -95,7 +105,7 @@ def deny(reason: str) -> None:
 PREFIX_CMDS = ("bash", "sh", "nohup", "time", "env", "exec", "setsid", "nice",
                "timeout", "stdbuf", "ionice", "taskset", "command", "sudo", "doas", "xargs", "flock")
 # 접두를 걷어낸 뒤 값이 따로 오는 옵션(`env -u X codex …`)이 남겼을 수 있는 잡 토큰을 건너뛸 때 «여기서부터 호출»이라 볼 이름들(basename 비교).
-LAUNCHERS = ("codex", "grok-ask.sh", "node")
+LAUNCHERS = ("codex", "grok-ask.sh", "gen_gptimg.sh", "node")
 DURATION_RX = re.compile(r"^\d+(?:\.\d+)?[smhd]?$")   # timeout 900 / timeout 15m 의 시간 인자
 
 
@@ -288,6 +298,8 @@ def _classify_tokens(toks):
     head = os.path.basename(toks[0])
     if head == "grok-ask.sh":
         return ("grok", val(["--model"], "grok-4.7"), val(["--effort"], "xhigh"), str(EXCHANGE), True)
+    if head == "gen_gptimg.sh":   # 기본값 없음: 모델·effort 를 안 적으면 None → main 이 «명령에 모델·effort 가 없다» 로 차단
+        return ("gptimg", val(["--model"]), val(["--effort"]), None, True)
     opts = _codex_exec_options(toks) if head == "codex" else None
     if opts is not None:
         # 2026-10-01 P6 검수: `codex -C /x exec hi`·`codex --cd /x -m m exec hi`·별칭 `e` 처럼 전역 옵션이 앞서도 exec 이다.
@@ -319,9 +331,16 @@ def _classify_tokens(toks):
 MAX_WRAPPER_BYTES = 256 * 1024
 
 
-# rules-lazy/codex-model-gate.md §3 — designer 비용 게이트가 따로 관장한다.
-# 2026-10-01 감사: 파일 «이름»만 보면 아무 폴더의 gen_gptimg.sh 가 게이트·사전검사를 통째로 피한다. 하네스 실경로만 면제.
-GATE_EXEMPT_WRAPPERS = (Path(__file__).resolve().parent / "gen_gptimg.sh",)
+# 2026-11-05: 면제가 아니라 «알려진 래퍼» 식별용이다. 하네스의 실경로와 같은 파일만 안쪽 `codex exec` 줄을 다시 읽지 않는다(classify_all 참조).
+KNOWN_GPTIMG = Path(__file__).resolve().parent / "gen_gptimg.sh"
+
+
+def _is_known_gptimg(head_tok):
+    """head 토큰이 하네스의 scripts/gen_gptimg.sh 실경로(심볼릭 링크 포함)이면 True. 풀지 못하는 경로($HOME 등)는 False."""
+    try:
+        return Path(os.path.expanduser(head_tok.strip("\"'"))).resolve() == KNOWN_GPTIMG
+    except OSError:
+        return False
 
 
 def _classify_wrapper_file(head_tok):
@@ -329,15 +348,9 @@ def _classify_wrapper_file(head_tok):
     재분류해 일치 목록을 돌려준다. 파일 속 또 다른 파일은 따라가지 않는다(깊이 1). 대상 아님·읽기 실패는
     조용히 빈 목록.
 
-    게이트 예외(2026-09-08 오탐 실측): `bash scripts/gen_gptimg.sh …` 는 래퍼 안의 `codex exec` 줄 때문에
-    모델 없는 codex 호출로 분류돼 차단됐다. 이미지 생성은 chat 모델 선택의 의미가 작아 규칙이 게이트 밖에
-    두었고 비용은 designer 승인 게이트가 따로 막는다(rules-lazy/codex-model-gate.md §3)."""
+    gen_gptimg.sh 는 2026-11-05 에 면제에서 «알려진 래퍼» 로 바뀌었다(위 KNOWN_GPTIMG · 모듈 docstring). 면제 시절(2026-09-08)에는 래퍼 안의
+    `codex exec` 줄이 모델 없는 호출로 분류돼 차단되는 오탐이 있었다. 지금은 이름 판정이 먼저 일치해 이 함수에 오지 않는다."""
     p = Path(os.path.expanduser(head_tok.strip("\"'")))
-    try:
-        if p.resolve() in GATE_EXEMPT_WRAPPERS:
-            return []
-    except OSError:
-        pass
     try:
         if not p.is_file() or p.stat().st_size > MAX_WRAPPER_BYTES:
             return []
@@ -371,6 +384,9 @@ def classify_all(cmd: str):
         hit = _classify_tokens(toks)
         if hit:
             hits.append(hit)
+            # 하네스 실경로의 gen_gptimg.sh 는 안쪽(-s workspace-write 의 codex exec)을 다시 읽지 않는다. 같은 이름의 다른 파일(2026-10-01 감사)은 안쪽도 본다.
+            if hit[0] == "gptimg" and not _is_known_gptimg(toks[0]):
+                hits.extend(_classify_wrapper_file(toks[0]))
             continue
         hits.extend(_classify_wrapper_file(toks[0]))
     return hits
@@ -550,6 +566,11 @@ def main() -> None:
     if not hits:
         return
 
+    # 2026-11-05 검수: gen_gptimg.sh 는 main 만 실행한다. 서브에이전트 호출은 훅 입력에 agent_id 가 붙는다(read-once.sh 가 읽는 필드와 같다).
+    if inp.get("agent_id") and any(h[0] == "gptimg" for h in hits):
+        deny("[외부 모델 게이트] gptimg: 서브에이전트는 gen_gptimg.sh 실행 금지 — 사용자가 그릴 주체 팝업에서 Codex 이미지 생성을 고르면 main 이 실행한다"
+             "(rules/code-execution.md, skills/figure/SKILL.md). 그림이 필요하면 main 에 NEEDS_CONTEXT 로 돌려라.")
+
     # -C/--cd 값은 분류기가 `;` 등에서 조각낸 뒤 읽으므로(`-C "/clean;private"` → `/clean`) 사전검사 경로와 실제 루트가 어긋날 수 있다.
     # 따옴표 제거 전 원문에서 값을 다시 뽑아 구분자·전개 문자가 하나라도 있으면 경로를 확정할 수 없어 거부한다(2026-10-17 Codex 3차).
     # 조각난 호출이 아래 모델·샌드박스 판정에 먼저 걸리지 않도록 그 앞에서 본다.
@@ -593,7 +614,7 @@ def main() -> None:
     # 2026-10-17 Codex 반례: 트리는 사전검사하지만 프롬프트 본문은 안 봤다. 비밀값 꼴 문자열이 본문에 있으면 막는다.
     # 위치 인자만 뽑지 않고 명령 전체를 훑는다(2026-10-17 Codex 2차): 분류기는 따옴표 안의 `;` 에서도 조각을 내고(`"review; sk-…"`)
     # `--` 뒤 `-` 로 시작하는 프롬프트(`-- "-----BEGIN …"`)를 옵션으로 읽어 위치 인자 추출은 이 둘을 놓쳤다.
-    leaked = prompt_secret_names([cmd]) if any(h[0] == "codex-exec" for h in hits) else []
+    leaked = prompt_secret_names([cmd]) if any(h[0] in ("codex-exec", "gptimg") for h in hits) else []
     if leaked:
         deny(f"[외부 모델 게이트] 프롬프트 본문에 비밀값 꼴 문자열({', '.join(leaked)}) — 보내지 않는다. 값을 빼고 다시 실행하라.")
 
@@ -626,6 +647,8 @@ def main() -> None:
         deny(f"[외부 모델 게이트] preflight 스크립트 없음: {PREFLIGHT}")
     reaches = []
     for _kind, _model, _effort, reach, _sb in hits:
+        if _kind == "gptimg":
+            continue   # 래퍼가 호출마다 만드는 빈 폴더만 Codex 에 열리므로 훑을 트리가 없다(설명문 비밀값은 위에서 거른다)
         reach = reach or inp.get("cwd") or os.getcwd()
         if reach not in reaches:
             reaches.append(reach)

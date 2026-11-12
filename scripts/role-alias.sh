@@ -15,7 +15,7 @@
 normalize_role() {
   local raw="$1" dir="${HOME}/.claude/agents" best="" bestlen=0 f base pair
   for pair in sec:security security:security qa:qa coder:coder scout:scout searcher:searcher planner:planner researcher:researcher \
-      reviewer:reviewer designer:designer docs:docs gitops:gitops tutor:tutor citation:citation-verifier; do
+      reviewer:reviewer docs:docs gitops:gitops tutor:tutor citation:citation-verifier; do
     if [[ "${raw}" == "${pair%%:*}" || "${raw}" == "${pair%%:*}"[-_0-9]* ]]; then raw="${pair#*:}"; break; fi
   done
   for f in "${dir}"/*.md; do

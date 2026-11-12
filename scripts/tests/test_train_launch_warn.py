@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """train-launch-warn.sh 탐지 범위 회귀 테스트 (2026-09-14 신설).
 
-왜: 이 훅의 정규식은 `train.py`·`run_trains?.py` 리터럴이라 실제 진입점(`train_mtl.py`)과
+왜: 이 훅의 정규식은 `train.py`·`run_trains?.py` 리터럴이라 실제 진입점(`train_demo.py`)과
     모듈·런처 실행(`python -m pkg.train`·`torchrun … train`·`lightning … fit`)에 경고조차 뜨지 않았다
     (_audit/loop-audit-20260914.md §3). 범위를 넓힌 뒤에는 반대로 `pretrain.py`·`train_log.txt` 류
     접두·비진입점 오탐이 문제가 되므로, 발사 8종 HIT 과 오탐 miss 를 함께 고정한다.
@@ -23,12 +23,12 @@ MARK = "[학습 발사 감지"
 
 HITS = [
     ("train.py 직접", "uv run python train.py --config a.yaml"),
-    ("train_mtl.py 진입점", "uv run python tools/train_mtl.py trainer.max_epochs=40"),
+    ("train_demo.py 진입점", "uv run python tools/train_demo.py trainer.max_epochs=40"),
     ("python -m 모듈", "python -m exp.train --gpu 0"),
     ("torchrun", "torchrun --nproc_per_node=2 train_seg.py --res 640"),
     ("run_trains.py", "python run_trains.py --arm b"),
-    ("tmux send-keys 인용 안", 'tmux send-keys -t exp-mtl1 "uv run python tools/train_mtl.py" Enter'),
-    ("lightning CLI fit", "lightning run model fit --config configs/mtl.yaml"),
+    ("tmux send-keys 인용 안", 'tmux send-keys -t exp-demo1 "uv run python tools/train_demo.py" Enter'),
+    ("lightning CLI fit", "lightning run model fit --config configs/demo.yaml"),
     ("python3 -m 하위 모듈", "python3 -m pkg.sub.train_loop --seed 1"),
 ]
 
@@ -37,9 +37,9 @@ MISSES = [
     ("train_log.txt 로그", "tail -n 50 outputs/train_log.txt"),
     ("retrain_notes.py 접두", "python retrain_notes.py --dry-run"),
     # 2026-09-14 재감사 — 학습 파일을 **읽기만** 하는 명령에 발사 경고가 뜨던 오탐
-    ("grep 로 진입점 검색", "grep -rn train_mtl.py tools/"),
-    ("cat 로 진입점 열람", "cat tools/train_mtl.py"),
-    ("git log 로 진입점 이력", "git log --oneline -5 -- tools/train_mtl.py"),
+    ("grep 로 진입점 검색", "grep -rn train_demo.py tools/"),
+    ("cat 로 진입점 열람", "cat tools/train_demo.py"),
+    ("git log 로 진입점 이력", "git log --oneline -5 -- tools/train_demo.py"),
 ]
 
 results = []
@@ -47,7 +47,7 @@ results = []
 
 def run(cmd):
     payload = {"tool_name": "Bash", "tool_input": {"command": cmd}}
-    return subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True,
+    return subprocess.run(["bash", str(SCRIPT)], check=False, capture_output=True, text=True,
                           input=json.dumps(payload))
 
 
@@ -66,7 +66,7 @@ r = run(HITS[0][1])
 try:
     out = json.loads(r.stdout)["hookSpecificOutput"]
     ok = out.get("hookEventName") == "PreToolUse" and MARK in out.get("additionalContext", "")
-except Exception:
+except Exception:  # noqa: BLE001  # any parse failure means the hook output is malformed, so the check fails
     out, ok = {}, False
 check("HIT 경고는 hookSpecificOutput.additionalContext JSON 으로 출력", ok, r.stdout[:200])
 

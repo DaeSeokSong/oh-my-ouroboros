@@ -39,8 +39,8 @@ bash ~/.claude/scripts/harness-bench.sh init "loss function 수정 작업" "benc
 3. 기록:
 ```
 bash ~/.claude/scripts/harness-bench.sh before "bench-loss-202605" "attempts=3 interventions=2 qa_fail=1 path=$HOME/.claude/jobs/<job>/qa-report-1.md 시도 3회·개입 2회·QA FAIL 1회 후 통과"
-# (파서 요구: 게이트 지표 3종 key=N + 근거 파일 경로. 근거 파일은 ①$HOME 아래 실존·비어있지 않은 일반 파일 ②파일명이 qa-report*.md·*watcher*.log·launch-state-*.json·session*/train*/*eval*.log 형식(또는 `~/.claude/projects/*/`·`jobs/*/` 아래 transcript `*.jsonl`만) ③그 파일 안에 같은 attempts=/interventions=/qa_fail= 토큰이 **숫자 경계로 정확히** 있고 after는 `무관작업개재=Y`도 파일 안에 ④같은 벤치에서 재사용 불가 ⑤ctime이 직전 사이클 기록 이후. 경로는 큰따옴표 안이라 `~`가 안 풀린다 — `$HOME` 또는 절대경로로(6·7라운드))
-# ★정직 표기: 이 벤치는 **자기보고 도구**다. 위 결박은 재사용·사후 조작·형식 위반을 막을 뿐, 세션이 QA 리포트 자체를 지어내는 것까지 막지는 못한다 — 지표의 진위는 qa 8항(main 해시 재계산)과 사용자 승인 단계가 책임진다.
+# (파서 요구: 게이트 지표 3종 key=N + 근거 파일 경로. 근거 파일은 1) $HOME 아래 실존·비어있지 않은 일반 파일 2) 파일명이 qa-report*.md·*watcher*.log·launch-state-*.json·session*/train*/*eval*.log 형식(또는 `~/.claude/projects/*/`·`jobs/*/` 아래 transcript `*.jsonl`만) 3) 그 파일 안에 같은 attempts=/interventions=/qa_fail= 토큰이 **숫자 경계로 정확히** 있고 after는 `무관작업개재=Y`도 파일 안에 4) 같은 벤치에서 재사용 불가 5) ctime이 직전 사이클 기록 이후. 경로는 큰따옴표 안이라 `~`가 안 풀린다 — `$HOME` 또는 절대경로로(6·7라운드))
+# ★정직 표기: 이 벤치는 **자기보고 도구**다. 위 결박은 재사용·사후 조작·형식 위반을 막을 뿐, 세션이 QA 리포트 자체를 지어내는 것까지 막지는 못한다 — 지표의 진위는 qa 8항(별도 qa 의 해시 재계산)과 사용자 승인 단계가 책임진다.
 ```
 
 ### 3. 룰/스킬 변경 적용 (`bench/<후보id>` 임시 브랜치에만 — main 미반영)

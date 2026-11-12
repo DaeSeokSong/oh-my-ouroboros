@@ -8,9 +8,9 @@
 
 <p>
 <img src="https://img.shields.io/badge/license-MIT-10b981?style=flat-square" alt="MIT license"/>
-<img src="https://img.shields.io/badge/skills-32-8b5cf6?style=flat-square" alt="32 skills"/>
-<img src="https://img.shields.io/badge/agents-13-06b6d4?style=flat-square" alt="13 agents"/>
-<img src="https://img.shields.io/badge/lazy__rules-50-f59e0b?style=flat-square" alt="50 lazy rules"/>
+<img src="https://img.shields.io/badge/skills-33-8b5cf6?style=flat-square" alt="33 skills"/>
+<img src="https://img.shields.io/badge/agents-12-06b6d4?style=flat-square" alt="12 agents"/>
+<img src="https://img.shields.io/badge/lazy__rules-51-f59e0b?style=flat-square" alt="51 lazy rules"/>
 <img src="https://img.shields.io/badge/mods-2-0ea5e9?style=flat-square" alt="2 mods"/>
 <img src="https://img.shields.io/badge/self--audit-monthly-22c55e?style=flat-square" alt="monthly self-audit"/>
 <img src="https://img.shields.io/badge/PRs-welcome-ec4899?style=flat-square" alt="PRs welcome"/>
@@ -54,15 +54,15 @@ The tail feeds the mouth: waste found by the audit becomes the budget for the ne
 | Layer | Contents |
 |-------|----------|
 | 📌 `CLAUDE.md` + `rules/` | Always-on tier: routing, model delegation (opus/sonnet/haiku), code-execution policy, memory triggers, prompt preprocessing |
-| 💤 `rules-lazy/` | 50 lazy-loaded policies: QA process, context management, error handling, untrusted-content quarantine, secret handling, decision sovereignty, … |
-| 🤖 `agents/` | 13 specialized subagents (scout · coder · qa · security · reviewer · planner · researcher · searcher · docs · gitops · designer · citation-verifier · tutor) with spawn-prompt contracts |
-| 🧰 `skills/` | 32 skills: intent docs, experiment workflow, paper reading, multi-perspective discussion, harness audit & bench, wandb/checkpoint cleanup, cost breakdown, … |
+| 💤 `rules-lazy/` | 51 lazy-loaded policies: QA process, context management, error handling, untrusted-content quarantine, secret handling, decision sovereignty, … |
+| 🤖 `agents/` | 12 specialized subagents (scout · coder · qa · security · reviewer · planner · researcher · searcher · docs · gitops · citation-verifier · tutor) with spawn-prompt contracts. Agents never call each other: main relays between them. Figures are made by main through the `figure` skill, not by an agent |
+| 🧰 `skills/` | 33 skills: intent docs, experiment workflow, paper reading, multi-perspective discussion, harness audit & bench, weight-edit logging, wandb/checkpoint cleanup, cost breakdown, … |
 | 🔩 `scripts/` | Hooks & automation: commit gates, session-start pattern mining, nightly ontology refresh, cost snapshots, this export pipeline |
 | 🧩 `mods/` | Two Claude Code mods. `harness-mod` draws a band above the prompt: session and server status, training epochs, todos, a `/jira` group of your open issues (buttons only fill the prompt; posting stays behind preview and approval), a screen-only mask toggle for emails and tokens, and Mermaid blocks in replies drawn as ASCII. `decision-popup` is the decision tool described above |
 | ⚙️ `settings.json` | The receipts: the actual hook wiring |
 
 <details>
-<summary><b>🤖 The 13 agents, one line each</b></summary>
+<summary><b>🤖 The 12 agents, one line each</b></summary>
 <br/>
 
 | Agent | Model | Role |
@@ -74,17 +74,16 @@ The tail feeds the mouth: waste found by the audit becomes the budget for the ne
 | `reviewer` | opus | Depth-first code review, one function at a time — where the code drifts from its stated design |
 | `planner` | opus | Architecture & experiment design consulting; final calls stay with main |
 | `researcher` | opus | Paper writing, result analysis, adversarial design review |
-| `searcher` | sonnet | The only agent that touches the open web — returns quarantined summaries |
-| `docs` | sonnet | Confluence/Jira via MCP, with the media-preserving edit protocol |
+| `searcher` | sonnet | The open-web search agent — returns summaries treated as untrusted data |
+| `docs` | sonnet | Writes Confluence/Jira page drafts and comment bodies to files and returns the path; lookup, publishing, and recording stay with main |
 | `gitops` | sonnet | Commits, branches, diffs, tags — push always stays with the human |
-| `designer` | sonnet | Figures — TikZ diagrams and matplotlib plots |
-| `citation-verifier` | sonnet | Retraction gate + supporting/contrasting stance debate before any paper is cited |
+| `citation-verifier` | sonnet | Before a paper is cited: retraction lookup, then comparison of the quoted numbers and claims against the source text. A supporting/contrasting stance debate runs only for contested citations |
 | `tutor` | opus | Teaches from finished artifacts: quiz → diagnose → re-explain → re-quiz until every answer is right |
 
 </details>
 
 <details>
-<summary><b>🧰 The 32 skills, one line each</b></summary>
+<summary><b>🧰 The 33 skills, one line each</b></summary>
 <br/>
 
 | Skill | What it does |
@@ -96,12 +95,13 @@ The tail feeds the mouth: waste found by the audit becomes the budget for the ne
 | `harness-audit` | The monthly self-audit: baselines, pointer integrity, recurring-defect catalog |
 | `harness-bench` | Before/after measurement tool for rule changes, run on a temporary branch before approval; self-reported; one bench is on record so far (from the October 2026 audit) |
 | `learn-from-feedback` | Hooks log corrections and repeated patterns into a candidate ledger; 3+ hits become rule proposals the user accepts or rejects |
+| `weight-edit` | Logs one no-retraining weight edit (pruning, quantization, targeted edits) as a procedure with a before-edit decision rule and a cumulative ledger with comparison tables; guarantees the record, not an accuracy gain |
 | `intent` | Writes the "why" doc (problem, outcome, constraints, open questions, premises) before non-trivial work; feature commits must cite it |
 | `paper-read` | 9-source parallel paper search + full-PDF close reading + review doc |
 | `paper` | Paper writing: abstract, sections, review responses |
 | `research` | Deep multi-source research with citation verification |
 | `neuro-explain` | Neuroscience mechanism citations with mandatory plain-language analogies |
-| `figure` | Paper figures: TikZ for structure, matplotlib for data |
+| `figure` | Paper figures: TikZ for structure, matplotlib for data; run by main (there is no figure agent) |
 | `confluence` | Page format standards, macro-escaping lore, media-preserving edit protocol |
 | `confluence-research-record` | 4-level research-note hierarchy (overview → year → month → day) |
 | `storytelling` | But/therefore narrative structure for research records and talks |

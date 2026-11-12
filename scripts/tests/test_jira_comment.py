@@ -21,7 +21,7 @@ import jira_comment as jc
 REAL_HTTP = jc.http
 REAL_OPEN = jc._open
 ROOT = Path(__file__).resolve().parents[2]
-SAMPLE = ROOT / ".scratch/9d9904f7/jira/nrs972_32105.adf.json"
+SAMPLE = ROOT / ".scratch/0a1b2c3d/jira/abc123_10001.adf.json"
 FAKE_CRED = "-".join(["FAKE", "CRED", "123"])   # noqa: FLY002  # 시험용 가짜 값. 리터럴 한 덩어리로 쓰면 커밋 시크릿 검사가 오탐한다(2026-10-01)
 TOKEN = FAKE_CRED
 SKILL = (
@@ -2125,3 +2125,408 @@ def test_empty_string_arguments_count_as_given(rep, env):
         assert run(cmd, "--issue", "PROJ-1", "--comment-id", 7, "--patches", rep.pat, "--figures", "") == 2
     assert run("preview", "--issue", "PROJ-1", "--body-file", "", "--attach", rep.lst) == 2
     assert stamp_files(env) == [] and rep.raw.calls == [] and "PUT" not in rep.fake.methods()
+
+
+# ---------------------------------------------------------------- 표(GFM table -> ADF table, 2026-11-06)
+
+TABLE_MD = "| 판 | 값 |\n|:---|---:|\n| **굵게** | `코드` |\n| a\\|b | |\n"
+
+
+def cell_nodes(cell):
+    return cell["content"][0]["content"]
+
+
+def test_md_table_to_adf_header_body_inline_empty_cell_and_escaped_pipe():
+    adf = jc.md_to_adf("* 가\n\n" + TABLE_MD + "\n* 나\n")
+    assert [n["type"] for n in adf["content"]] == ["bulletList", "table", "bulletList"]   # 목록 뒤 표는 목록 안으로 들어가지 않는다
+    table = adf["content"][1]
+    assert table["attrs"] == {"isNumberColumnEnabled": False, "layout": "default"}
+    rows = table["content"]
+    assert [r["type"] for r in rows] == ["tableRow"] * 3
+    assert [[c["type"] for c in r["content"]] for r in rows] == [["tableHeader"] * 2, ["tableCell"] * 2, ["tableCell"] * 2]
+    assert all(c["content"][0]["type"] == "paragraph" and len(c["content"]) == 1 for r in rows for c in r["content"])
+    assert cell_nodes(rows[0]["content"][0]) == [{"type": "text", "text": "판"}]
+    assert cell_nodes(rows[1]["content"][0]) == [{"type": "text", "text": "굵게", "marks": [{"type": "strong"}]}]
+    assert cell_nodes(rows[1]["content"][1]) == [{"type": "text", "text": "코드", "marks": [{"type": "code"}]}]
+    assert cell_nodes(rows[2]["content"][0]) == [{"type": "text", "text": "a|b"}]
+    assert rows[2]["content"][1]["content"] == [{"type": "paragraph", "content": []}]   # 빈 칸 = 빈 문단
+    assert "---" not in json.dumps(table, ensure_ascii=False)   # 구분 줄은 본문에 남지 않는다
+
+
+def test_md_table_ends_at_first_non_pipe_line_and_keeps_following_text():
+    adf = jc.md_to_adf("| a |\n|---|\n| 1 |\n뒤 문단\n")
+    assert [n["type"] for n in adf["content"]] == ["table", "paragraph"]
+    assert len(adf["content"][0]["content"]) == 2
+
+
+def test_md_table_column_mismatch_stays_text_with_one_warning():
+    warns = []
+    adf = jc.md_to_adf("| a | b |\n|---|---|\n| 1 | 2 |\n| 3 |\n", warns)
+    assert [n["type"] for n in adf["content"]] == ["paragraph"] * 4   # 종전 처리: 줄마다 문단
+    assert len(warns) == 1 and "열 수(1)" in warns[0] and "머리(2)" in warns[0] and "표 본문 2번째 줄" in warns[0]
+    assert jc.md_to_adf("| a | b |\n|---|---|\n| 1 | 2 | 3 |\n")["content"][0]["type"] == "paragraph"
+
+
+def test_md_table_needs_separator_line_with_same_column_count():
+    for md in ("| a | b |\n| 1 | 2 |\n", "| a | b |\n|---|\n| 1 | 2 |\n", "| a | b |\n|--|x-|\n| 1 | 2 |\n", "| a | b |\n"):
+        warns = []
+        adf = jc.md_to_adf(md, warns)
+        assert all(n["type"] == "paragraph" for n in adf["content"]) and warns == []
+
+
+def test_format_warnings_do_not_count_table_as_paragraph():
+    adf = jc.md_to_adf("1. 주제\n   * 결과: 표 참고\n\n" + TABLE_MD)
+    assert jc.format_warnings(adf) == []
+    assert any("목록 밖 문단" in w for w in jc.format_warnings(jc.md_to_adf(TABLE_MD + "\n문단입니다\n")))
+    assert jc.unsupported(adf) == []
+
+
+def test_table_text_fingerprint_canonical_and_rendering_are_stable():
+    a, b = jc.md_to_adf(TABLE_MD), jc.md_to_adf(TABLE_MD)
+    assert jc.canonical(a) == jc.canonical(b)
+    assert jc.fingerprint(a) == (["판", "값", "굵게", "코드", "a|b", ""], 0, [])
+    assert jc.table_shapes(a) == [[2, 2, 2]]
+    assert jc.adf_to_text(a).split("\n") == ["표 3행 × 2열", "  판 | 값", "  **굵게** | `코드`", "  a|b | "]
+
+
+def test_preview_shows_table_as_rows_by_columns_without_paragraph_warning(env, capsys):
+    env.body.write_text("1. 주제\n   * 결과: 아래 표 참고\n\n| 판 | 값 |\n|---|---|\n| x | 1 |\n| y | 2 |\n", encoding="utf-8")
+    assert run("preview", "--issue", "PROJ-1", "--body-file", env.body) == 0
+    out = capsys.readouterr().out
+    assert "표 3행 × 2열\n  판 | 값\n  x | 1\n  y | 2" in out
+    assert "경고 없음" in out and "목록 밖 문단" not in out
+
+
+def test_preview_warns_on_table_column_mismatch(env, capsys):
+    env.body.write_text("* 가\n\n| a | b |\n|---|---|\n| 1 |\n", encoding="utf-8")
+    assert run("preview", "--issue", "PROJ-1", "--body-file", env.body) == 0
+    out = capsys.readouterr().out
+    assert "표로 바꾸지 않고 글 문단으로" in out and "목록 밖 문단" in out
+    assert "표 3행" not in out and "| a | b |" in out.split("== 미리보기 ==")[1]
+
+
+def test_post_table_verify_ok_with_server_added_attrs_and_dropped_empty_content(env):
+    env.body.write_text("* 가\n\n" + TABLE_MD, encoding="utf-8")
+
+    def server_style(b):
+        b = copy.deepcopy(b)
+
+        def walk(n):
+            n["attrs"] = {**n.get("attrs", {}), "localId": "abc123"}
+            if n.get("type") == "paragraph" and n.get("content") == []:
+                del n["content"]
+            for c in n.get("content", []):
+                walk(c)
+        walk(b)
+        return b
+    run("preview", "--issue", "PROJ-1", "--body-file", env.body)
+    env.fake.tamper = server_style
+    assert run("post", "--issue", "PROJ-1", "--body-file", env.body) == 0
+
+
+def test_verify_detects_table_count_row_and_cell_changes_rc4(env, capsys):
+    env.body.write_text("* 가\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n", encoding="utf-8")
+
+    def attempt(tamper):
+        run("preview", "--issue", "PROJ-1", "--body-file", env.body)
+        env.fake.tamper = tamper
+        rc = run("post", "--issue", "PROJ-1", "--body-file", env.body)
+        return rc, capsys.readouterr().err
+
+    def drop_cell(b):
+        b = copy.deepcopy(b)
+        del b["content"][1]["content"][2]["content"][1]
+        return b
+
+    def drop_row(b):
+        b = copy.deepcopy(b)
+        del b["content"][1]["content"][2]
+        return b
+
+    def drop_table(b):
+        b = copy.deepcopy(b)
+        del b["content"][1]
+        return b
+
+    def table_to_paragraph(b):
+        b = copy.deepcopy(b)
+        b["content"][1] = {"type": "paragraph", "content": [{"type": "text", "text": "| a | b |"}]}
+        return b
+
+    for tamper in (drop_cell, drop_row, drop_table, table_to_paragraph):
+        rc, err = attempt(tamper)
+        assert rc == 4 and "표 구조" in err and "게시는 완료됐습니다" in err, tamper.__name__
+    err = attempt(drop_cell)[1]
+    assert "[[2, 2, 2]]" in err and "[[2, 2, 1]]" in err   # 보낸 것과 되읽은 것의 모양이 함께 나온다
+
+
+# ---------------------------------------------------------------- 표 행 추가(--patches 의 table_anchor·append_rows, 2026-11-06)
+
+ROWS = [["원본 x2t", "**0.91**", "0.88"], ["원본 x17t", "0.93", "`0.90`"]]
+
+
+def table_comment(n_rows=8, head="판", cols=3):
+    """그림 1장(media id uuid-1)이 든 댓글 + 머리 1행과 본문 n_rows-1행짜리 표."""
+    lines = [f"| {head} | " + " | ".join(f"지표{c}" for c in range(1, cols)) + " |", "|" + "---|" * cols]
+    lines += [f"| 판{k} | " + " | ".join(f"0.{k}{c}" for c in range(1, cols)) + " |" for k in range(1, n_rows)]
+    adf = media_adf("앞 문장 하나")
+    adf["content"].append(jc.md_to_adf("\n".join(lines))["content"][0])
+    return adf
+
+
+def row_patch_file(env, *patches):
+    """치환 파일을 쓰고 경로를 돌려준다(인자가 없으면 표 «판» 에 ROWS 를 붙이는 항목 하나)."""
+    path = env.home / "rows.json"
+    path.write_text(json.dumps(list(patches) or [{"table_anchor": "판", "append_rows": ROWS}], ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def rows_run(cmd, path):
+    return run(cmd, "--issue", "PROJ-1", "--comment-id", 7, "--patches", path)
+
+
+def test_row_append_to_figure_comment_adds_rows_keeps_media_and_previews_change(env, capsys):
+    orig = table_comment()
+    env.fake.comments["7"] = copy.deepcopy(orig)
+    path = row_patch_file(env)
+    assert rows_run("preview", path) == 0
+    out = capsys.readouterr().out
+    assert "- 전: [표 «판»] 8행" in out
+    assert "+ 후: [표 «판»] 10행 · 추가: 원본 x2t | **0.91** | 0.88 / 원본 x17t | 0.93 | `0.90`" in out
+    assert "표 10행 × 3열" in out and set(env.fake.methods()) == {"GET"}
+    assert rows_run("update", path) == 0
+    new = env.fake.comments["7"]
+    assert jc.table_shapes(orig) == [[3] * 8] and jc.table_shapes(new) == [[3] * 10]
+    assert jc.fingerprint(new)[2] == ["uuid-1"] and new["content"][0] == orig["content"][0]
+    rows = new["content"][1]["content"]
+    assert rows[:8] == orig["content"][1]["content"]   # 기존 8행은 그대로
+    assert [[c["type"] for c in r["content"]] for r in rows[8:]] == [["tableCell"] * 3] * 2
+    assert cell_nodes(rows[8]["content"][1]) == [{"type": "text", "text": "0.91", "marks": [{"type": "strong"}]}]
+    assert cell_nodes(rows[9]["content"][2]) == [{"type": "text", "text": "0.90", "marks": [{"type": "code"}]}]
+    assert rows[8] == jc.table_row(ROWS[0]) and rows[9] == jc.table_row(ROWS[1])
+    put = [c for c in env.fake.calls if c[0] == "PUT"]
+    assert len(put) == 1 and put[0][1].endswith("/comment/7?notifyUsers=false")
+    assert len(list((env.home / ".claude/_audit/jira-preview").glob("backup-PROJ-1-7-*.adf.json"))) == 1
+
+
+def test_table_row_helper_builds_header_or_body_cells_and_table_node_uses_it():
+    assert [c["type"] for c in jc.table_row(["a", "b"], header=True)["content"]] == ["tableHeader"] * 2
+    assert [c["type"] for c in jc.table_row(["a", "b"])["content"]] == ["tableCell"] * 2
+    t = jc.table_node([["a"], ["b"]])
+    assert t["content"] == [jc.table_row(["a"], True), jc.table_row(["b"])]
+
+
+def test_row_anchor_not_found_or_two_tables_rc2(env, capsys):
+    adf = table_comment()
+    adf["content"].append(copy.deepcopy(adf["content"][1]))   # 머리 첫 칸이 같은 표가 둘
+    env.fake.comments["7"] = copy.deepcopy(adf)
+    for anchor, n in (("없는 표", 0), ("판", 2)):
+        path = row_patch_file(env, {"table_anchor": anchor, "append_rows": ROWS})
+        for cmd in ("preview", "update"):
+            assert rows_run(cmd, path) == 2
+            assert f"일치하는 표가 {n}개입니다(정확히 1개여야 합니다)" in capsys.readouterr().err
+    assert "PUT" not in env.fake.methods() and env.fake.comments["7"] == adf and stamp_files(env) == []
+
+
+def test_row_anchor_matches_first_cell_exactly_after_strip_and_ignoring_marks(env):
+    adf = media_adf()
+    adf["content"].append(jc.md_to_adf("| **판** | 값 |\n|---|---|\n| x | 1 |\n")["content"][0])
+    env.fake.comments["7"] = adf
+    assert rows_run("preview", row_patch_file(env, {"table_anchor": "판 일부", "append_rows": [["y", "2"]]})) == 2   # 부분 일치는 안 된다
+    path = row_patch_file(env, {"table_anchor": "  판 ", "append_rows": [["y", "2"]]})
+    assert rows_run("preview", path) == 0 and rows_run("update", path) == 0
+    assert jc.table_shapes(env.fake.comments["7"]) == [[2, 2, 2]]
+
+
+def test_row_column_count_mismatch_rc2_names_row_and_counts(env, capsys):
+    env.fake.comments["7"] = table_comment()
+    path = row_patch_file(env, {"table_anchor": "판", "append_rows": [["a", "b", "c"], ["only", "two"]]})
+    assert rows_run("preview", path) == 2 and rows_run("update", path) == 2
+    assert "붙일 2번째 행의 칸 수(2)가 표 첫 행의 칸 수(3)와 다릅니다" in capsys.readouterr().err
+    assert stamp_files(env) == [] and "PUT" not in env.fake.methods()
+
+
+@pytest.mark.parametrize("attr", ["colspan", "rowspan"])
+def test_row_append_rejects_table_with_merged_cells(env, capsys, attr):
+    adf = table_comment()
+    adf["content"][1]["content"][2]["content"][0]["attrs"] = {attr: 2}
+    env.fake.comments["7"] = adf
+    path = row_patch_file(env)
+    assert rows_run("preview", path) == 2 and rows_run("update", path) == 2
+    assert "병합 칸" in capsys.readouterr().err and "PUT" not in env.fake.methods() and stamp_files(env) == []
+
+
+def test_row_append_allows_unit_span_attrs_on_cells(env):
+    adf = table_comment()
+    for r in adf["content"][1]["content"]:
+        for c in r["content"]:
+            c["attrs"] = {"colspan": 1, "rowspan": 1, "colwidth": [120]}
+    env.fake.comments["7"] = adf
+    path = row_patch_file(env)
+    assert rows_run("preview", path) == 0 and rows_run("update", path) == 0
+    assert jc.table_shapes(env.fake.comments["7"]) == [[3] * 10]
+
+
+def test_row_and_text_patches_mix_in_one_file(env, capsys):
+    env.fake.comments["7"] = table_comment()
+    path = row_patch_file(env, {"anchor": "문장 하나", "new": "문장 둘"}, {"table_anchor": "판", "append_rows": ROWS[:1]},
+                          {"anchor": "판3", "new": "판3 수정"})
+    assert rows_run("preview", path) == 0
+    out = capsys.readouterr().out
+    assert "- 전: 앞 문장 하나" in out and "+ 후: 앞 문장 둘" in out and "9행 · 추가: 원본 x2t" in out and "+ 후: 판3 수정" in out
+    assert rows_run("update", path) == 0
+    new = env.fake.comments["7"]
+    blocks = jc.fingerprint(new)[0]
+    assert blocks[0] == "앞 문장 둘" and "판3 수정" in blocks and "원본 x2t" in blocks
+    assert jc.table_shapes(new) == [[3] * 9] and jc.fingerprint(new)[2] == ["uuid-1"]
+
+
+def test_two_row_patches_on_same_table_and_on_second_table(env):
+    adf = table_comment()
+    adf["content"].append(jc.md_to_adf("| 비교 | 값 |\n|---|---|\n| x | 1 |\n")["content"][0])
+    env.fake.comments["7"] = adf
+    path = row_patch_file(env, {"table_anchor": "판", "append_rows": ROWS[:1]}, {"table_anchor": "비교", "append_rows": [["z", ""]]},
+                          {"table_anchor": "판", "append_rows": ROWS[1:]})
+    assert rows_run("preview", path) == 0 and rows_run("update", path) == 0
+    new = env.fake.comments["7"]
+    assert jc.table_shapes(new) == [[3] * 10, [2] * 3]
+    assert [r["content"][0]["content"][0]["content"] for r in new["content"][1]["content"][8:]] == \
+        [[{"type": "text", "text": "원본 x2t"}], [{"type": "text", "text": "원본 x17t"}]]   # 파일 순서대로 맨 아래에 쌓인다
+    assert new["content"][2]["content"][2]["content"][1]["content"] == [{"type": "paragraph", "content": []}]   # 빈 칸 = 빈 문단
+
+
+def test_row_patch_changed_after_preview_rc3(env):
+    env.fake.comments["7"] = table_comment()
+    path = row_patch_file(env)
+    assert rows_run("preview", path) == 0
+    row_patch_file(env, {"table_anchor": "판", "append_rows": [["다른", "행", "내용"]]})
+    assert rows_run("update", path) == 3 and "PUT" not in env.fake.methods()
+
+
+@pytest.mark.parametrize("bad", [
+    {"table_anchor": "판"}, {"append_rows": [["a"]]}, {"table_anchor": "  ", "append_rows": [["a"]]},
+    {"table_anchor": 1, "append_rows": [["a"]]}, {"table_anchor": "판", "append_rows": []},
+    {"table_anchor": "판", "append_rows": [[]]}, {"table_anchor": "판", "append_rows": ["a"]},
+    {"table_anchor": "판", "append_rows": [["a", 1]]}, {"table_anchor": "판", "append_rows": "a"},
+    {"anchor": "x", "new": "y", "table_anchor": "판", "append_rows": [["a"]]}, {"anchor": "x"}, {"new": "y"}, "text", 3, None])
+def test_load_patches_format_errors_rc2_show_both_formats(env, bad):
+    path = env.home / "bad.json"
+    path.write_text(json.dumps([{"anchor": "ok", "new": "ok"}, bad]), encoding="utf-8")
+    with pytest.raises(jc.Fail) as e:
+        jc.load_patches(path)
+    assert e.value.rc == 2 and '"anchor"' in e.value.msg and '"table_anchor"' in e.value.msg and '"append_rows"' in e.value.msg
+    path.write_text(json.dumps({"table_anchor": "판", "append_rows": [["a"]]}), encoding="utf-8")   # 목록이 아닌 것도 같은 오류
+    with pytest.raises(jc.Fail) as e2:
+        jc.load_patches(path)
+    assert e2.value.rc == 2
+
+
+def test_load_patches_accepts_both_kinds_and_ignores_unknown_keys(env):
+    items = [{"anchor": "a", "new": "b", "memo": 1}, {"table_anchor": "판", "append_rows": [["x", "y"]], "memo": "z"}]
+    path = env.home / "ok.json"
+    path.write_text(json.dumps(items), encoding="utf-8")
+    assert jc.load_patches(path) == items
+
+
+def old_figures_stamp_hash(issue, comment_id, plan, patches):
+    """이 변경 이전의 figures_stamp_hash 식 그대로(글자 치환만 있는 해시 입력이 안 바뀌었음을 대조하는 기준)."""
+    keys = ("anchor", "name", "size", "sha256", "width", "height")
+    rec = {"kind": "figures", "site": jc.site(), "issue": issue, "comment_id": comment_id,
+           "figures": [{**{k: e[k] for k in keys}, **({"replace": True} if e["replace"] else {})} for e in plan]}
+    if patches:
+        rec["patches"] = [{"anchor": p["anchor"], "new": p["new"]} for p in patches]
+    return hashlib.sha256(jc.canonical(rec).encode("utf-8")).hexdigest()
+
+
+def test_figures_stamp_hash_text_only_patches_keep_old_hash_and_row_patches_are_bound(env):
+    plan = [{"anchor": "a", "name": "a.png", "size": 1, "sha256": "x", "width": 1, "height": 1, "replace": False}]
+    text = [{"anchor": "옛", "new": "새"}]
+    assert jc.figures_stamp_hash("PROJ-1", "7", plan, text) == old_figures_stamp_hash("PROJ-1", "7", plan, text)
+    assert jc.figures_stamp_hash("PROJ-1", "7", plan, [{"anchor": "옛", "new": "새", "memo": 1}]) == old_figures_stamp_hash("PROJ-1", "7", plan, text)
+    row = [{"table_anchor": "판", "append_rows": [["a", "b"]]}]
+    h = jc.figures_stamp_hash("PROJ-1", "7", plan, row)   # 예외 없이 계산된다
+    assert h != jc.figures_stamp_hash("PROJ-1", "7", plan) and h != jc.figures_stamp_hash("PROJ-1", "7", plan, text)
+    assert h != jc.figures_stamp_hash("PROJ-1", "7", plan, [{"table_anchor": "판", "append_rows": [["a", "c"]]}])
+    assert h != jc.figures_stamp_hash("PROJ-1", "7", plan, [{"table_anchor": "값", "append_rows": [["a", "b"]]}])
+    mixed = jc.figures_stamp_hash("PROJ-1", "7", plan, text + row)
+    assert mixed not in (h, jc.figures_stamp_hash("PROJ-1", "7", plan, text)) and mixed != jc.figures_stamp_hash("PROJ-1", "7", plan, row + text)
+
+
+def test_figures_combined_with_row_patch_adds_rows_and_figures(fig, capsys):
+    adf = fig_adf()
+    adf["content"].append(jc.md_to_adf("| 판 | 값 |\n|---|---|\n| x | 1 |\n")["content"][0])
+    fig.fake.comments["7"] = adf
+    pat = fig.dir / "pat.json"
+    pat.write_text(json.dumps([{"table_anchor": "판", "append_rows": [["y", "2"]]}]), encoding="utf-8")
+
+    def go(cmd):
+        return run(cmd, "--issue", "PROJ-1", "--comment-id", 7, "--patches", pat, "--figures", fig.lst)
+    assert go("preview") == 0
+    out = capsys.readouterr().out
+    assert "- 전: [표 «판»] 2행" in out and "+ 후: [표 «판»] 3행 · 추가: y | 2" in out
+    pat.write_text(json.dumps([{"table_anchor": "판", "append_rows": [["y", "3"]]}]), encoding="utf-8")
+    assert go("update") == 3 and fig.raw.calls == [] and "PUT" not in fig.fake.methods()   # 행 내용이 스탬프에 묶여 있다
+    pat.write_text(json.dumps([{"table_anchor": "판", "append_rows": [["y", "2"]]}]), encoding="utf-8")
+    assert go("update") == 0
+    new = fig.fake.comments["7"]
+    assert jc.table_shapes(new) == [[2, 2, 2]] and jc.fingerprint(new)[2] == sorted([uuid_for(500), uuid_for(501)])
+    assert "y" in jc.fingerprint(new)[0] and jc.fingerprint(new)[1] == 1
+
+
+def _mutate_text(new):
+    new["content"][0]["content"][0]["content"][0]["content"][0]["text"] = "몰래 바뀐 글"
+
+
+def _mutate_extra_row(new):
+    new["content"][1]["content"].append(jc.table_row(["몰래", "붙은", "행"]))
+
+
+def _mutate_drop_appended_row(new):
+    new["content"][1]["content"].pop()
+
+
+def _mutate_delete_existing_row(new):
+    del new["content"][1]["content"][2]
+
+
+def _mutate_existing_cell_mark(new):
+    new["content"][1]["content"][1]["content"][1]["content"][0]["content"][0]["marks"] = [{"type": "strong"}]
+
+
+def _mutate_appended_cell_text(new):
+    new["content"][1]["content"][-1]["content"][0]["content"][0]["content"][0]["text"] = "고친 글"
+
+
+@pytest.mark.parametrize("mutate", [_mutate_text, _mutate_extra_row, _mutate_drop_appended_row, _mutate_delete_existing_row,
+                                    _mutate_existing_cell_mark, _mutate_appended_cell_text])
+def test_update_refuses_when_result_differs_from_requested_rows_only(env, capsys, monkeypatch, mutate):
+    env.fake.comments["7"] = table_comment()
+    path = row_patch_file(env)
+    real = jc.apply_patches
+
+    def sneaky(adf, patches):
+        new, changes = real(adf, patches)
+        mutate(new)
+        return new, changes
+    monkeypatch.setattr(jc, "apply_patches", sneaky)
+    assert rows_run("preview", path) == 2 and stamp_files(env) == []   # 미리보기도 같은 검사를 한다
+    assert "보내지 않습니다" in capsys.readouterr().err
+    assert rows_run("update", path) == 2
+    assert "보내지 않습니다" in capsys.readouterr().err and "PUT" not in env.fake.methods()
+
+
+def test_text_patch_aimed_at_appended_row_text_is_refused(env, capsys):
+    env.fake.comments["7"] = table_comment()
+    path = row_patch_file(env, {"table_anchor": "판", "append_rows": ROWS[:1]}, {"anchor": "원본 x2t", "new": "원본 X2T"})
+    assert rows_run("update", path) == 2   # 붙은 행은 요청한 글 그대로여야 한다(고칠 글은 행에 바로 쓴다)
+    assert "붙은 행이 요청과 다릅니다" in capsys.readouterr().err and "PUT" not in env.fake.methods()
+
+
+def test_check_rows_only_added_is_a_noop_without_row_patches():
+    cur = table_comment()
+    other = copy.deepcopy(cur)
+    other["content"][0]["content"][0]["content"][0]["content"][0]["text"] = "전혀 다른 글"
+    jc.check_rows_only_added(cur, other, [{"anchor": "a", "new": "b"}])   # 글자 치환만 있으면 검사하지 않는다(종전 동작)
+    jc.check_rows_only_added(cur, other, [])
+    with pytest.raises(jc.Fail):
+        jc.check_rows_only_added(cur, other, [{"table_anchor": "판", "append_rows": ROWS}])

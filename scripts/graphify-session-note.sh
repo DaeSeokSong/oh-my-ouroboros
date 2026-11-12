@@ -6,7 +6,7 @@
 #   구축-미사용 rot(#5). lazy 룰은 로드 안 되면 없는 룰이므로, 세션 시작 시
 #   런타임 신호를 주입해 발동율을 올린다 (사용자 결정: 트리거 강화).
 # 겸용: graph.json보다 새 소스가 있으면 stale 경고 — post-commit 훅 조용한 실패의
-#   조기 감지 장치 (8일 정체 재발 방지).
+#   조기 감지 장치 (그 프로젝트의 8일 정체 재발 방지).
 set -u
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 G="$ROOT/graphify-out/graph.json"

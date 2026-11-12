@@ -10,7 +10,7 @@
 | **mem0 T21** | 검증 요약(verdict/supporting/contrasting/철회/confidence) | **main(호출자)** — source metadata=citation-verifier (2026-07-15: verifier 직접 저장 금지) | 에이전트 회상·검색 |
 | **상세 로그** | 전체 evidence(스니펫·URL·sources 포함) | **main(호출자)** | 감사 가능한 evidence 보존 |
 
-> **citation-verifier는 verdict 반환만 한다.** 파일 쓰기는 주체가 아니다(untrusted 격리). 호출자(main)가 종합 verdict 수신 후: ① mem0 T21 요약 저장 ② 이 규칙에 따라 상세 로그에 append.
+> **citation-verifier는 verdict 반환만 한다.** 파일 쓰기는 주체가 아니다(untrusted 격리). 호출자(main)가 최종 verdict(대조 또는 종합) 수신 후: 1) mem0 T21 요약 저장 2) 이 규칙에 따라 상세 로그에 append.
 
 ---
 
@@ -32,7 +32,9 @@
 ## [YYYY-MM-DD] {title} ({DOI})
 
 - **verdict**: 허용 | 경고 | 금지
-- **supporting / contrasting / mentioning**: N / M / K (표본 N+M+K)
+- **mode**: 대조 | 디베이트(대조 + 옹호·회의·종합)
+- **claim_check**: 항목마다 «인용 수치·주장 / 원문 위치 / 원문 값 / 일치·불일치·원문에 없음» (대조 모드)
+- **supporting / contrasting / mentioning**: N / M / K (표본 N+M+K, 디베이트일 때만. 대조만 했으면 «해당 없음»)
 - **retracted**: true | false
 - **confidence**: high | med | low
 - **fulltext_coverage**: high | partial | abstract-only
@@ -99,6 +101,8 @@ search_memories(query="citation-verifier 검증 verdict", filters={"metadata": {
 ```
 상세 리포트를 PDF로 추출하시겠어요? (Y/N)
 ```
+
+고르게 하는 것이므로 결정 팝업이 우선이다(CLAUDE.md 원칙 7.5).
 
 - N → 종료
 - Y → Step 5 진행

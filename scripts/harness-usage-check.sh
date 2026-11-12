@@ -689,11 +689,14 @@ if [ -f "$MEM_DIR/MEMORY.md" ]; then
     MI_LINES=$(wc -l < "$MEM_DIR/MEMORY.md" 2>/dev/null | tr -d ' ')
     [ "${MI_LINES:-0}" -gt 160 ] 2>/dev/null && warn "MEMORY_INDEX_LONG(${MI_LINES}줄): 현재 프로젝트 MEMORY.md 가 160줄 초과 → 종료된 항목을 목차 한 줄로 묶거나 정리 (rules-lazy/memory-write.md § 자동 메모리 색인)"
 fi
-# decisions 정정 대상은 두 곳이다: ① short-term 고정 루트(rules-lazy/memory-write.md 가 `-home-user-workspace` 로 못박은 실제 기록 위치)
+# decisions 정정 대상은 두 곳이다: ① short-term 고정 루트(서버 등록부 paths.short_term_root, rules-lazy/memory-write.md 의 실제 기록 위치)
 # ② cwd 기반 현재 프로젝트. 현재 프로젝트만 정리하면 다른 프로젝트에서 시작한 세션이 고정 루트를 영영 못 치운다. 둘이 같으면 한 번만 돈다.
-# 마커는 decisions-prune.sh 가 폴더별로 둔다.
-PRUNE_DIRS=("$CLAUDE_DIR/projects/-home-user-workspace/memory")
-[ "$MEM_DIR" != "${PRUNE_DIRS[0]}" ] && PRUNE_DIRS+=("$MEM_DIR")
+# 마커는 decisions-prune.sh 가 폴더별로 둔다. 등록부에 고정 루트가 없는 서버는 ② 만 돈다.
+ST_ROOT=$(python3 -I "$CLAUDE_DIR/scripts/harness_registry.py" host paths.short_term_root --default '' 2>/dev/null)
+ST_ROOT="${ST_ROOT/#\~/$HOME}"; ST_ROOT="${ST_ROOT%/}"
+PRUNE_DIRS=()
+[ -n "$ST_ROOT" ] && PRUNE_DIRS+=("$ST_ROOT")
+[ "$MEM_DIR" != "$ST_ROOT" ] && PRUNE_DIRS+=("$MEM_DIR")
 for PR_DIR in "${PRUNE_DIRS[@]}"; do
     [ -f "$PR_DIR/short-term/decisions.md" ] || continue
     T_NS=$(now_ns)
@@ -748,9 +751,20 @@ if [ -f "$NTFY_HALT" ] || [ -s "$NTFY_QUEUE" ]; then
     NTFY_QUEUED=0
     [ -f "$NTFY_QUEUE" ] && NTFY_QUEUED=$(awk 'END {print NR+0}' "$NTFY_QUEUE" 2>/dev/null)
     [[ "$NTFY_QUEUED" =~ ^[0-9]+$ ]] || NTFY_QUEUED=0
+    # 중단은 NTFY_HALT_RETRY_SEC(기본 3600, 0=하루 통째) 초 안에 갱신된 halt 만 유효(claude-notify.sh halt_active 와 같은 판정)
     NTFY_STOP="no"
-    [ -f "$NTFY_HALT" ] && NTFY_STOP="42908"
-    warn "NTFY_QUOTA: UTC ${NTFY_CHECK_DAY} 수락 ${NTFY_COUNT}/${NTFY_CAP} 중단 ${NTFY_STOP} 큐 ${NTFY_QUEUED}건 → 폰 미도착은 ntfy 일일 한도. 큐는 다음 알림 훅이 1건씩 발송(자정 UTC=KST 09:00)"
+    if [ -f "$NTFY_HALT" ]; then
+        NTFY_RETRY="${NTFY_HALT_RETRY_SEC:-3600}"
+        [[ "$NTFY_RETRY" =~ ^[0-9]{1,6}$ ]] || NTFY_RETRY=3600
+        NTFY_RETRY=$((10#$NTFY_RETRY))
+        NTFY_HALT_MTIME=$(stat -c %Y "$NTFY_HALT" 2>/dev/null || echo 0)
+        if [ "$NTFY_RETRY" -eq 0 ]; then
+            NTFY_STOP="42908"
+        elif [ $(( $(date +%s) - NTFY_HALT_MTIME )) -lt "$NTFY_RETRY" ]; then
+            NTFY_STOP="42908(다음 시도 $(TZ=Asia/Seoul date -d "@$((NTFY_HALT_MTIME + NTFY_RETRY))" +%H:%M 2>/dev/null) KST)"
+        fi
+    fi
+    warn "NTFY_QUOTA: UTC ${NTFY_CHECK_DAY} 수락 ${NTFY_COUNT}/${NTFY_CAP} 중단 ${NTFY_STOP} 큐 ${NTFY_QUEUED}건 → 폰 미도착은 ntfy 일일 한도. 큐는 한도가 풀리면 다음 시도(최대 60분 간격)에서 재개"
 fi
 
 [ "$ADDED_NS" -gt 0 ] && printf '%s added_ms=%s\n' "$(date -Is)" "$((ADDED_NS / 1000000))" >> "$MAINT_LOG" 2>/dev/null

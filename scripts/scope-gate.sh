@@ -93,7 +93,7 @@ esac
 LOGICAL=$(realpath -m -s "$FILE" 2>/dev/null); [ -n "$LOGICAL" ] || LOGICAL="$FILE"
 CANON=$(realpath -m "$FILE" 2>/dev/null) && [ -n "$CANON" ] && FILE="$CANON"
 
-# (2026-08-07 편측 물리화 교정: $HOME/.claude 자체가 심링크인 서버에서는 위 realpath가
+# (2026-08-07 편측 물리화 교정: $HOME/.claude 자체가 심링크인 서버(주력 빌더 서버)에서는 위 realpath가
 #  FILE만 물리 경로로 바꿔 심링크 문자열 접두(${HOME}/.claude/)와 절대 불일치 → 하네스 예외가
 #  무력화된다. 비교 접두도 물리화해 양측을 맞춘다 — ad45edfc(autoindex·commit-refresh)와 동일
 #  계열, 일반 원칙: knowledge/harness/path-guard-symlink-bypass.md "양측 물리화")
@@ -271,7 +271,7 @@ fi
 # 프로젝트 경계 검사 (2026-09-07 실사고 — rules/code-execution.md § 프로젝트 경계)
 # 세션 cwd 가 속한 git 저장소 밖의 "다른 git 저장소" 로 향하는 Write·Edit 를 차단한다.
 # scope 등록 여부와 무관하게 항상 작동한다. 등록 없으면 통과이던 아래 기존 경로만으로는
-# 사고를 못 막았다: 한 세션의 coder 가 다른 저장소 작업본 3파일을 수정하고 테스트 1파일을
+# 사고를 못 막았다: 한 프로젝트 세션의 coder 가 다른 프로젝트 작업본 3파일을 수정하고 테스트 1파일을
 # 추가해 사용자 지시로 전량 원복했다.
 # 양측 물리화: 위 하네스 예외와 같은 이유로 두 저장소 뿌리를 모두 pwd -P 로 실체화해 비교한다.
 # 한계 — 이 훅 밖이라 문구 규율만 남는 구멍:

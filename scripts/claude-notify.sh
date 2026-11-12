@@ -4,6 +4,15 @@
 # - Phone + PC push notification (ntfy.sh)
 # - Terminal bell (SSH 환경에서도 동작)
 # - Desktop notification (DISPLAY 있을 때만)
+#
+# 42908 중단(halt)은 «유효 시간이 있는 중단» 이다 (2026-10-29 수정):
+#   실측(_audit/ntfy-send.tsv): 10-21 16:53Z 이후 매일 00:00:09Z 에 큐 한 건이 HTTP 000 · 약 8초 ·
+#   rate_requeue 로 끝나며 halt 가 생겼고, 그 UTC 하루 동안 알림이 queued 와 queue_drop(큐 30건 상한)만
+#   반복했다(10-26 75 · 10-27 118 · 10-28 141건 버려짐). 그런데 10-28 23:40Z 에 임의 토픽으로 보낸 시험은
+#   HTTP 200(0.65초)이었다. 즉 ntfy 의 IP 일일 한도는 UTC 자정에 한꺼번에 풀리지 않고 하루 중 풀리는데,
+#   종전 «하루 통째 중단» 은 풀린 뒤에도 보내지 않아 틀렸다. 해제 시각을 알 수 없으니 halt 파일의
+#   수정 시각이 NTFY_HALT_RETRY_SEC(기본 3600) 초를 넘으면 중단이 풀린 것으로 보고 한 건만 시험한다
+#   (한 시간에 한 건). 다시 42908 이면 halt 를 갱신, 2xx 면 halt 를 지운다. 0 이면 종전(하루 통째).
 # =============================================================
 
 # ── 0. 백그라운드 자식 세션 제외 (2026-09-11 사용자 지시 — 알림 폭주 수정) ──
@@ -23,6 +32,7 @@
 # 양쪽 경로 모두 시도 (사용자 환경 호환): root + config/ 하위
 CLAUDE_HOME="${CLAUDE_HOME:-${HOME}/.claude}"
 for _cfg in "${CLAUDE_HOME}/env-config" "${CLAUDE_HOME}/config/env-config"; do
+    # shellcheck source=/dev/null
     [ -f "$_cfg" ] && source "$_cfg"
 done
 unset _cfg
@@ -107,6 +117,7 @@ if [ -n "${CLAUDE_JOB_DIR:-}" ] && [ -n "$INPUT" ]; then
             # transcript는 JSONL(줄마다 블록 하나)이라 tail -n 1000은 마지막 assistant "줄"의
             # text를 보는 것 — 메시지 단위가 아니라 줄 단위 추출이다. content가 배열이면 text
             # 블록만, 문자열이면 그대로 취한다. timeout·jq 실패는 fail-open으로 처리한다.
+            # shellcheck disable=SC2016  # jq 식의 $ 는 셸이 아니라 jq 가 해석한다
             JQ_FILTER='
               [ .[] | select(.type=="assistant") ] | last
               | .message.content? as $c
@@ -119,6 +130,7 @@ if [ -n "${CLAUDE_JOB_DIR:-}" ] && [ -n "$INPUT" ]; then
             if [ -n "$LAST_TEXT" ]; then
                 EXTRACT_RC=0
             else
+                # shellcheck disable=SC2016  # bash -c 안의 $1 $2 는 자식 셸이 해석한다
                 LAST_TEXT=$(timeout 4 bash -c 'tail -n 1000 "$1" 2>/dev/null | jq -rs "$2" 2>/dev/null' _ "$TRANSCRIPT" "$JQ_FILTER")
                 EXTRACT_RC=$?
             fi
@@ -217,6 +229,16 @@ if [ -n "$NTFY_TOPIC" ] && command -v curl >/dev/null 2>&1; then
         COUNT_FILE="$USAGE_DIR/ntfy-$DAY.count"
         HALT_FILE="$USAGE_DIR/ntfy-$DAY.halt"
         FAILOPEN_FILE="$USAGE_DIR/ntfy-$DAY.failopen"
+        # halt 가 «유효» = 파일이 있고 수정 시각이 NTFY_HALT_RETRY_SEC 초 이내(0 이면 파일만 있으면 유효).
+        halt_active() {
+            [ -f "$HALT_FILE" ] || return 1
+            local sec="${NTFY_HALT_RETRY_SEC:-3600}" age
+            [[ "$sec" =~ ^[0-9]{1,6}$ ]] || sec=3600
+            sec=$((10#$sec))
+            [ "$sec" -eq 0 ] && return 0
+            age=$(( $(date +%s) - $(stat -c %Y "$HALT_FILE" 2>/dev/null || echo 0) ))
+            [ "$age" -lt "$sec" ]
+        }
         CAP_FILE="$USAGE_DIR/ntfy-cap"
         QUEUE_FILE="$USAGE_DIR/ntfy-queue.tsv"
         LOG_FILE="$AUDIT_DIR/ntfy-send.tsv"
@@ -404,6 +426,7 @@ if [ -n "$NTFY_TOPIC" ] && command -v curl >/dev/null 2>&1; then
         SEND_SESSION="$SESSION"
         SEND_TRIES=0
         SEND_TS=""
+        HALT_TRIAL=0
         if lock_budget; then
             printf '%s\n' "$CAP" > "$CAP_FILE" 2>/dev/null || :
             read_number "$COUNT_FILE"; COUNT="$NUMBER"
@@ -414,7 +437,9 @@ if [ -n "$NTFY_TOPIC" ] && command -v curl >/dev/null 2>&1; then
                 parse_queue_line "$q" && Q_COUNT=$((Q_COUNT + 1))
             done
             HALTED=0
-            [ -f "$HALT_FILE" ] && HALTED=1
+            halt_active && HALTED=1
+            # halt 파일이 있지만 만료됐으면 이 호출이 시험 한 건을 맡는다(아래 unlock 전에 선점 touch)
+            [ "$HALTED" -eq 0 ] && [ -f "$HALT_FILE" ] && HALT_TRIAL=1
 
             if [ "$CAP" -eq 0 ]; then
                 # 설계 ② 질문 5: 자체 호스트의 무제한 모드는 예산·큐를 끄되 42908 중단은 지킨다.
@@ -542,9 +567,12 @@ if [ -n "$NTFY_TOPIC" ] && command -v curl >/dev/null 2>&1; then
                     esac
                 fi
             fi
+            # 시험 권리 선점: 같은 순간 다른 훅은 유효 halt 로 보고 보내지 않는다(같은 IP 에서 N건 방지)
+            [ "$HALT_TRIAL" -eq 1 ] && [ "$TO_SEND" -eq 1 ] && { : > "$HALT_FILE" 2>/dev/null || :; }
+            [ "$TO_SEND" -eq 1 ] || HALT_TRIAL=0
             unlock_budget
         else
-            # 락 실패 시에도 halt는 확인한다. 중요 알림은 O_APPEND 한 줄로 보존한다.
+            # 락 실패 시에도 halt는 확인한다(시험은 맡지 않는다: halt 파일이 있으면 만료여도 큐에만 넣는다).
             if [ -f "$HALT_FILE" ]; then
                 if [ "$SKIP_CURRENT" -eq 0 ]; then
                     case "$KIND" in
@@ -616,7 +644,21 @@ if [ -n "$NTFY_TOPIC" ] && command -v curl >/dev/null 2>&1; then
                 ELAPSED_MS=$((10#$WHOLE * 1000 + 10#$FRACTION))
             fi
 
+            RQ_RESULT="rate_requeue"
+            [ "$RATE_HALT" -eq 1 ] && RQ_RESULT="rate_halt"
+            # 시험이 42908 이 아닌 실패(000·5xx·4xx)로 끝나면 5분 뒤 재시험하도록 halt 시각을 되돌린다.
+            if [ "$HALT_TRIAL" -eq 1 ] && [ "$RATE_HALT" -eq 0 ] &&
+               ! { [ "$CURL_RC" -eq 0 ] && [[ "$HTTP" = 2?? ]]; }; then
+                T_RETRY="${NTFY_HALT_RETRY_SEC:-3600}"
+                [[ "$T_RETRY" =~ ^[0-9]{1,6}$ ]] || T_RETRY=3600
+                T_TRIAL="${NTFY_HALT_TRIAL_RETRY_SEC:-300}"
+                [[ "$T_TRIAL" =~ ^[0-9]{1,5}$ ]] || T_TRIAL=300
+                T_RETRY=$((10#$T_RETRY)); T_TRIAL=$((10#$T_TRIAL))
+                [ "$T_TRIAL" -gt "$T_RETRY" ] && T_TRIAL="$T_RETRY"
+                touch -d "@$(( $(date +%s) - T_RETRY + T_TRIAL ))" "$HALT_FILE" 2>/dev/null || :
+            fi
             if [ "$CURL_RC" -eq 0 ] && [[ "$HTTP" = 2?? ]]; then
+                rm -f "$HALT_FILE" 2>/dev/null || :
                 if [ "$LOCK_SEND" -eq 1 ]; then
                     log_send "$SEND_KIND" "$HTTP" "$ELAPSED_MS" "lock_send"
                 elif [ "$FROM_QUEUE" -eq 1 ]; then
@@ -650,7 +692,7 @@ if [ -n "$NTFY_TOPIC" ] && command -v curl >/dev/null 2>&1; then
                             elif [ "$REQUEUEABLE" -eq 1 ]; then
                                 if append_queue "$SEND_SESSION" "$SEND_KIND" "$SEND_PRIORITY" \
                                     "$SEND_TAG" "$SEND_TITLE" "$SEND_MSG" "$SEND_TRIES" "$SEND_TS"; then
-                                    log_send "$SEND_KIND" "$HTTP" "$ELAPSED_MS" "rate_requeue"
+                                    log_send "$SEND_KIND" "$HTTP" "$ELAPSED_MS" "$RQ_RESULT"
                                 fi
                             else
                                 log_send "$SEND_KIND" "$HTTP" "$ELAPSED_MS" "send_fail"
@@ -663,7 +705,7 @@ if [ -n "$NTFY_TOPIC" ] && command -v curl >/dev/null 2>&1; then
                                         Q_TITLE=$(queue_text "$SEND_TITLE")
                                         if append_queue "$SEND_SESSION" "$SEND_KIND" "$SEND_PRIORITY" \
                                             "$SEND_TAG" "$Q_TITLE" "$Q_MSG" 0; then
-                                            log_send "$SEND_KIND" "$HTTP" "$ELAPSED_MS" "rate_requeue"
+                                            log_send "$SEND_KIND" "$HTTP" "$ELAPSED_MS" "$RQ_RESULT"
                                         fi
                                     else
                                         log_send "$SEND_KIND" "$HTTP" "$ELAPSED_MS" "send_fail"
@@ -692,7 +734,7 @@ if [ -n "$NTFY_TOPIC" ] && command -v curl >/dev/null 2>&1; then
                                 elif append_queue "$SEND_SESSION" "$SEND_KIND" "$SEND_PRIORITY" \
                                     "$SEND_TAG" "$(queue_text "$SEND_TITLE")" \
                                     "$(queue_text "$SEND_MSG")" "$SEND_TRIES" "$SEND_TS"; then
-                                    log_send "$SEND_KIND" "$HTTP" "$ELAPSED_MS" "rate_requeue"
+                                    log_send "$SEND_KIND" "$HTTP" "$ELAPSED_MS" "$RQ_RESULT"
                                 fi
                                 ;;
                             *) log_send "$SEND_KIND" "$HTTP" "$ELAPSED_MS" "send_fail" ;;

@@ -8,6 +8,10 @@ Codex 는 자손 codex 프로세스가 연 rollout 파일의 마지막 turn_cont
 학습 판: 상태 파일에 실행 여부 필드가 없어 train_pid 의 시작 시각과 boot_id 가 모두 맞을 때만 실행 중으로 본다.
 할 일(개정 22): 엔진이 세션마다 ~/.claude/tasks/session-<세션 id 앞 8자리>/<번호>.json 에 두는 할 일의 상태 개수와
 진행·남은 항목 제목. 띠가 접고 펴는 «할 일» 묶음을 그린다(엔진의 할 일 목록은 mod 가 다시 그릴 자리가 없어 ctrl+t 로 숨긴다).
+정지 스위치·남은 자식 감지(2026-10-26, GPU 서버 실측: 갇힌 `pgrep` 약 63개로 부하 평균 65~70, 정본은 band_server_collect.py 헤더): 이 수집기의 `ps` 도 같은
+식으로 쌓일 수 있다(세션마다 5초, 잠금 없음). `_cache/band/off` 파일이 있으면 ps 를 부르지 않는다(codex·grok 은 None, todos·train 은 파일 읽기라 그대로).
+ps 자식은 Popen 으로 띄워 pid 를 `work_ps.inflight`(세션 공통 파일 하나)에 적고, 시작 시 그 pid 의 /proc/<pid>/comm 이 ps 면 ps 를 부르지 않는다.
+세션끼리 기록이 겹치면 한 회차 codex·grok 표시가 빠질 뿐이다. 출력 JSON 키는 그대로다.
 호출: python3 band_work_collect.py --session-id <uuid> --cwd <절대경로>
 """
 import argparse
@@ -17,8 +21,10 @@ import pathlib
 import re
 import stat
 import subprocess
+import tempfile
 import time
 
+CACHE_DIR = pathlib.Path(os.environ.get("BAND_CACHE_DIR", os.path.expanduser("~/.claude/_cache/band")))   # server 수집기와 같은 규칙
 SESS_DIR = pathlib.Path(os.environ.get("BAND_SESSIONS_DIR", os.path.expanduser("~/.claude/sessions")))
 CODEX_SESSIONS = os.path.realpath(os.environ.get("BAND_CODEX_SESSIONS", os.path.expanduser("~/.codex/sessions")))
 TASKS_DIR = pathlib.Path(os.environ.get("BAND_TASKS_DIR", os.path.expanduser("~/.claude/tasks")))
@@ -272,18 +278,84 @@ def git_root(cwd):
     return None
 
 
+def _inflight_path():
+    """Path of the ps child record shared by all sessions."""
+    return CACHE_DIR / "work_ps.inflight"
+
+
+def ps_stuck():
+    """True if the ps child recorded in work_ps.inflight is still alive (/proc/<pid>/comm == recorded name, comm only)."""
+    try:
+        with open(_inflight_path()) as f:
+            rec = json.loads(f.read(4096))
+        pid, comm = rec["pid"], rec["comm"]
+        if not isinstance(pid, int) or isinstance(pid, bool) or comm != "ps":
+            return False
+        with open(f"/proc/{pid}/comm", "rb") as f:
+            return f.read(32).decode("utf-8", "replace").strip() == comm
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):  # 깊은 중첩 JSON 도 수집기를 죽이지 않게(security 낮음)
+        return False
+
+
+def _set_inflight(pid):
+    """Record the ps child (atomic write; best effort, no cache folder -> not recorded)."""
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=CACHE_DIR, prefix="work_ps.inflight.")
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps({"pid": pid, "comm": "ps"}))
+        os.replace(tmp, _inflight_path())
+    except OSError:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def _clear_inflight(pid):
+    """Remove the record only if it still names our ps (another session may have replaced it)."""
+    try:
+        with open(_inflight_path()) as f:
+            if json.loads(f.read(4096)).get("pid") == pid:
+                os.unlink(_inflight_path())
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def run_ps():
+    """Run `ps -eo pid=,ppid=,args=` (3s) and return stdout, or None; a ps that survives kill (D state) stays recorded."""
+    try:
+        p = subprocess.Popen(["ps", "-eo", "pid=,ppid=,args="], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except OSError:
+        return None
+    _set_inflight(p.pid)
+    try:
+        try:
+            out, _ = p.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            try:
+                p.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                return None
+            _clear_inflight(p.pid)
+            return None
+        _clear_inflight(p.pid)
+        return out
+    finally:
+        p.stdout.close()
+
+
 def main():
-    """Print the work-line JSON for one session to stdout."""
+    """Print the work-line JSON for one session to stdout (ps is skipped while the `off` file exists or a previous ps is stuck)."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--session-id", required=True)
     ap.add_argument("--cwd", required=True)
     a = ap.parse_args()
     out = {"codex": None, "grok": None, "train": None, "todos": todos(a.session_id)}
     pid = own_pid(a.session_id)
-    try:
-        ps = subprocess.run(["ps", "-eo", "pid=,ppid=,args="], check=False, capture_output=True, text=True, timeout=3).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        ps = None
+    ps = None if os.path.lexists(CACHE_DIR / "off") or ps_stuck() else run_ps()
     if pid and ps:
         table = parse_ps(ps)
         kids = descendants(table, pid)

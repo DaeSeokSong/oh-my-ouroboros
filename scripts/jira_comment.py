@@ -3,7 +3,7 @@
 """Jira 댓글 공용 게시 스크립트 (REST v3, 표준 라이브러리만).
 
 ■ 왜 이 스크립트인가 (판단 근거 이식 — 2026-10-01 실사고)
-한 댓글이 compact 뒤 **옛 스킬 사본만 보고** 쓰여 형식이 어긋났고, 사용자의
+한 이슈의 댓글이 compact 뒤 **옛 스킬 사본만 보고** 쓰여 형식이 어긋났고, 사용자의
 미리보기 승인 없이 게시됐다. 형식 규칙은 스킬을 불러야만 보이고, «REST 스크립트로 쓴다»는
 규칙은 있는데 공용 스크립트가 없어 세션마다 즉석 코드를 짰기 때문이다. 그래서
   (1) 댓글을 쓰는 순간(preview) 형식 규칙 절을 **그때 스킬 파일에서 읽어** 화면에 찍고,
@@ -37,34 +37,48 @@
 업로드 전에 스탬프를 소모(claim)해 동시 실행의 중복 업로드를 막고, 반영 여부가 불명인 실패는 스탬프를 소모한 채 끝낸다
 (다시 preview 하면 이미 올라간 첨부는 «기존 첨부 재사용» 으로 표시된다).
 
+■ 표 (2026-11-06 사용자 지시, intent/2026-11-06-jira-comment-tables.md)
+머리 줄 `| a | b |` 바로 다음 줄이 `|---|---|`(콜론 허용·정렬은 무시)이면 표다. 이어지는 `|` 줄이 본문 행이고 셀 안 `\\|` 는 글자 `|` 다.
+머리 행은 tableHeader, 나머지는 tableCell(각 칸=문단 1개, 글은 기존 인라인 처리). 본문 행의 열 수가 머리와 다르면 표로 바꾸지 않고
+종전처럼 글 문단으로 두며 preview 가 경고한다. 게시 뒤 되읽기는 표 개수·표마다 행 수·행마다 셀 수를 먼저 대조한다.
+
+■ 표 행 추가 (2026-11-06, intent/2026-11-06-jira-comment-table-row-append.md)
+그림이 든 댓글은 --patches 로만 고칠 수 있는데 글자 치환은 표 행을 만들지 못한다. 그래서 치환 파일에 표 행 추가 항목
+`{"table_anchor": "<표 첫 행 첫 칸 글>", "append_rows": [["칸1", "칸2"], ...]}` 을 글자 치환 항목과 섞어 둘 수 있다(한 항목에 두 종류 키 불가).
+표는 첫 행 첫 칸 글자(앞뒤 공백 무시)가 table_anchor 와 정확히 같은 것 하나로 찾고(0개·2개 이상 rc 2), 병합 칸(colspan·rowspan > 1)이 든 표와
+첫 행 칸 수와 다른 행은 rc 2 다. 행은 맨 아래에만 붙고 칸은 tableCell + 문단(기존 인라인 처리)이다. 보내기 전에 «붙인 행 말고는 구조·글자가
+치환 목록이 바꾼 것 외에 불변» 인지(check_rows_only_added)와 media id 불변을 검사하고, 게시 뒤 되읽기의 표 구조 대조가 행 수 증가를 확인한다.
+
 ■ 종료 코드  0 성공 · 2 입력·형식 절·앵커 오류 · 3 스탬프 없음 · 4 게시 후 대조 실패 · 5 HTTP 오류
 
 사용:
   # ① 댓글 구조 보기 (읽기만)
-  python3 ~/.claude/scripts/jira_comment.py get --issue PROJ-972 --comment-id 32105 --save adf.json
+  python3 ~/.claude/scripts/jira_comment.py get --issue ABC-972 --comment-id 10001 --save adf.json
   # ② 미리보기 (형식 규칙 출력 + 스탬프 생성). 치환은 --patches 치환.json
-  python3 ~/.claude/scripts/jira_comment.py preview --issue PROJ-972 --body-file 본문.md
+  python3 ~/.claude/scripts/jira_comment.py preview --issue ABC-972 --body-file 본문.md
   # ③ 새 댓글 게시 (사용자 승인 뒤, 같은 본문 파일로)
-  python3 ~/.claude/scripts/jira_comment.py post --issue PROJ-972 --body-file 본문.md
+  python3 ~/.claude/scripts/jira_comment.py post --issue ABC-972 --body-file 본문.md
   # ④ 기존 댓글 수정 (preview 때 --comment-id 도 같이 줘야 스탬프가 맞는다)
-  python3 ~/.claude/scripts/jira_comment.py update --issue PROJ-972 --comment-id 32105 --patches 치환.json
+  python3 ~/.claude/scripts/jira_comment.py update --issue ABC-972 --comment-id 10001 --patches 치환.json
   # ⑤ 기존 댓글에 새 그림(PNG) 넣기. 그림.json = [{"anchor": "문단 첫머리 글귀", "file": "fig1.png"}, ...] (1~20개,
   #    file 은 그림.json 이 있는 폴더 안의 상대 경로만). preview 는 읽기만 하고, update 가 첨부를 올리고(같은 내용 이름·크기가 있으면 재사용)
   #    anchor 문단 바로 뒤에 mediaSingle 을 넣는다. preview 때 --comment-id 도 같이 줘야 한다.
-  python3 ~/.claude/scripts/jira_comment.py preview --issue PROJ-972 --comment-id 32105 --figures 그림.json
-  python3 ~/.claude/scripts/jira_comment.py update --issue PROJ-972 --comment-id 32105 --figures 그림.json
+  python3 ~/.claude/scripts/jira_comment.py preview --issue ABC-972 --comment-id 10001 --figures 그림.json
+  python3 ~/.claude/scripts/jira_comment.py update --issue ABC-972 --comment-id 10001 --figures 그림.json
   # ⑥ 이슈에 일반 파일 첨부. 목록.json = [{"file": "a.csv"}, ...] (1~10개, 목록 폴더 안 상대 경로만). preview 는 첨부 목록 조회만
   #    하고 스탬프를 만들며, attach 는 사용자 승인 뒤 같은 목록으로 올린다(같은 이름·크기가 있으면 재사용). --comment-id 불가.
-  python3 ~/.claude/scripts/jira_comment.py preview --issue PROJ-988 --attach 목록.json
-  python3 ~/.claude/scripts/jira_comment.py attach --issue PROJ-988 --attach 목록.json
+  python3 ~/.claude/scripts/jira_comment.py preview --issue ABC-988 --attach 목록.json
+  python3 ~/.claude/scripts/jira_comment.py attach --issue ABC-988 --attach 목록.json
   # ⑦ 그림 교체 + 글자 치환: preview/update --patches 치환.json --figures 그림.json (그림 항목에 "replace": true).
   #    치환을 먼저 적용하고 자리 문단은 «치환 뒤 글» 로 찾는다(바뀐 문장을 자리로 삼을 수 있어야 하므로). replace 항목은 자리 문단
   #    바로 뒤 mediaSingle 을 통째로 새 그림으로 바꾼다(없으면 rc 2). 보내기 전 검사: 글자·인라인 카드는 치환 목록이 바꾼 것 말고 불변,
   #    그림 id = 기존 − 교체된 옛 id + 새 UUID. 스탬프는 항목별 replace 와 치환 목록 내용에 묶인다. 옛 첨부는 지우지 않는다.
-  python3 ~/.claude/scripts/jira_comment.py preview --issue PROJ-988 --comment-id 32209 --patches 치환.json --figures 그림.json
-  python3 ~/.claude/scripts/jira_comment.py update --issue PROJ-988 --comment-id 32209 --patches 치환.json --figures 그림.json
+  python3 ~/.claude/scripts/jira_comment.py preview --issue ABC-988 --comment-id 32209 --patches 치환.json --figures 그림.json
+  python3 ~/.claude/scripts/jira_comment.py update --issue ABC-988 --comment-id 32209 --patches 치환.json --figures 그림.json
   # ⑧ 내 미완료 이슈 목록 (읽기 전용, 스탬프 무관). --max 기본 10, 1~30 으로 자른다. 오류는 rc 2 (--json 이면 stdout 에 {"error": ...})
   python3 ~/.claude/scripts/jira_comment.py mine [--json] [--max N]
+  # 표 행 추가: 치환.json 에 [{"table_anchor": "판", "append_rows": [["원본 판1", "0.91", "0.88"]]}] 항목을 둔다(그림이 든 댓글도 가능).
+  python3 ~/.claude/scripts/jira_comment.py preview --issue ABC-1004 --comment-id 32329 --patches 치환.json
 """
 
 import argparse
@@ -82,6 +96,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -109,7 +124,8 @@ XSRF_HEADER, XSRF_VALUE = "X-Atlassian-Token", "no-check"
 XSRF_OPT_OUT = {XSRF_HEADER: XSRF_VALUE}
 ISSUE_RE = re.compile(r"[A-Z][A-Z0-9]+-[0-9]+")
 ID_RE = re.compile(r"[0-9]+")
-SUPPORTED_NODES = {"doc", "paragraph", "text", "bulletList", "orderedList", "listItem", "codeBlock", "inlineCard"}
+SUPPORTED_NODES = {"doc", "paragraph", "text", "bulletList", "orderedList", "listItem", "codeBlock", "inlineCard",
+                   "table", "tableRow", "tableHeader", "tableCell"}
 SUPPORTED_MARKS = {"strong", "code", "link"}
 UNKNOWN_PUBLISH = "게시 여부 불명 — Jira 화면에서 확인하기 전에는 다시 실행하지 마십시오."
 _cred_warned = False
@@ -121,9 +137,11 @@ PROCEDURE = (
     "5. 새 그림은 --figures 로만 넣습니다(글자·인라인 카드 불변, 그림만 추가).",
     "6. 이슈 파일 첨부는 attach 로만 합니다(미리보기 승인 뒤, 지우기·바꾸기 없음).",
     "7. 그림 교체는 --patches 와 --figures 를 함께 주고 항목에 replace:true 를 둡니다(글자 치환 먼저, 옛 첨부는 지우지 않음).",
+    '8. 표 행 추가는 --patches 항목 {"table_anchor": "표 첫 머리 칸 글", "append_rows": [["칸1", "칸2"]]} 로 합니다(표 하나·칸 수 일치·병합 칸 없음, 맨 아래에만 붙음).',
 )
 LIST_RE = re.compile(r"^(\s*)(\d+\.|[*-])\s+(\S.*)$")
 FENCE_RE = re.compile(r"^(\s*)```")
+TABLE_SEP_CELL_RE = re.compile(r":?-+:?")   # GFM 구분 줄의 한 칸(정렬 콜론은 허용하되 무시한다)
 INLINE_RE = re.compile(
     r"`(?P<code>[^`]+)`|\*\*(?P<bold>.+?)\*\*"
     r"|\[(?P<ltext>[^\]]+)\]\((?P<lurl>https?://[^)\s]+)\)|(?P<url>https?://[^\s<>)\]]+)"
@@ -267,8 +285,50 @@ def inline(text, marks=()):
     return nodes
 
 
-def md_to_adf(md):
-    """Convert the supported markdown subset to an ADF doc."""
+def table_cells(line):
+    """Split one GFM table row into cell strings (outer pipes dropped, `\\|` kept as a literal pipe)."""
+    s = line.strip().removeprefix("|")
+    if s.endswith("|") and not s.endswith("\\|"):
+        s = s[:-1]
+    return [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", s)]
+
+
+def parse_table(lines, i):
+    """Parse the GFM table whose header line is lines[i]; return (rows, next index, warning or None).
+
+    rows is None when lines[i] starts no table (header line must be followed by a `|---|---|` line with the same column count)
+    or when a body row's column count differs from the header (then the warning says why; the caller keeps the old paragraph handling).
+    """
+    if i + 1 >= len(lines) or not lines[i].strip().startswith("|") or not lines[i + 1].strip().startswith("|"):
+        return None, i, None
+    head, sep = table_cells(lines[i]), table_cells(lines[i + 1])
+    if len(sep) != len(head) or not all(TABLE_SEP_CELL_RE.fullmatch(c) for c in sep):
+        return None, i, None
+    rows, j = [head], i + 2
+    while j < len(lines) and lines[j].strip().startswith("|"):
+        rows.append(table_cells(lines[j]))
+        j += 1
+    bad = next((k for k, r in enumerate(rows[1:], 1) if len(r) != len(head)), None)
+    if bad is not None:
+        return None, i, f"표 본문 {bad}번째 줄의 열 수({len(rows[bad])})가 머리({len(head)})와 달라 표로 바꾸지 않고 글 문단으로 둡니다: {head[0][:30]}"
+    return rows, j, None
+
+
+def table_row(cells, header=False):
+    """Build an ADF tableRow (tableHeader cells when header, else tableCell; each cell holds one paragraph of inline nodes)."""
+    return {"type": "tableRow", "content": [
+        {"type": "tableHeader" if header else "tableCell", "content": [{"type": "paragraph", "content": inline(c)}]}
+        for c in cells]}
+
+
+def table_node(rows):
+    """Build an ADF table (first row = tableHeader cells, the rest tableCell)."""
+    return {"type": "table", "attrs": {"isNumberColumnEnabled": False, "layout": "default"}, "content": [
+        table_row(row, r == 0) for r, row in enumerate(rows)]}
+
+
+def md_to_adf(md, warns=None):
+    """Convert the supported markdown subset to an ADF doc (conversion warnings, if any, are appended to the warns list)."""
     content, stack = [], []   # stack entries: (indent, kind, list node)
     lines, i = md.splitlines(), 0
 
@@ -296,6 +356,15 @@ def md_to_adf(md):
             else:
                 owner["content"][-1]["content"].append(node)
             continue
+        if line.lstrip().startswith("|"):
+            rows, nxt, warn = parse_table(lines, i - 1)
+            if warn and warns is not None:
+                warns.append(warn)
+            if rows:
+                stack.clear()
+                content.append(table_node(rows))
+                i = nxt
+                continue
         m = LIST_RE.match(line)
         if m:
             ind = len(m.group(1))
@@ -364,6 +433,17 @@ def render_blocks(nodes, depth, out):
             out.append(f"{pad}```")
         elif t == "mediaSingle":
             out.append(f"{pad}[이미지]")
+        elif t == "table":
+            rows = []
+            for r in n.get("content", []):
+                row = []
+                for c in r.get("content", []):
+                    lines = []
+                    render_blocks(c.get("content", []), 0, lines)
+                    row.append(" ".join(lines).replace("\n", " "))
+                rows.append(row)
+            out.append(f"{pad}표 {len(rows)}행 × {max(map(len, rows), default=0)}열")
+            out += [f"{pad}  " + " | ".join(r) for r in rows]
         else:
             out.append(f"{pad}[{t}]")
 
@@ -394,6 +474,20 @@ def fingerprint(adf):
 
     walk(adf)
     return blocks, cards, sorted(media)
+
+
+def table_shapes(adf):
+    """Return the cell count of every row for each table in document order (e.g. [[3, 3, 3]])."""
+    shapes = []
+
+    def walk(n):
+        if n.get("type") == "table":
+            shapes.append([len(r.get("content", [])) for r in n.get("content", [])])
+        for c in n.get("content", []):
+            walk(c)
+
+    walk(adf)
+    return shapes
 
 
 def unsupported(adf):
@@ -429,6 +523,8 @@ def diff(sent, got, path="doc"):
             return path
         for k, v in sent.items():
             if k not in got:
+                if v == []:   # 서버가 빈 칸(빈 문단)의 content 를 생략해 돌려주는 것은 같은 뜻이다
+                    continue
                 return f"{path}.{k}"
             d = diff(v, got[k], f"{path}.{k}")
             if d:
@@ -462,24 +558,102 @@ def text_nodes(node):
         yield from text_nodes(c)
 
 
+def valid_patch(p):
+    """Return True for a text patch {anchor, new} or a row patch {table_anchor, append_rows} (not both kinds of keys)."""
+    if not isinstance(p, dict):
+        return False
+    if "table_anchor" in p or "append_rows" in p:
+        rows = p.get("append_rows")
+        return ("anchor" not in p and "new" not in p and isinstance(p.get("table_anchor"), str) and bool(p["table_anchor"].strip())
+                and isinstance(rows, list) and bool(rows)
+                and all(isinstance(r, list) and bool(r) and all(isinstance(c, str) for c in r) for r in rows))
+    return isinstance(p.get("anchor"), str) and isinstance(p.get("new"), str)
+
+
 def load_patches(path):
-    """Load and validate the [{anchor, new}] patch file."""
+    """Load and validate the patch file: a list of text patches {anchor, new} and/or row patches {table_anchor, append_rows}."""
     try:
         with open(path, encoding="utf-8") as f:
             patches = json.load(f)
     except (OSError, ValueError) as e:
         raise Fail(2, f"치환 파일을 읽을 수 없습니다: {path} ({type(e).__name__})") from None
-    if not isinstance(patches, list) or not all(
-            isinstance(p, dict) and isinstance(p.get("anchor"), str) and isinstance(p.get("new"), str)
-            for p in patches):
-        raise Fail(2, '치환 파일 형식은 [{"anchor": "기존 텍스트", "new": "새 텍스트"}] 입니다.')
+    if not isinstance(patches, list) or not all(valid_patch(p) for p in patches):
+        raise Fail(2, '치환 파일 형식은 글자 치환 [{"anchor": "기존 텍스트", "new": "새 텍스트"}] 또는 '
+                      '표 행 추가 [{"table_anchor": "표 첫 머리 칸 글", "append_rows": [["칸1", "칸2"]]}] 항목의 목록입니다'
+                      '(한 항목에 두 종류 키를 섞을 수 없고, 표 글·행·칸은 비어 있으면 안 됩니다).')
     return patches
 
 
+def table_nodes(node):
+    """Yield every ADF table node in document order."""
+    if node.get("type") == "table":
+        yield node
+    for c in node.get("content", []):
+        yield from table_nodes(c)
+
+
+def skeleton(adf):
+    """Return a copy of the ADF with every text node's text blanked (structure and marks only)."""
+    out = copy.deepcopy(adf)
+    for n in text_nodes(out):
+        n["text"] = ""
+    return out
+
+
+def check_rows_only_added(cur, new, patches):
+    """Raise rc 2 unless new = cur + the text patches + exactly the requested appended rows (no-op without row patches).
+
+    Appended rows are the extra trailing rows of each table (positional: patches never add or remove tables). Cutting them
+    off must leave cur's structure unchanged, with at most one changed text block per text patch, and the cut rows must equal
+    the requested rows as a multiset (so a wrong table, a stray edit or a moved row cannot slip through).
+    """
+    row_patches = [p for p in patches if "append_rows" in p]
+    if not row_patches:
+        return
+    trimmed, cut = copy.deepcopy(new), Counter()
+    tables_cur, tables_new = list(table_nodes(cur)), list(table_nodes(trimmed))
+    if len(tables_cur) != len(tables_new):
+        raise Fail(2, "표 개수가 달라집니다. 보내지 않습니다.")
+    for t_cur, t_new in zip(tables_cur, tables_new):
+        keep = len(t_cur.get("content", []))
+        cut.update(canonical(r) for r in t_new.get("content", [])[keep:])
+        del t_new["content"][keep:]
+    want = Counter(canonical(table_row(r)) for p in row_patches for r in p["append_rows"])
+    b_cur, b_new = fingerprint(cur), fingerprint(trimmed)
+    n_text = sum("anchor" in p for p in patches)
+    changed = sum(x != y for x, y in zip(b_cur[0], b_new[0]))
+    if (cut != want or canonical(skeleton(trimmed)) != canonical(skeleton(cur)) or len(b_cur[0]) != len(b_new[0])
+            or changed > n_text or b_cur[1:] != b_new[1:]):
+        raise Fail(2, "표 행 추가 외에 댓글 구조·글자가 달라지거나 붙은 행이 요청과 다릅니다. 보내지 않습니다.")
+
+
 def apply_patches(adf, patches):
-    """Replace anchors that match exactly once in a text node; return (new adf, [(before, after)])."""
+    """Apply patches in file order; return (new adf, [(before, after)]).
+
+    Text patch: the anchor must match exactly once in a text node. Row patch: append rows to the one table whose first
+    row's first cell text equals table_anchor (no merged cells, every row as wide as the table's first row).
+    """
     adf, changes = copy.deepcopy(adf), []
     for p in patches:
+        if "append_rows" in p:
+            anchor, rows = p["table_anchor"].strip(), p["append_rows"]
+            tables = [t for t in table_nodes(adf) if t.get("content") and t["content"][0].get("content")
+                      and para_text(t["content"][0]["content"][0]).strip() == anchor]
+            if len(tables) != 1:
+                raise Fail(2, f"표 머리 첫 칸 «{esc(anchor)[:40]}»과 일치하는 표가 {len(tables)}개입니다(정확히 1개여야 합니다)")
+            table = tables[0]
+            # 정수 1(또는 키 없음)이 아닌 colspan·rowspan 은 null·문자열 포함 병합 칸으로 보고 거부한다(칸 수 계산이 어긋나지 않게)
+            if any((c.get("attrs") or {}).get(k, 1) != 1
+                   for r in table["content"] for c in r.get("content", []) for k in ("colspan", "rowspan")):
+                raise Fail(2, f"병합 칸(colspan·rowspan)이 든 표에는 행을 붙이지 않습니다: «{esc(anchor)[:40]}»")
+            cols, old = len(table["content"][0]["content"]), len(table["content"])
+            for k, row in enumerate(rows, 1):
+                if len(row) != cols:
+                    raise Fail(2, f"붙일 {k}번째 행의 칸 수({len(row)})가 표 첫 행의 칸 수({cols})와 다릅니다: «{esc(anchor)[:40]}»")
+            table["content"] += [table_row(r) for r in rows]
+            changes.append((f"[표 «{anchor}»] {old}행",
+                            f"[표 «{anchor}»] {old + len(rows)}행 · 추가: " + " / ".join(" | ".join(r) for r in rows)))
+            continue
         anchor = p["anchor"]
         hits = [n for n in text_nodes(adf) if anchor and anchor in n["text"]]
         total = sum(n["text"].count(anchor) for n in hits)
@@ -683,6 +857,10 @@ def verify(issue, comment_id, sent):
     status, data = http("GET", f"{site()}/rest/api/3/issue/{issue}/comment/{comment_id}")
     if status != 200 or not isinstance(data, dict) or not isinstance(data.get("body"), dict):
         raise Fail(4, prefix + f"재조회에 실패했습니다(HTTP {status}).")
+    shape_sent, shape_got = table_shapes(sent), table_shapes(data["body"])
+    if shape_sent != shape_got:
+        raise Fail(4, prefix + f"재조회한 표 구조(표 개수·표마다 행 수·행마다 셀 수)가 보낸 것과 다릅니다. "
+                               f"보낸 것 {str(shape_sent)[:200]} · 되읽은 것 {str(shape_got)[:200]}. 화면에서 직접 확인하십시오.")
     d = diff(sent, data["body"])
     if d:
         raise Fail(4, prefix + f"재조회 본문이 보낸 본문과 다릅니다. 처음 달라진 경로: {d}. 화면에서 직접 확인하십시오.")
@@ -837,7 +1015,8 @@ def figures_stamp_hash(issue, comment_id, plan, patches=None):
     rec = {"kind": "figures", "site": site(), "issue": issue, "comment_id": comment_id,
            "figures": [{**{k: e[k] for k in keys}, **({"replace": True} if e["replace"] else {})} for e in plan]}
     if patches:
-        rec["patches"] = [{"anchor": p["anchor"], "new": p["new"]} for p in patches]
+        rec["patches"] = [{"table_anchor": p["table_anchor"], "append_rows": p["append_rows"]} if "append_rows" in p
+                          else {"anchor": p["anchor"], "new": p["new"]} for p in patches]
     return hashlib.sha256(canonical(rec).encode("utf-8")).hexdigest()
 
 
@@ -946,6 +1125,7 @@ def patched_base(a, cur):
         return None, cur, None
     patches = load_patches(a.patches)
     base, changes = apply_patches(cur, patches)
+    check_rows_only_added(cur, base, patches)
     return patches, base, changes
 
 
@@ -1252,11 +1432,11 @@ def cmd_preview(a):
     cur = fetch_comment(a.issue, a.comment_id)["body"] if a.comment_id else None
     changes, extra = None, []
     if a.patches is not None:
-        adf, changes = apply_patches(cur, load_patches(a.patches))
+        _, adf, changes = patched_base(a, cur)
     else:
         if cur is not None and fingerprint(cur)[2]:
             raise Fail(2, "이미지가 든 댓글은 --patches 로만 고칩니다.")
-        adf = md_to_adf(read_body(a.body_file))
+        adf = md_to_adf(read_body(a.body_file), extra)
         if cur is not None and unsupported(cur):
             extra.append("현재 댓글에 마크다운으로 표현할 수 없는 노드가 있어 덮어쓰면 사라집니다: "
                          + ", ".join(unsupported(cur)))
@@ -1301,7 +1481,7 @@ def cmd_update(a):
             raise Fail(2, "이미지가 든 댓글은 --patches 로만 고칩니다.")
         new = md_to_adf(read_body(a.body_file))
     else:
-        new = apply_patches(cur, load_patches(a.patches))[0]
+        new = patched_base(a, cur)[1]
     if set(fingerprint(new)[2]) != set(fingerprint(cur)[2]):
         raise Fail(2, "수정 전후 media id 집합이 다릅니다. 보내지 않습니다.")
     h = stamp_hash(a.issue, a.comment_id, new)
@@ -1353,7 +1533,7 @@ def main(argv=None):
         return cmd_mine(a)
     try:
         if not ISSUE_RE.fullmatch(a.issue):
-            raise Fail(2, f"이슈 키 형식이 올바르지 않습니다(예: PROJ-972): {esc(a.issue)[:40]}")
+            raise Fail(2, f"이슈 키 형식이 올바르지 않습니다(예: ABC-972): {esc(a.issue)[:40]}")
         if getattr(a, "comment_id", None) is not None and not ID_RE.fullmatch(a.comment_id):
             raise Fail(2, f"댓글 id 는 숫자만 허용합니다: {esc(a.comment_id)[:40]}")
         return {"get": cmd_get, "preview": cmd_preview, "post": cmd_post, "update": cmd_update,

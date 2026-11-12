@@ -32,7 +32,7 @@ search_memories(query="[프로젝트] 세션 상태 현재 작업 진행률", fi
 
 # 2. 유사 항목 있으면 update, 없으면 add
 add_memory(
-  text="세션 상태 [YYYY-MM-DD]: 현재 작업=[작업명], 진행률=[N%], 활성 결정=[핵심 결정 요약], 사용 중 config=[주요 config 키=값], 미완료 TODO=[항목], 다음 시작점=[설명]",
+  text="세션 상태 [YYYY-MM-DD] [프로젝트]: 현재 작업=[작업명], 진행률=[N%], 활성 결정=[핵심 결정 요약], 사용 중 config=[주요 config 키=값], 미완료 TODO=[항목], 다음 시작점=[설명]",
   metadata={"category": "context", "source": "compact_handover"}
 )
 ```
@@ -50,16 +50,16 @@ add_memory(
 
 ```
 # 1. History — 이전 세션 상태 + 과거 결정
-search_memories(query="세션 상태 이전 작업 진행률 TODO", filters={"metadata": {"category": "context"}}, limit=3)
+search_memories(query="[프로젝트] 세션 상태 이전 작업 진행률 TODO", filters={"metadata": {"category": "context"}}, limit=3)
 
 # 2. Current — 활성 결정 + 현재 config
-search_memories(query="활성 결정 합의 config 설정 아키텍처", filters={"metadata": {"category": "decision"}}, limit=5)
+search_memories(query="[프로젝트] 활성 결정 합의 config 설정 아키텍처", filters={"metadata": {"category": "decision"}}, limit=5)
 
-# 3. Future — 다음 단계 계획
-search_memories(query="다음 단계 TODO 예정 작업 계획", filters={"metadata": {"category": "context"}}, limit=3)
+# 3. Future — 과거 QA 실패 · 코드 관례 (T03 의 셋째 범주는 code_pattern, 정본 rules/mem0-auto.md T03)
+search_memories(query="[프로젝트] QA 실패 코드 관례 패턴", filters={"metadata": {"category": "code_pattern"}}, limit=3)
 ```
 
-> handover.md와 Mem0 결과 교차 확인. 충돌 시 Mem0(더 상세) 우선, 사용자 확인.
+> handover.md와 Mem0 결과 교차 확인. 충돌 시 현재 파일·사용자 확인 우선(Mem0 는 advisory, 정본 `rules/mem0-auto.md` §1.5).
 
 **T04 — QA FAIL 이력 저장 (avoidance_rubric 형식 — RubricEM 차용)**
 
@@ -142,7 +142,7 @@ add_memory(
 
 ```
 # 1회차: discuss + decision 병합 (discuss 이력 + 관련 합의 결정 동시 포함 쿼리)
-#   ⚠️ filter는 discuss 카테고리만 정확 매칭 — decision 카테고리 항목은 키워드("결정 decision") best-effort 회수(filter OR 미지원의 의도적 트레이드오프, `mem0-conventions.md` § Smart Retrieval 프로파일 참조). 결정 이력이 핵심이면 T01 decision 단독 검색 병행.
+#   ⚠️ filter는 discuss 카테고리만 정확 매칭 — decision 카테고리 항목은 키워드("결정 decision") best-effort 회수(filter OR 미지원의 의도적 트레이드오프, `mem0-conventions.md` §D 작업 유형별 검색 프로파일 참조). 결정 이력이 핵심이면 T01 decision 단독 검색 병행.
 search_memories(query="[프로젝트][주제] 토론 합의 결정 이전 discuss decision", filters={"metadata": {"category": "discuss"}}, limit=5)
 
 # 2회차: experiment + paper 병합 (실험 결과 + 논문 근거 동시 포함 쿼리)
@@ -199,8 +199,11 @@ add_memory(
 )
 search_memories(query="[교정 내용]", filters={"metadata": {"category": "feedback"}}, limit=5)
 # 결과 3회+ → learner.md 규칙 업데이트 제안 트리거 (문턱 정본: rules/mem0-auto.md §2 T12)
+# 3회 판정의 입력은 로컬 빈도(pattern-detect.sh)와 Mem0 검색 이력 둘이고 같은 event_id 는 1건으로 합친다 (skills/learn-from-feedback/SKILL.md § 실행 순서 1·3)
 # 선례: T04의 multi-field metadata(pattern/trigger_signature/avoidance_rubric) 구조 차용 — preference-gated 자가진화의 regression suite 전방계측용
 ```
+
+- 교정 발화는 `~/.claude/scripts/correction-detect.sh` 가 T12 후보로 기계 기록한다(2026-11-10 `rules/mem0-auto.md` §2 비고에서 이관).
 
 **T13 — 리팩토링 패턴 적용 완료**
 ```
@@ -266,6 +269,8 @@ add_memory(
 )
 ```
 
+- 다음 유사 요청 시 검색으로 재질문 없이 즉시 해석을 제안한다: "이전에 '{구체화 결과}'로 해석했습니다. 동일하게 진행할까요?" (2026-11-10 `rules/prompt-routing.md` Step 1.5 에서 이관)
+
 **T21 — citation-verifier 검증 완료 후 저장**
 ```
 add_memory(
@@ -274,6 +279,7 @@ add_memory(
 )
 ```
 > 상세 로그는 `rules-lazy/citation-verification-log.md` 규칙대로 `docs/citation-verifications.md` 에 append.
+> 대조 모드만 돌았으면 supporting·contrasting 자리에 `대조=[일치 수]/[항목 수]` 를 쓴다(2026-11-10, 디베이트는 논쟁적 인용만).
 
 **T22 — searcher 검색 완료 후 핵심 결과 저장**
 ```
@@ -454,6 +460,7 @@ add_memory(
 ```
 
 - 저장 후 동일 pattern_type 검색 → **3회+** 발견 시 learn-from-feedback에 "스킬화/편입/룰화" 제안 트리거.
+- 후보는 `~/.claude/scripts/pattern-detect.sh` 가 `_evolve/candidates.tsv` 에 기계 기록한다(2026-11-10 `rules/mem0-auto.md` §2 비고에서 이관).
 - 산출물 선택: 단순 행동규칙 → 룰 / 재사용 절차·명령묶음 → 스킬 신설(quick-skill) / 기존 스킬 인접 → 편입 (`learner.md § 반복 패턴 → 산출물 3택`).
 
 ---
@@ -472,6 +479,7 @@ add_memory(
 
 - 신호(agent-eval §1): **사용자 직접 재작업 지시·부정피드백**("다시 해"·"이거 아니야") / qa FAIL / 재작업≥2 / status BLOCKED / main 반려 / citation contrasting / 게이트 미달.
 - 동일 `agent_role` + `weakness_dim` **3회+** → learn-from-feedback이 `agents/{agent}.md` 개선 제안.
+- 파일 기록은 `bash ~/.claude/scripts/t41-append.sh <role> <dim> "<signal>"` 로 한다. 계수는 `grep -c 'T41:' _audit/history.md` 다(2026-11-10 `rules/mem0-auto.md` §2 비고에서 이관).
 
 ---
 
@@ -495,13 +503,13 @@ add_memory(
 | T22 | searcher 검색 완료 (핵심 결과) | add | decision | searcher |
 | T23 | 에이전트 간 설계 합의 도출 | add | decision | agent-consensus |
 | T24 | 사용자 환경/도구 선호 감지 | add | feedback | env-preference |
-| T25 | 논문 인용 직전 (본문·실험·발표 자료에서 언급) | citation-verifier 디베이트 소집 → verdict 수신 → T21 저장 | paper | citation-verifier |
-| T26 | /paper-read 리뷰 완료 후 (T08과 연동) | citation-verifier stance 디베이트 → verdict 수신 → T21 저장 | paper | citation-verifier |
+| T25 | 논문 인용 직전 (본문·실험·발표 자료에서 언급) | citation-verifier[대조] 소집(논쟁적 인용만 디베이트) → verdict 수신 → T21 저장 | paper | citation-verifier |
+| T26 | /paper-read 리뷰 완료 후 (T08과 연동) | citation-verifier[대조](논쟁적 인용만 stance 디베이트) → verdict 수신 → T21 저장 | paper | citation-verifier |
 | T27 | SOTA/베이스라인 논문 선정 시 (/experiment Stage A) | citation-verifier 검증 → verdict 수신 → T21 저장 | paper | citation-verifier |
 | T28 | 철회 논문 의심 패턴 감지 (retraction/corrigendum/erratum 키워드) | citation-verifier 철회게이트(Crossref+OpenAlex) 확인 → T21 저장 | paper | citation-verifier |
-| T29 | docs: Confluence 페이지 생성/수정 완료 | add | context | confluence-update |
-| T30 | docs: Jira 이슈 코멘트/상태 변경 완료 | add | context | jira-update |
-| T31 | designer: Figure 생성 완료 | add | code_pattern | figure-gen |
+| T29 | main(게시 뒤, docs 는 메모리 연결 없음): Confluence 페이지 생성/수정 완료 | add | context | confluence-update |
+| T30 | main: Jira 이슈 코멘트/상태 변경 완료 | add | context | jira-update |
+| T31 | figure 스킬: Figure 생성 완료 | add | code_pattern | figure-gen |
 | T32 | gitops: commit 완료 | add | context | git-commit |
 | T33 | qa: Ralph Wiggum 루프 완료 (N회 반복) | add | code_pattern | qa-ralph |
 | T34 | 논문이 코드에 실제 구현됨 (함수·클래스·config 추가) | update_memory | paper | citation-verifier |

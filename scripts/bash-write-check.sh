@@ -54,6 +54,19 @@
 #   완화는 네 곳(0.5 S_CMDPOS · 규칙 2 의 `$(`/백틱 트리거 · 규칙 2 의 S_RAW · WORDGEN_RE2 의 S_UQ)에서 원문 대신 «정리본»을 보는 것뿐이다.
 #   정리본 = 작은따옴표 안을 비워 `''` 만 남김 · 큰따옴표 글자 텍스트의 `<>();&|` 를 `_` 로 · `<` 피연산자의 `$` 를 `_` 로.
 #   증명이 안 되면(목록 밖 명령·위험 플래그·대입 접두·파싱 불가) 정리본 = 원문이라 원본과 바이트 단위로 같은 판정이다. 조기 통과는 없다.
+#
+# 2026-11-02 «세션 자기 임시 폴더 쓰기는 묻지도 막지도 않기» 갈래.
+#   사용자 원문(2026-11-02, 한 학습 세션 경유): «각 세션의 자신의 임시 폴더는 무조건 쓰기 가능하도록 해.» 정본 계획: intent/2026-11-02-own-scratch-write-allow.md.
+#   이 훅은 경로를 몰라 `> f`·mkdir·cp 를 어디서든 막아 그림 에이전트가 자기 scratch 에 PNG 를 쓰다 멈췄다. 그래서 «자기 폴더 안 리터럴 쓰기 대상»만 중화한 뒤 기존 검사 전부를 그대로 돌린다.
+#   자기 폴더 = `<~/.claude/config/scratch-root 첫 줄>/<프로젝트 이름>/<세션 id 앞 8자>` 와 `<프로젝트 뿌리>/.scratch/<세션 id 앞 8자>` (뿌리 = 입력 cwd 의 git 최상위).
+#   프로젝트 이름은 둘이다: git 최상위의 basename 과 주 저장소 이름(git-common-dir 의 부모 basename — 워크트리에서 최상위 이름이 `wt-x` 여도 실제 임시 폴더는 주 저장소 이름 아래다).
+#   `.scratch` 후보는 cwd 가 git 저장소 안일 때만 만든다(git 실패 시 cwd 로 대체하지 않는다 — cwd 가 /etc 면 /etc/.scratch/… 를 «자기 폴더» 로 믿게 되므로).
+#   중화 = 리다이렉션 대상 → `>/dev/null`, 인자가 전부 폴더 안인 touch·cp·mv·rm 단순 명령 → `true`(mkdir 은 훅이 원래 막지 않아 중화 대상이 아니다).
+#   «심고 쓰기» 차단: 한 명령에 cp·mv 중화 대상이 있으면 그것이 중화되는 유일한 쓰기 연산일 때만 중화한다(`cp -a /proc/self/root F/r && echo x > F/r/..` 처럼 링크를 심고 곧 그 너머로 쓰는 명령이 한 번에 통과하지 못하게).
+#   이미 있는 경로(링크 포함)는 그 경로 자체의 엄격 realpath 도 폴더 아래여야 하고, rm 대상이 심볼릭 링크면 중화하지 않는다. 그 뒤 원문에 걸리던 다른 원인(0.4 파이프→셸·0.5·0.7·3.5·APPROVED·글롭·변수 등)은 중화본에도 남아 다시 차단된다.
+#   구조: 원문을 내부 재실행(BWC_INNER=1)해 통과면 통과, 차단이면 사유가 «쓰기 대상 계열»(리다이렉션·파일 조작 명령)일 때만 중화본을 훅 전체로 다시 돌려 통과일 때만 통과 → 중화는 쓰기 대상 때문에 생긴 차단만 없앨 수 있다.
+#   판정 불가는 막는다(원문 그대로): 변수·글롭·브레이스·`$(`·백틱·`..`/심볼릭 링크로 폴더 밖으로 나가는 경로·상대 경로(cd 로 달라짐; cp 원본만 예외)·백슬래시·heredoc·괄호·HOME 을 바꿀 수 있는 명령 속 `~/`·`$HOME/`·세션 id/cwd 부재.
+#   명령이 세션 id 앞 8자를 글자로 담지 않으면 이 블록은 아무것도 하지 않아 다른 명령의 판정은 종전과 바이트 단위로 같다. 한계: 같은 명령 안의 «이 훅이 막지 않는 다른 명령»(`python3 plant.py`·`git clone`·`git checkout` 등 스크립트·저장소가 링크를 심는 것)이 링크를 심은 뒤 그 링크 너머로 쓰는 경우는 검사 시점에 링크가 없어 못 잡는다(cp·mv 는 위 단독 규칙으로 막았다).
 
 # 바이트 단위 매칭 고정 (14라운드 실측: en_US.UTF-8 에서 grep 의 `.` 이 한글 다바이트를 못 넘어 `.*`·`\\.` 기반 패턴이 다국어 삽입으로 비껴갈 수 있었다 — C 로캘에선 모든 바이트가 `.`·`[^…]` 에 잡힌다)
 export LC_ALL=C
@@ -66,6 +79,217 @@ fi
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 
 [ -z "$CMD" ] && exit 0
+
+# ── 자기 임시 폴더 쓰기 중화 (2026-11-02, 머리 주석 «2026-11-02 갈래» 참조) ────────
+# own_scratch_neutralize <명령> <자기 폴더 목록(줄바꿈 구분)>: 리터럴 쓰기 대상이 «이 세션 자기 임시 폴더» 안이면 그 부분만 바꾼 명령을 낸다
+#   (리다이렉션 대상 → `>/dev/null`, 인자가 전부 폴더 안인 touch·cp·mv·rm 단순 명령 → `true`). 판정 불가·조건 불만족이면 원문 그대로 낸다.
+#   `>/dev/null` 을 공백 없이 붙여 쓰는 이유: strip_harmless 가 `[12]*>/dev/null` 만 지운다(`> /dev/null`·`>>/dev/null` 은 못 지운다).
+#   awk 를 쓰는 이유: 이 훅의 기존 파서가 awk 이고 외부 인터프리터를 새로 들이지 않기 위해서다. 경로는 화이트리스트 문자만 통과시키므로 realpath 호출 때 작은따옴표로 감싸도 안전하다.
+own_scratch_neutralize() {
+    BWC_CMD="$1" BWC_FS="$2" BWC_HOME="$HOME" awk '
+    function bail() { printf "%s", S; exit }
+    function sh(c,   r) { r = ""; c | getline r; close(c); return r }
+    function isdig(s,   k) { if (s == "") return 0; for (k = 1; k <= length(s); k++) if (index("0123456789", substr(s, k, 1)) == 0) return 0; return 1 }
+    function under(x, f) { return f != "" && (x == f || index(x, f "/") == 1) }
+    function addedit(a, b, r) { ne++; ES[ne] = a; EE[ne] = b; ER[ne] = r }
+    # 단어 하나를 읽는다. 따옴표 안은 불투명(큰따옴표 안 $ 는 어차피 lit 가 거른다). 닫히지 않으면 판정 불가.
+    function lex_word(   st, c, j, parts, plain, qc) {
+        st = i; parts = 0; plain = 0
+        while (i <= N) {
+            c = substr(S, i, 1)
+            if (index(" \t\n;|&<>()", c) > 0) break
+            if (c == q || c == "\"") { j = index(substr(S, i + 1), c); if (j == 0) bail(); parts++; qc = c; i += j + 1; continue }
+            plain++; i++
+        }
+        WS = st; WE = i; WRAW = substr(S, st, i - st)
+        WK = (parts == 0) ? "b" : ((parts == 1 && plain == 0) ? ((qc == q) ? "s" : "d") : "m")
+        if (substr(S, st, 1) == "#") bail()
+    }
+    # 리다이렉션 하나를 읽는다. i 는 연산자 글자(`&>` 면 `&`) 위치, pfx 는 앞 fd 숫자 또는 "&".
+    function lex_redirect(st, pfx,   b, c, tp) {
+        if (pfx == "&") { i += 2; tp = "w"; if (substr(S, i, 1) == ">") i++ }
+        else {
+            b = substr(S, i, 1); i++; c = substr(S, i, 1)
+            if (b == ">") { if (c == ">") { tp = "w"; i++ } else if (c == "&") { tp = "d"; i++ } else if (c == "|") { tp = "x"; i++ } else tp = "w" }
+            else { if (c == "&") { tp = "d"; i++ } else if (c == ">") { tp = "x"; i++ } else tp = "r" }
+        }
+        while (substr(S, i, 1) == " " || substr(S, i, 1) == "\t") i++
+        c = substr(S, i, 1)
+        if (c == "" || index("\n;|&<>()", c) > 0) bail()
+        lex_word()
+        nt++; TT[nt] = "R"; TS[nt] = st; TE[nt] = WE; RT[nt] = tp; RP[nt] = pfx; RK[nt] = WK; RR[nt] = WRAW
+    }
+    # 따옴표 하나로 감싸였거나 맨 토큰이고 화이트리스트 문자뿐인 절대 경로면 그 경로, 아니면 "". 머리 `~/`(맨 토큰)·`$HOME/`(맨·큰따옴표)만 푼다.
+    # rel=1 이면 상대 경로도 받는다(cp 의 원본 = 읽기라 위치 무관. 단 앞이 `-` 이면 따옴표 속 옵션일 수 있어 거부).
+    function lit(kind, raw, rel,   s, k) {
+        if (kind == "m") return ""
+        s = (kind == "b") ? raw : substr(raw, 2, length(raw) - 2)
+        if (HOMEOK && kind != "s" && index(s, "$HOME/") == 1) s = HM substr(s, 6)
+        else if (HOMEOK && kind == "b" && substr(s, 1, 2) == "~/") s = HM substr(s, 2)
+        if (s == "" || substr(s, 1, 1) == "-" || (!rel && substr(s, 1, 1) != "/")) return ""
+        for (k = 1; k <= length(s); k++) if (index(WLC, substr(s, k, 1)) == 0) return ""
+        return s
+    }
+    # 자기 폴더 안인가: realpath -m 값이 폴더 아래 + 이미 있는 경로(링크 포함)면 그 경로 자체의 엄격 realpath(링크 풀림, 끊긴 링크는 실패→거부)도 폴더 아래
+    #   + 가장 가까운 실재 부모의 realpath 도 폴더 아래(폴더가 아직 없으면 폴더의 조상)
+    function inF(p,   n, f, r, k, e) {
+        if (p in CACHE) return CACHE[p]
+        CACHE[p] = 0
+        n = sh("realpath -m -- " q p q)
+        if (n == "") return 0
+        f = ""
+        for (k = 1; k <= nf; k++) if (under(n, FL[k])) { f = FL[k]; break }
+        if (f == "") return 0
+        e = sh("if [ -e " q p q " ] || [ -L " q p q " ]; then realpath -- " q p q " 2>/dev/null || echo FAIL; fi")
+        if (e == "FAIL" || (e != "" && !under(e, f))) return 0
+        r = sh("a=$(realpath -m -s -- " q p q "); while [ ! -e \"$a\" ] && [ \"$a\" != / ]; do a=$(dirname -- \"$a\"); done; realpath -- \"$a\"")
+        if (r == "") return 0
+        if (!(under(r, f) || r == "/" || under(f, r))) return 0
+        CACHE[p] = 1
+        return 1
+    }
+    function optok(cmd, r,   k) {
+        if (length(r) < 2 || substr(r, 1, 1) != "-") return 0
+        for (k = 2; k <= length(r); k++) if (index(ALLOW[cmd], substr(r, k, 1)) == 0) return 0
+        return 1
+    }
+    function seg(a, b,   t, cmd, np, nw, P, WI, k, ok, RL, rec, D, Dn, nsrc, isdir, dirmode, base, T, ex) {
+        # A) 리다이렉션 대상 중화 + 단순 명령 뒤에 붙어도 무해한 리다이렉션 표시
+        for (t = a; t <= b; t++) if (TT[t] == "R") {
+            RH[t] = 0
+            p = lit(RK[t], RR[t], 0)
+            if (RT[t] == "w") {
+                if (p != "" && inF(p)) { addedit(TS[t], TE[t], RP[t] ">/dev/null"); RH[t] = 1; nops++ }
+                else if (p == "/dev/null") RH[t] = 1
+            } else if (RT[t] == "d" && (isdig(RR[t]) || RR[t] == "-")) RH[t] = 1
+        }
+        # B) touch·cp·mv·rm 단순 명령: 구간 첫 낱말이고 따옴표 없는 정확한 이름일 때만
+        if (TT[a] != "W" || TK[a] != "b") return
+        cmd = TR[a]
+        if (!(cmd in ALLOW)) return
+        np = 0; nw = 0
+        for (t = a + 1; t <= b; t++) {
+            if (TT[t] == "R") { if (!RH[t]) return; continue }
+            nw++; WI[nw] = t
+            if (TK[t] == "b" && substr(TR[t], 1, 1) == "-") { if (!optok(cmd, TR[t])) return; if (TR[t] ~ /[rRa]/) rec = 1; continue }
+            np++; P[np] = lit(TK[t], TR[t], 0)
+            RL[np] = lit(TK[t], TR[t], 1)
+            if (RL[np] == "") return
+        }
+        if (cmd == "cp" || cmd == "mv") { if (np < 2) return } else if (np < 1) return
+        ok = 1
+        if (cmd == "cp") { if (P[np] == "" || !inF(P[np])) ok = 0 }
+        else for (k = 1; k <= np; k++) if (P[k] == "" || !inF(P[k])) ok = 0
+        if (!ok) return
+        # cp·mv 의 실제 대상: 목적지가 진짜 디렉터리이거나 `/` 로 끝나거나 원본이 둘 이상이면 <목적지>/<원본 basename>, 아니면 목적지 그대로.
+        #   기존 대상은 «링크가 아닌 일반 파일 + 폴더 아래»여야 하고, 재귀 복사(-r·-R·-a)이거나 mv 로 디렉터리를 옮기면 대상이 아직 없어야 한다(기존 트리 안 링크를 따라 쓰는 길 차단).
+        if (cmd == "cp" || cmd == "mv") {
+            D = P[np]; nsrc = np - 1; Dn = D; sub(/\/+$/, "", Dn)
+            if (sh("[ -L " q Dn q " ] && echo L") != "") return
+            isdir = (sh("[ -d " q Dn q " ] && echo D") != "")
+            dirmode = (isdir || substr(D, length(D), 1) == "/" || nsrc >= 2)
+            for (k = 1; k <= nsrc; k++) {
+                if (dirmode) { base = RL[k]; sub(/\/+$/, "", base); sub(/.*\//, "", base); if (base == "" || base == "." || base == "..") return; T = Dn "/" base }
+                else T = Dn
+                ex = (sh("if [ -e " q T q " ] || [ -L " q T q " ]; then echo E; fi") != "")
+                if (ex) {
+                    if (rec) return
+                    if (cmd == "mv" && sh("[ -d " q P[k] q " ] && echo D") != "") return
+                    if (sh("[ -L " q T q " ] && echo L") != "") return
+                    if (sh("[ -f " q T q " ] && echo F") == "") return
+                }
+                if (!inF(T)) return
+            }
+        }
+        # rm 대상이 심볼릭 링크면 중화하지 않는다(GNU rm 의 링크 처리에 기대지 않는다)
+        if (cmd == "rm") for (k = 1; k <= np; k++) if (sh("[ -L " q P[k] q " ] && echo L") != "") return
+        nops++; if (cmd == "cp" || cmd == "mv") ncpmv++
+        addedit(TS[a], TE[a], "true")
+        for (k = 1; k <= nw; k++) addedit(TS[WI[k]], TE[WI[k]], "")
+    }
+    BEGIN {
+        q = sprintf("%c", 39)
+        S = ENVIRON["BWC_CMD"]; N = length(S); HM = ENVIRON["BWC_HOME"]
+        nf = split(ENVIRON["BWC_FS"], FL, "\n")
+        WLC = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./+,:@%=-"
+        # mkdir 은 훅이 원래 막지 않는 명령이라 중화 대상에서 뺐다(그래야 `mkdir -p d && cp a d/` 가 «쓰기 연산 하나» 규칙에 걸리지 않는다)
+        ALLOW["cp"] = "rRapfnvui"; ALLOW["mv"] = "fnvui"; ALLOW["rm"] = "rRfvdI"; ALLOW["touch"] = "acm"
+        # 중첩 파싱이 필요한 형태(백슬래시·백틱·$(…)·heredoc·프로세스 치환)는 판정 불가 → 원문
+        if (index(S, "\\") || index(S, "`") || index(S, "$(") || index(S, "<<") || index(S, "<(") || index(S, ">(")) bail()
+        # HOME 을 바꿀 수 있는 명령이면 `~/`·`$HOME/` 머리를 풀지 않는다(`HOME=/x; > ~/f`)
+        T = S; while ((k = index(T, "$HOME/")) > 0) T = substr(T, 1, k - 1) substr(T, k + 6)
+        HOMEOK = (HM != "" && index(T, "HOME") == 0)
+        i = 1; nt = 0; ne = 0; nops = 0; ncpmv = 0
+        while (i <= N) {
+            c = substr(S, i, 1)
+            if (c == " " || c == "\t") { i++; continue }
+            if (c == "(" || c == ")") bail()
+            if (c == "\n" || c == ";") { nt++; TT[nt] = "O"; i++; continue }
+            n2 = substr(S, i + 1, 1)
+            if (c == "|") { nt++; TT[nt] = "O"; i += (n2 == "|" || n2 == "&") ? 2 : 1; continue }
+            if (c == "&") {
+                if (n2 == ">") { lex_redirect(i, "&"); continue }
+                nt++; TT[nt] = "O"; i += (n2 == "&") ? 2 : 1; continue
+            }
+            if (c == "<" || c == ">") { lex_redirect(i, ""); continue }
+            lex_word()
+            if (WK == "b" && isdig(WRAW) && (substr(S, i, 1) == ">" || substr(S, i, 1) == "<")) { lex_redirect(WS, WRAW); continue }
+            nt++; TT[nt] = "W"; TS[nt] = WS; TE[nt] = WE; TK[nt] = WK; TR[nt] = WRAW
+        }
+        k = 1
+        while (k <= nt) {
+            a = k
+            while (k <= nt && TT[k] != "O") k++
+            if (k > a) seg(a, k - 1)
+            k++
+        }
+        # 링크를 심는 cp·mv 가 있으면 그것이 원문의 유일한 쓰기 연산일 때만 중화한다(`cp -a L F/r && echo x > F/r/..` 같은 «심고 쓰기» 차단)
+        if (ncpmv > 0 && nops != 1) ne = 0
+        for (x = 2; x <= ne; x++) { s1 = ES[x]; s2 = EE[x]; s3 = ER[x]; y = x - 1
+            while (y >= 1 && ES[y] > s1) { ES[y + 1] = ES[y]; EE[y + 1] = EE[y]; ER[y + 1] = ER[y]; y-- }
+            ES[y + 1] = s1; EE[y + 1] = s2; ER[y + 1] = s3 }
+        out = ""; pos = 1
+        for (x = 1; x <= ne; x++) { out = out substr(S, pos, ES[x] - pos) ER[x]; pos = EE[x] }
+        printf "%s", out substr(S, pos)
+    }'
+}
+# 세션 id 앞 8자·cwd 에서 자기 임시 폴더 후보 둘을 구하고, 명령이 그 id 를 글자로 담을 때만 중화본을 만든다(담지 않으면 이 블록은 아무것도 안 한다 → 다른 명령의 판정은 종전과 같다).
+# 판정 흐름: 1) 원문을 내부 재실행(BWC_INNER=1) → 통과면 통과 2) 차단 사유가 «쓰기 대상 계열»(리다이렉션·rm/mv/cp/touch/mkdir 의 파일 조작)이 아니면 그 차단을 그대로 낸다
+#   3) 쓰기 대상 계열이면 중화본을 같은 훅 전체(0.4·0.5·0.7·3.5·APPROVED 포함)로 내부 재실행 → 중화본이 통과일 때만 통과.
+#   중화는 리터럴 자기 폴더 경로 조각만 지우므로, 인터프리터·파이프→셸·글롭·변수 같은 다른 차단 원인은 중화본에도 그대로 남아 다시 차단된다.
+if [ -z "${BWC_INNER:-}" ]; then
+    _SID8=$(printf '%s' "$INPUT" | jq -r '(.session_id // "") | tostring | .[0:8]' 2>/dev/null)
+    _CWD=$(printf '%s' "$INPUT" | jq -r '(.cwd // "") | tostring' 2>/dev/null)
+    if [[ $_SID8 =~ ^[0-9A-Za-z_-]{8}$ ]] && [[ $_CWD == /* ]] && [[ $CMD == *"$_SID8"* ]]; then
+        # 후보: <scratch-root>/<git 최상위 이름>/sid8, <scratch-root>/<주 저장소 이름>/sid8 (워크트리면 둘이 다르다), <git 최상위>/.scratch/sid8 (git 저장소 안일 때만; cwd 로 대체하지 않는다)
+        _FS=""
+        _ROOT=$(git -C "$_CWD" rev-parse --show-toplevel 2>/dev/null)
+        _NAME=${_ROOT##*/}
+        [ -n "$_ROOT" ] || _NAME=${_CWD##*/}
+        _COMMON=$(git -C "$_CWD" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+        _MAIN=""
+        [ -n "$_COMMON" ] && _MAIN=$(basename -- "$(dirname -- "$_COMMON")")
+        _SR=$(head -n1 "$HOME/.claude/config/scratch-root" 2>/dev/null | tr -d '\r')
+        if [[ $_SR == /* ]]; then
+            for _N in "$_NAME" "$_MAIN"; do
+                [ -n "$_N" ] && [ "$_N" != "/" ] && _FS+=$(realpath -m -- "$_SR/$_N/$_SID8" 2>/dev/null)$'\n'
+            done
+        fi
+        [ -n "$_ROOT" ] && _FS+=$(realpath -m -- "$_ROOT/.scratch/$_SID8" 2>/dev/null)$'\n'
+        CMDN=$(own_scratch_neutralize "$CMD" "$_FS")
+        if [ -n "$CMDN" ] && [ "$CMDN" != "$CMD" ]; then
+            OUT_ORIG=$(printf '%s' "$INPUT" | BWC_INNER=1 bash "${BASH_SOURCE[0]}")
+            [ -z "$OUT_ORIG" ] && exit 0
+            case $OUT_ORIG in
+                *"파일 쓰기 리다이렉션"*|*"파일 조작 명령"*)
+                    OUT_N=$(printf '%s' "$INPUT" | jq -c --arg c "$CMDN" '.tool_input.command = $c' | BWC_INNER=1 bash "${BASH_SOURCE[0]}")
+                    [ -z "$OUT_N" ] && exit 0 ;;
+            esac
+            printf '%s\n' "$OUT_ORIG"
+            exit 0
+        fi
+    fi
+fi
 
 # 이스케이프 정규화 (6·7라운드): ① ANSI-C `$'\x72\x6d'`·`\162` 를 printf %b 로 디코드한 사본을 원문 뒤에 이어 붙이고
 # ② 백슬래시 단일문자(`r\m`) 를 지운다. 검사는 "원문+디코드본" 결합 문자열에 대해 수행(탐지 전용 — 실행되는 명령은 원문).
@@ -131,15 +355,34 @@ CMD=$(printf '%s\n%s' "$CMD" "$DECODED" | fold_newlines | sed -E 's/\\([A-Za-z])
 #    알려진 한계(열거 변형): `perl -p`·`node --preserve-symlinks` 처럼 코드 플래그 글자로 시작하는 비코드 플래그만 단 경우는 ① 이 멈춘다.
 #    13라운드 Grok: `| python3 >/dev/null`·`| python3 -u >/dev/null 2>&1` 처럼 뒤에 리다이렉션 접미가 붙으면 종결자(`;&|)`·끝) 매칭이 깨졌고 POSIX `--` 를 피연산자로 못 봤다
 #    → 무해 리다이렉션(`[n]>/dev/null`·`n>&m`·`&>/dev/null`)을 지운 사본(S_RD)에도 매칭, `--` 는 `-` 와 같은 stdin 토큰으로 취급(`python3 -- x.py` 는 파일 피연산자라 허용).
-PIPE_SH='\|&?[[:space:]]*(([^[:space:]|]*/)?(sudo|doas|env|nohup|nice|timeout|exec|command|builtin|xargs)[[:space:]]+([^[:space:]|"'"'"']+[[:space:]]+)*)?([^[:space:]|]*/)?((ba|z|da|k)?sh([[:space:])]|$)|(python[0-9.]*|perl|node|ruby|php)(([[:space:]]+([^[:space:];&|./-][^[:space:];&|./]*|-[^cemEpr-][^[:space:];&|./]*|--(e[^v]|p[^r]|[^ep])[^[:space:];&|./]*|--?))*[[:space:]]*([;&|)]|$)|([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(-([[:space:];&|)]|$)|--[[:space:]]*([;&|)]|$)|(/dev/stdin|/dev/fd/[0-9]+|/proc/(self|[0-9]+)/fd/[0-9]+)([[:space:];&|)]|$))))'
+PIPE_SH='\|&?[[:space:]]*(([^[:space:]|]*/)?(sudo|doas|env|nohup|nice|timeout|exec|command|builtin|xargs)[[:space:]]+([^[:space:]|"'"'"']+[[:space:]]+)*)?([^[:space:]|]*/)?((r?ba|z|da|k)?sh([[:space:])]|$)|(python[0-9.]*|perl|node|ruby|php)(([[:space:]]+([^[:space:];&|./-][^[:space:];&|./]*|-[^cemEpr-][^[:space:];&|./]*|--(e[^v]|p[^r]|[^ep])[^[:space:];&|./]*|--?))*[[:space:]]*([;&|)]|$)|([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(-([[:space:];&|)]|$)|--[[:space:]]*([;&|)]|$)|(/dev/stdin|/dev/fd/[0-9]+|/proc/(self|[0-9]+)/fd/[0-9]+)([[:space:];&|)]|$))))|\|&?[[:space:]]*(source|\.)([[:space:])]|$)'
 #    따옴표로 감싼 셸명(`| "bash"`)과 프로세스 치환 입력(`bash <(curl …)`)도 같은 스트림 실행 (11라운드 Grok) — 따옴표 문자를 제거한 사본에도 적용
 S_UQ=$(printf '%s' "$CMD" | tr -d '"'"'")
 S_RD=$(printf '%s' "$S_UQ" | sed -E 's/[0-9]*>>?[[:space:]]*\/dev\/null//g; s/[0-9]*>&[0-9]//g; s/&>[[:space:]]*\/dev\/null//g')
 #    `bash < <(curl u)`·`python3 - < <(…)`·`bash -s x < <(…)` 도 같은 경로 (12라운드 Grok): 셸·인터프리터 뒤 임의 토큰 + `[fd]< <(` 까지 트리거.
 #    `diff <(a) <(b)`·`done < <(ls)` 는 명령 위치가 셸·인터프리터가 아니라 무관. `python3 x.py < <(cat data)` 같은 데이터 stdin 은 과차단 — 파일로 저장 후 `< file` (fail-closed 수용).
-PROCSUB_SH='(^|[[:space:];&|(])(([^[:space:]]*/)?((ba|z|da|k)?sh|python[0-9.]*|perl|node|ruby|php))[[:space:]]+([^[:space:]<]+[[:space:]]+)*([0-9]*<[[:space:]]*)?<\('
-if echo "$CMD" | grep -qE "$PIPE_SH" || echo "$S_UQ" | grep -qE "$PIPE_SH" || echo "$S_RD" | grep -qE "$PIPE_SH" || echo "$S_UQ" | grep -qE "$PROCSUB_SH" || echo "$S_RD" | grep -qE "$PROCSUB_SH"; then
-    jq -cn --arg r "[쓰기 차단] 파이프-투-셸/인터프리터 (… | bash/sh/python3 …, \"bash\"·<(…) 포함) — # APPROVED 로도 허용되지 않음, 파일로 저장 후 검토" \
+PROCSUB_SH='(^|[[:space:];&|(])(([^[:space:]]*/)?((r?ba|z|da|k)?sh|python[0-9.]*|perl|node|ruby|php))[[:space:]]+([^[:space:]<]+[[:space:]]+)*([0-9]*<[[:space:]]*)?<\(|(^|[;&|(][[:space:]]*)(source|\.)[[:space:]]+([^[:space:]<]+[[:space:]]+)*([0-9]*<[[:space:]]*)?<\('
+#    r6fix 2: `| source`·`| .` 는 파이프 바로 뒤(래퍼 인자 건너뛰기 없이)만 본다 — `| xargs grep -rn x .` 의 마지막 `.` 인자는 셸이 아니다. rbash 는 셸 목록에 더했다.
+#    sed 의 실행 명령도 같은 스트림 실행 (2026-11-09 r5fix 2): `echo 'git tag -d v1' | sed e`·`| sed 's/.*/&/e'`·`| sed -n '1e'` 는 파이프로 들어온 줄을 셸 명령으로 실행한다.
+#    파이프 뒤 sed 구간(`|` 까지)에서 ① 낱말 `e`(명령: 앞이 공백·`;`·`{`·`}`·`!`·따옴표·주소 끝 `/`·숫자·`$`·`,`, 뒤가 공백·`;`·`}`·따옴표·끝) 또는 ② `s<구분자>…<구분자>…<구분자>플래그…e`(플래그 g I i M m p 숫자 뒤 e)를 찾는다.
+#    `s/hello/e/`·`s/e/E/g`·`sed -e`·`sed -n` 은 e 가 다른 글자에 붙어 있거나 `/` 가 뒤따라 통과. 한계(과차단 수용): 같은 줄 뒤 `;` 쪽에 낱말 `e` 가 있으면 걸린다. `-f 스크립트파일` 안의 e 는 못 본다.
+#    r6fix 3 (2026-11-09 stage5_fix_r6.md): 파이프 뒤만이 아니라 sed(`sed`·`gsed`·경로 접두)가 **명령 자리**(줄 처음·`;`·`&`·`|`·`(`·`{`·백틱·`$(`·`-exec`·then/do/else 뒤, 변수 대입·래퍼 sudo env xargs 등 뒤)에 있으면 어디서나 본다.
+#    따옴표 속 글(커밋 메시지 «fix sed e»)은 명령 자리가 아니라 걸리지 않는다 —
+#    here-string(`sed e <<< 'git tag -d v1'`)·입력 리다이렉션·파일 인자(`sed e script.txt`, 파일 줄을 명령으로 실행)·`xargs sed e`·`env sed e` 가 모두 같은 실행 경로다.
+#    e 명령 앞 경계에 `=`(`--expression=e`)·주소 플래그 `I` `M`(`/a/Ie`)·`-e` 에 붙여 쓴 스크립트(`-ee`·`-es/a/b/e`)를 더했다.
+#    s 명령 플래그 묶음은 e 앞뒤 어디든(`eg`·`ep`·`e2`·`ge`) 잡는다. 플래그 글자는 g I i M m p w 숫자 e (w 는 뒤에 파일명이 오는 플래그지만 묶음 판정에서는 글자로 본다).
+#    한계: sed 낱말이 보이는 줄에서 `;`·`&` 뒤(파이프 `|` 전)에 낱말 `e` 가 있으면 걸린다(`sed -n 1p f; echo e`), s 패턴 속 ` e `(`s/ e / E /`)도 걸린다.
+SED_HEAD='(^|[;&|({`]|\$\(|-exec(dir)?[[:space:]]|[[:space:]](then|do|else|elif|if|while|until|time)[[:space:]])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(([^[:space:]|]*/)?(sudo|doas|env|nohup|nice|timeout|exec|command|builtin|xargs|time)[[:space:]]+([^[:space:]|"'"'"']+[[:space:]]+)*)?([^[:space:]|]*/)?g?sed[[:space:]]'
+SED_PIPE="${SED_HEAD}"'[^|]*'
+SED_X="(^|[;{}!='\"[:space:]/0-9\$,IM]|-[A-Za-z]*e)(e([[:space:];}'\"]|\$)|s([^[:alnum:][:space:]\\\\])[^|]*\\4[^|]*\\4[gIiMmpw0-9e]*e[gIiMmpw0-9e]*([[:space:];}'\"]|\$))"
+#    구분자가 `|` 인 `s|a|b|e` 는 위 `[^|]*` 구간이 구분자에서 끊기므로 따로 본다 (SED_BAR).
+SED_BAR="${SED_HEAD}"'+([^|]*[[:space:]])?["'"'"']?s\|[^|]*\|[^|]*\|[gIiMmpw0-9e]*e[gIiMmpw0-9e]*([[:space:];}'"'"'"]|$)'
+sed_exec_pipe() {
+    printf '%s\n' "$1" | grep -oE "$SED_PIPE" | grep -qE "$SED_X" || printf '%s\n' "$1" | grep -qE "$SED_BAR"
+}
+if echo "$CMD" | grep -qE "$PIPE_SH" || echo "$S_UQ" | grep -qE "$PIPE_SH" || echo "$S_RD" | grep -qE "$PIPE_SH" || echo "$S_UQ" | grep -qE "$PROCSUB_SH" || echo "$S_RD" | grep -qE "$PROCSUB_SH" \
+    || sed_exec_pipe "$CMD" || sed_exec_pipe "$S_UQ" || sed_exec_pipe "$S_RD"; then
+    jq -cn --arg r "[쓰기 차단] 파이프-투-셸/인터프리터 (… | bash/sh/python3 …, | sed e·s///e, \"bash\"·<(…) 포함) — # APPROVED 로도 허용되지 않음, 파일로 저장 후 검토" \
         '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
     exit 0
 fi
@@ -452,7 +695,7 @@ if printf '%s\n' "$FIRST" | grep -qE '^# APPROVED([[:space:]]|$)'; then
     S_APPR_POS=$(printf '%s' "${CMD#"$FIRST"}" | collapse_quotes)   # 마커 줄을 떼어 다음 토큰이 명령 위치가 되게(접힌 CMD 는 마커가 접두)
     if echo "$S_APPR_POS" | grep -qE '(^[[:space:]]*|[;&|(][[:space:]]*)'"$WRAP_SKIP"'[^[:space:];&|(]*(\{[^{}[:space:]]*,[^{}[:space:]]*\}|\[[^][[:space:]]+\]|[*?])[^[:space:];&|]*' \
        || echo "$S_APPR_POS" | grep -qE "$CMDPOS_VAR" \
-       || echo "$CMD" | grep -qE -- '-delete|-exec(dir)?[[:space:]]|(^|[[:space:];&|(`/])(xargs|python[0-9.]*|perl|node|ruby|php|base64|xxd|openssl|uudecode)([[:space:]]|$)|\|[[:space:]]*([^[:space:]|]*/)?(ba|z|da|k)?sh([[:space:]]|$)|\$\(|`|<\(|\\x[0-9A-Fa-f]|\$'"'"'|(^|[[:space:];&|(])(eval|source|\.)[[:space:]]' \
+       || echo "$CMD" | grep -qE -- '-delete|-exec(dir)?[[:space:]]|(^|[[:space:];&|(`/])(xargs|python[0-9.]*|perl|node|ruby|php|base64|xxd|openssl|uudecode)([[:space:]]|$)|\|[[:space:]]*([^[:space:]|]*/)?(r?ba|z|da|k)?sh([[:space:]]|$)|\$\(|`|<\(|\\x[0-9A-Fa-f]|\$'"'"'|(^|[[:space:];&|(])(eval|source|\.)[[:space:]]' \
        || echo "$CMD" | grep -qE '(^|[[:space:];&|(]|/)(g|m|n)?awk[[:space:]][^;&|]*(print(f)?[^;|&]*[[:space:]]>>?|system[[:space:]]*\()'; then
         jq -cn --arg r "[쓰기 차단] # APPROVED 는 리터럴 경로의 단순 셸 명령에만 허용 — 인터프리터·디코더·find -delete/-exec·치환·변수·이스케이프가 섞인 명령은 사용자가 터미널에서 직접" \
             '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
@@ -687,7 +930,7 @@ echo "$S_CURL_UQ" | grep -qE "${CURL_CMDPOS}[[:space:]](-[a-zA-Z]*w|--write-out)
 #    2026-09-08: 원격·컨테이너 실행도 같은 클래스 — `ssh host "rm -rf x"`·`docker exec c "…"` 는 따옴표 제거 단계에서 페이로드가 통째로 사라져 무검사 통과했다(실측).
 #      `tmux send-keys` 는 제외한다: 학습 발사 공식 통로가 `tmux send-keys -t <접두>N "… > log 2>&1" Enter` 라 재검사를 열면 발사가 막힌다(발사 게이트는 train-launch-warn.sh).
 #    2026-10-06: `$(`·백틱 트리거·S_RAW·WORDGEN_RE2 사본은 0.46 정리본(SAN)에서 본다. 허용 목록을 통과하지 못하면 SAN = CMD 라 종전과 같다.
-if echo "$SAN" | grep -qE '\$\(|`' || echo "$CMD" | grep -qE '<\(|<<<|(^|[[:space:];&|(])(source|\.)[[:space:]]|(^|[[:space:];&|(/])(bash|sh|zsh|dash|ksh)[[:space:]]+([^;&|]*[[:space:]])?-c([[:space:]]|$)|(^|[|;&][[:space:]]*)([^[:space:]]*/)?(bash|sh|zsh|dash|ksh)([[:space:]]|$)|(^|[[:space:];&|(])(ssh|docker[[:space:]]+(exec|run)|podman[[:space:]]+(exec|run)|kubectl[[:space:]]+exec)([[:space:]]|$)'; then
+if echo "$SAN" | grep -qE '\$\(|`' || echo "$CMD" | grep -qE '<\(|<<<|(^|[[:space:];&|(])(source|\.)[[:space:]]|(^|[[:space:];&|(/])(r?bash|sh|zsh|dash|ksh)[[:space:]]+([^;&|]*[[:space:]])?-c([[:space:]]|$)|(^|[|;&][[:space:]]*)([^[:space:]]*/)?(r?bash|sh|zsh|dash|ksh)([[:space:]]|$)|(^|[[:space:];&|(])(ssh|docker[[:space:]]+(exec|run)|podman[[:space:]]+(exec|run)|kubectl[[:space:]]+exec)([[:space:]]|$)'; then
     S_RAW=$(echo "$SAN" | neutralize_git | strip_harmless)
     check_write_patterns "$S_RAW" " — 실행 컨텍스트(\$()/backtick/sh -c) 내부"
     # 재검사 범위: check_write_patterns(리터럴 writer 토큰) + 0.7 워드 생성(따옴표만 뗀 사본) — 16라운드 렌즈1: 종전엔 전자만 재실행돼 주석("원문 그대로 재검사")과 구현이 어긋났다

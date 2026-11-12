@@ -6,13 +6,15 @@
 증거다. 그래서 기억이 아니라 **게이트**로 바꾼다. 게시 경로(confluence_patch_page.py)가
 이 검사를 통과해야만 쓰기가 진행된다.
 
-■ 검사 6종
+■ 검사 7종
   ① 산문 문장 안 삽입 대시 (—, &mdash;)   → 차단
   ② 한 문장에 쉼표 2개 이상               → 경고
   ③ 영문·숫자 토큰 뒤 조사 (발음 기준)     → 경고
   ④ 오탈자 사전 (TYPO_DICT, 틀린 꼴만)     → 차단
   ⑤ 같은 조사 겹침 (을을·를를·는는·에서에서) → 차단
   ⑥ 같은 어절 연속 (작업 작업)             → 경고
+  7. 작은 번호 글자 (원문자 숫자·알파벳 등)  → 경고 (find_circled, 코드펜스·인라인 코드 밖만. Stop 훅은 막고 이 검사기는 경고만:
+     옛 Confluence 페이지에 남은 글자 때문에 수정이 막히지 않게 한다. intent/2026-10-27-no-circled-numbers.md)
   ④⑤⑥ 은 코드 블록·인라인 코드·URL·인용(«» “” "")을 뺀 전체 텍스트(표 셀 포함)에서 줄 단위로 본다.
   `korean_report_check.py`(Stop 훅)가 find_typos 를 import 해 같은 사전을 쓴다. 2026-10-23 사용자 지시.
 
@@ -50,6 +52,16 @@ TYPO_DICT = {
     "오랫만": "오랜만", "어의없": "어이없", "뵈요": "봬요", "설겆이": "설거지", "녹녹치": "녹록지",
     "서슴치": "서슴지", "탠데": "텐데", "읍니다": "습니다",
 }
+# «읍니다» 는 «모읍니다»(모으다) 처럼 받침 없는 줄기 뒤에서는 바른 꼴이다(2026-10-28 Stop 훅 오탐). 앞 글자 받침이 ㅅ(19) · ㅆ(20) 일 때만
+# 틀린 옛 꼴(있읍니다 · 했읍니다 · 없읍니다)로 본다. 사전 크기는 그대로 둔다(2026-10-23 «사전을 넓히지 않는다»).
+_EUP_OK_BEFORE = re.compile(r"[가-힣]")
+
+
+def _eup_is_typo(line: str, start: int) -> bool:
+    """True if the «읍니다» at start follows a syllable whose final consonant is ㅅ or ㅆ (the old misspelling)."""
+    if start == 0 or not _EUP_OK_BEFORE.match(line[start - 1]):
+        return False
+    return (ord(line[start - 1]) - 0xAC00) % 28 in (18, 19, 20)  # ㅄ(없) · ㅅ · ㅆ
 TYPO_RE = re.compile("|".join(re.escape(k) for k in sorted(TYPO_DICT, key=len, reverse=True)))
 # 같은 조사 겹침. «의의·은은·이이» 는 바른 낱말이 있어 뺐고, «가을을·마을을·고을을» 은 바른 꼴이라 앞 글자로 거른다.
 DOUBLE_RE = re.compile(r"(?<![가마고])을을|를를|는는|에서에서")
@@ -74,7 +86,8 @@ def find_typos(text: str):
     """Return [(line, wrong, right)] for the typo dictionary (rule 4) and doubled particles (rule 5)."""
     out = []
     for no, line in enumerate(mask_excluded(text).split("\n"), 1):
-        out += [(no, m.group(0), TYPO_DICT[m.group(0)]) for m in TYPO_RE.finditer(line)]
+        out += [(no, m.group(0), TYPO_DICT[m.group(0)]) for m in TYPO_RE.finditer(line)
+                if m.group(0) != "읍니다" or _eup_is_typo(line, m.start())]
         out += [(no, m.group(0), m.group(0)[: len(m.group(0)) // 2]) for m in DOUBLE_RE.finditer(line)]
     return out
 
@@ -86,6 +99,31 @@ def find_repeats(text: str):
         toks = [re.sub(r"^\W+|\W+$", "", t) for t in line.split()]
         out += [(no, a) for a, b in itertools.pairwise(toks) if a == b and len(a) >= 2 and re.search(r"[A-Za-z가-힣]", a)]
     return out
+
+
+# 사용자 화면에서 작아 읽히지 않는 번호 글자: 원문자 숫자·괄호 숫자·검은 원 숫자·원문자 알파벳(대·소문자)
+CIRCLED_RE = re.compile("[①-⒇❶-➓Ⓐ-ⓩ]")
+_CODE_ZONES = [re.compile(x, f) for x, f in (
+    (r"```.*?(?:```|\Z)", re.DOTALL), (r"<(code|pre)\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE), (r"`[^`\n]*`", 0),
+)]
+
+
+CIRCLED_MAX_CHARS = 200_000
+
+
+def find_circled(text: str, html: bool = True):
+    """Return [(line, char)] for circled/parenthesized number letters outside code fences and inline code (rule 7).
+
+    Input is capped at CIRCLED_MAX_CHARS: the Stop hook runs this on every turn of every session, and the
+    unclosed-<code> zone regex is quadratic in the worst case (security review 2026-10-27).
+    """
+    text = text[:CIRCLED_MAX_CHARS]
+    # HTML 태그 구역(<code>·<pre>)은 Confluence 저장 형식에만 있다. 채팅 보고(Stop 훅)에서는 건너뛴다:
+    # 닫히지 않은 <code> 가 많으면 그 정규식이 길이의 제곱으로 느려진다(실측 200k자 21초, 2026-10-27).
+    zones = _CODE_ZONES if html else [rx for rx in _CODE_ZONES if not rx.pattern.startswith("<")]
+    for rx in zones:
+        text = rx.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+    return [(no, m.group(0)) for no, line in enumerate(text.split("\n"), 1) for m in CIRCLED_RE.finditer(line)]
 
 
 def _strip_cells(html: str) -> str:
@@ -178,6 +216,7 @@ def check(html: str, typo_src: str | None = None):
     src = html if typo_src is None else typo_src
     blocked += [("오탈자", "typo", f"{n}: {w} → {r}") for n, w, r in find_typos(src)]
     warned += [("같은 어절 연속", "repeat", f"{n}: {w} {w}") for n, w in find_repeats(src)]
+    warned += [("작은 번호 글자(1) 2) 3) 로)", "circled", f"{n}: {ch}") for n, ch in find_circled(src)]
     for kind, inner in _blocks(body):
         txt = _text(inner)
         if not txt or not HANGUL.search(txt):

@@ -18,6 +18,8 @@ HOME 은 임시 폴더로 바꿔 실행한다. APPROVED 케이스가 실제 감�
 2026-10-06 v2 오탐 교정분 49건 이식(통과 6 / 차단 유지 20 / 셸 코드 운반자 차단 23).
 2026-10-06 v3 허용 목록 방식 91건 추가(오탐 통과 6 / 2차 security 미탐 25 / 2차 qa 미탐 5 /
              허용 목록 경계 55) → 총 395건.
+2026-11-02 세션 자기 임시 폴더 쓰기 예외 시험 추가(통과 23 / 폴더 밖·판정 불가 차단 유지 / 자기 폴더 대상이어도 기존 규칙 위반 차단 유지,
+             입력에 session_id·cwd 를 싣고 임시 HOME·scratch-root·git 저장소로 구성). BWC_ONLY_OWN=1 이면 이 묶음만 돈다.
 """
 import json
 import os
@@ -233,12 +235,12 @@ CASES = [
     ("A5 docker exec cat (통과)", 'docker exec c "cat /etc/os-release"', False),
     # 학습 발사 공식 통로 — 리다이렉션이 따옴표 안이라 통과해야 한다(트리거에서 tmux 를 뺀 근거)
     ("A5 tmux send-keys 발사 (통과)",
-     'tmux send-keys -t exp-mtl3 "bash run.sh > log 2>&1" Enter', False),
+     'tmux send-keys -t exp-demo3 "bash run.sh > log 2>&1" Enter', False),
 
     # ── A6 환경 상태 변경 (프로세스·세션·시스템)
     ("A6 pkill -f", "pkill -f train.py", True),
     ("A6 killall", "killall python3", True),
-    ("A6 tmux kill-session", "tmux kill-session -t exp-mtl6", True),
+    ("A6 tmux kill-session", "tmux kill-session -t exp-demo6", True),
     ("A6 systemctl restart", "systemctl restart nginx", True),
     ("A6 crontab -e", "crontab -e", True),
     ("A6 sudo mount", "sudo mount -t nfs a:/b /c", True),
@@ -248,7 +250,7 @@ CASES = [
     ("A6 kill -0 (통과)", "kill -0 12345", False),
     ("A6 pgrep -af (통과)", "pgrep -af watcher", False),
     ("A6 tmux ls (통과)", "tmux ls", False),
-    ("A6 tmux new-session (통과)", "tmux new-session -d -s exp-mtl6", False),
+    ("A6 tmux new-session (통과)", "tmux new-session -d -s exp-demo6", False),
     ("A6 systemctl status (통과)", "systemctl status nginx", False),
     ("A6 crontab -l (통과)", "crontab -l", False),
     ("A6 mount 목록 (통과)", "mount", False),
@@ -542,6 +544,73 @@ CASES = [
     ("curl --etag-save (차단)", "curl --etag-save e https://u/y", True),
     ("curl --proto =https (통과)", "curl --proto =https -sS https://u/y", False),
     ("curl -sSJLo 묶음 (차단)", "curl -sSJLo x https://u/y", True),
+    # 2026-11-09 r5fix 2: 파이프로 들어온 줄을 sed 가 명령으로 실행하는 형태 (e 명령, s///e 플래그)
+    ("r5fix sed e 명령 (차단)", "echo 'git tag -d v1' | sed e", True),
+    ("r5fix sed -e e (차단)", "echo 'git tag -d v1' | sed -e e", True),
+    ("r5fix sed 's/^/ /e' (차단)", "printf 'rm x' | sed 's/^/ /e'", True),
+    ("r5fix sed s///ge 플래그 (차단)", "echo a | sed 's/a/b/ge'", True),
+    ("r5fix sed s|a|b|e 다른 구분자 (차단)", "echo a | sed 's|a|b|e'", True),
+    ("r5fix sed -n 1e 주소+e (차단)", "echo a | sed -n '1e'", True),
+    ("r5fix sed /x/e 정규식 주소+e (차단)", "echo ls | sed '/x/e'", True),
+    ("r5fix sed 's/.*/&/e' (차단)", "echo ls | sed 's/.*/&/e'", True),
+    ("r5fix sed ; 뒤 e 명령 (차단)", "echo ls | sed 's/a/b/;e'", True),
+    ("r5fix 래퍼 sudo sed e (차단)", "echo ls | sudo sed e", True),
+    ("r5fix 파이프 두 단계 뒤 sed e (차단)", "echo ls | cat | sed e", True),
+    ("r5fix sed s///p (통과)", "echo a | sed 's/a/b/p'", False),
+    ("r5fix sed s/a/b/ (통과)", "echo a | sed 's/a/b/'", False),
+    ("r5fix sed -n 1p (통과)", "echo a | sed -n '1p'", False),
+    ("r5fix sed s/e/E/g 패턴 속 e (통과)", "ls | sed 's/e/E/g'", False),
+    ("r5fix sed 치환문 속 e (통과)", "echo hello | sed 's/hello/e/'", False),
+    ("r5fix sed /e/p 패턴 속 e (통과)", "cat f | sed -n '/e/p'", False),
+    ("r5fix 파이프 없는 sed -n (통과)", "sed -n 1,5p f", False),
+    # 2026-11-09 r6fix 3: 파이프 밖의 sed(here-string·입력 리다이렉션·파일 인자·래퍼)와 e 앞뒤 경계·플래그 묶음
+    ("r6fix sed e here-string (차단)", "sed e <<< 'git tag -d v1'", True),
+    ("r6fix sed e 파일 인자 (차단)", "sed e script.txt", True),
+    ("r6fix sed e 입력 리다이렉션 (차단)", "sed e < script.txt", True),
+    ("r6fix sed 'e 명령 문자열' 파일 (차단)", "sed 'e git tag -d v1' f", True),
+    ("r6fix gsed e (차단)", "echo x | gsed e", True),
+    ("r6fix xargs sed e (차단)", "echo x | xargs sed e", True),
+    ("r6fix env sed e (차단)", "echo x | env sed e", True),
+    ("r6fix /bin/sed e (차단)", "echo x | /bin/sed e", True),
+    ("r6fix --expression=e (차단)", "echo x | sed --expression=e", True),
+    ("r6fix 주소 플래그 I 뒤 e (차단)", "echo x | sed '/a/Ie'", True),
+    ("r6fix 주소 플래그 M 뒤 e (차단)", "echo x | sed '/a/Me'", True),
+    ("r6fix -ee 붙여 쓴 e (차단)", "echo x | sed -ee", True),
+    ("r6fix -es/a/b/e 붙여 쓴 s///e (차단)", "echo x | sed -es/.*/\\&/e", True),
+    ("r6fix s///eg (차단)", "echo x | sed 's/.*/&/eg'", True),
+    ("r6fix s///ep (차단)", "echo x | sed 's/.*/&/ep'", True),
+    ("r6fix s///e2 (차단)", "echo x | sed 's/.*/&/e2'", True),
+    ("r6fix s///gpe 뒤에 다른 플래그 (차단)", "echo x | sed 's/.*/&/gpeI'", True),
+    ("r6fix 파일 인자 sed -n (통과)", "sed -n '1,5p' f", False),
+    ("r6fix 파일 인자 sed s (통과)", "sed 's/a/b/' f", False),
+    ("r6fix sed -E 그룹 (통과)", "sed -E 's/a(b)/\\1/g' f", False),
+    ("r6fix sed -e 두 번 (통과)", "sed -n -e '1p' -e '3p' f", False),
+    ("r6fix sed --quiet --expression (통과)", "sed --quiet --expression='1p' f", False),
+    ("r6fix sed s///I (통과)", "sed 's/a/b/I' f", False),
+    ("r6fix sed -ne p (통과)", "sed -ne 'p' f", False),
+    ("r6fix 커밋 메시지 속 sed e 글 (명령 자리 아님, 통과)", "git commit -m 'fix sed e handling'", False),
+    ("r6fix echo 속 sed e 글 (통과)", "echo used sed e here", False),
+    ("r6fix then 뒤 sed e (차단)", "if true; then sed e f; fi", True),
+    ("r6fix 변수 대입 뒤 sed e (차단)", "LC_ALL=C sed e f", True),
+    ("r6fix find -exec sed e (차단)", "find . -name x -exec sed e {} +", True),
+    ("r6fix $(sed e) (차단)", "echo $(sed e f)", True),
+    ("r6fix sed -s (통과)", "sed -s 's/a/b/g' f", False),
+    ("r6fix git log | sed s (통과)", "git log --oneline | sed 's/a/b/'", False),
+    ("r6fix sed s/a/b/g 문자열 속 -e 낱말 (통과)", "echo x | sed -e 's/hello-e/world/g'", False),
+    # 2026-11-09 r6fix 2: source · . · rbash 로 들어오는 스트림도 셸과 같다
+    ("r6fix | source (차단)", "echo 'git tag -d v1' | source /dev/stdin", True),
+    ("r6fix | . (차단)", "echo 'git tag -d v1' | . /dev/stdin", True),
+    ("r6fix | rbash (차단)", "echo 'git tag -d v1' | rbash", True),
+    ("r6fix source <(…) (차단)", "source <(echo 'git push')", True),
+    ("r6fix . <(…) (차단)", ". <(echo git push)", True),
+    ("r6fix rbash <(…) (차단)", "rbash <(echo 'git push')", True),
+    ("r6fix source 파일 (통과)", "source ./env.sh", False),
+    ("r6fix diff . <(…) 는 명령 자리 아님 (통과)", "diff . <(ls a)", False),
+    ("r6fix diff <(…) <(…) (통과)", "diff <(ls a) <(ls b)", False),
+    ("r6fix 파이프 뒤 .숨김 도구 (통과)", "ls | .hidden-tool", False),
+    ("r6fix xargs 인자의 마지막 . (통과)", "git ls-files | xargs grep -rn foo .", False),
+    ("r6fix xargs 인자의 source 낱말 (통과)", "git ls-files | xargs grep -n source", False),
+    ("r6fix find . 뒤 xargs (통과)", 'find . -name "*.py" | xargs grep -l x', False),
 ]
 
 
@@ -560,19 +629,217 @@ def run(cmd: str, home: str, prompt_log: str):
     return '"deny"' in r.stdout, r.returncode, reason
 
 
-fail = 0
-with tempfile.TemporaryDirectory() as home:
-    prompt_log = os.path.join(home, "prompts.jsonl")
-    with open(prompt_log, "w", encoding="utf-8") as f:
-        f.write(json.dumps({"ts": "2026-09-14T00:00:00Z", "cwd": home,
-                            "prompt": FIXTURE_PROMPT}, ensure_ascii=False) + "\n")
-    for name, cmd, want in CASES:
-        blocked, rc, reason = run(cmd, home, prompt_log)
-        ok = blocked == want and rc == 0
-        fail += 0 if ok else 1
-        print(f"{'OK ' if ok else 'FAIL'} {name}: block={blocked} (기대 {want}) rc={rc}")
-        if not ok and reason:
-            print(f"     사유: {reason}")
+def run_own(cmd: str, home: str, sid: str | None, cwd: str | None):
+    """훅을 session_id·cwd 가 든 입력으로 실행해 (차단 여부, 종료코드, 사유) 를 반환."""
+    payload = {"tool_name": "Bash", "tool_input": {"command": cmd}}
+    if sid is not None:
+        payload["session_id"] = sid
+    if cwd is not None:
+        payload["cwd"] = cwd
+    env = dict(os.environ, HOME=home)
+    env.pop("BWC_INNER", None)
+    r = subprocess.run(["bash", str(HOOK)], input=json.dumps(payload),
+                       check=False, capture_output=True, text=True, env=env)
+    reason = ""
+    if '"deny"' in r.stdout:
+        reason = json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    return '"deny"' in r.stdout, r.returncode, reason
 
-print(f"\n{'ALL PASS' if fail == 0 else f'FAIL {fail}'} ({len(CASES)} cases)")
+
+def build_own_cases(home: str):
+    """2026-11-02 자기 임시 폴더 쓰기 예외 시험표: (이름, 명령, 차단 기대, 세션 id, cwd) 목록과 그 재료를 만든다."""
+    sid, other = "ab12cd34-0000-4000-8000-000000000000", "ee99ff00-0000-4000-8000-000000000000"
+    proj = os.path.join(home, "proj")
+    sub = os.path.join(proj, "sub")
+    scr = os.path.join(home, "scr")
+    outside = os.path.join(home, "outside")
+    os.makedirs(sub)
+    os.makedirs(outside)
+    subprocess.run(["git", "init", "-q", proj], check=True)
+    os.makedirs(os.path.join(home, ".claude/config"))
+    Path(home, ".claude/config/scratch-root").write_text(scr + "\n", encoding="utf-8")
+    f1 = os.path.join(scr, "proj", sid[:8])        # scratch-root 쪽 자기 폴더(미리 만들어 둔다)
+    f2 = os.path.join(proj, ".scratch", sid[:8])   # 프로젝트 안 자기 폴더(만들지 않는다: 폴더 자체가 아직 없는 경우)
+    o1 = os.path.join(scr, "proj", other[:8])      # 같은 프로젝트의 다른 세션 폴더
+    os.makedirs(f1)
+    os.makedirs(o1)
+    os.symlink(outside, os.path.join(f1, "link"))                          # 밖을 가리키는 링크
+    os.symlink(os.path.join(home, "nowhere"), os.path.join(f1, "dang"))     # 끊긴 링크
+    os.makedirs(os.path.join(f1, "real"))
+    os.symlink(os.path.join(f1, "real"), os.path.join(f1, "inlink"))        # 폴더 안을 가리키는 링크
+    Path(outside, "tfile").write_text("t", encoding="utf-8")
+    for d in ("d", "dd"):
+        os.makedirs(os.path.join(f1, d))
+    for ln in ("x", "m"):                                                    # 자기 폴더 안 d/ 에 미리 심긴 «밖을 가리키는 링크»
+        os.symlink(os.path.join(outside, "tfile"), os.path.join(f1, "d", ln))
+    Path(f1, "d", "a").write_text("a", encoding="utf-8")                    # 덮어써도 되는 일반 파일
+    os.makedirs(os.path.join(f1, "d", "src"))                               # 이미 있는 디렉터리 대상
+    os.makedirs(os.path.join(f1, "dd", "real"))
+    nongit = os.path.join(home, "nongit")                                 # git 저장소가 아닌 cwd
+    os.makedirs(nongit)
+    main = os.path.join(home, "mainrepo")                                   # 워크트리 재료: 주 저장소 + 워크트리 wt-x
+    wt = os.path.join(home, "wt-x")
+    subprocess.run(["git", "init", "-q", main], check=True)
+    subprocess.run(["git", "-C", main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                    "--allow-empty", "-m", "x"], check=True)
+    subprocess.run(["git", "-C", main, "worktree", "add", "-q", wt], check=True)
+    s = sid
+    cases = [
+        # ── 통과: 자기 폴더 안 리터럴 대상
+        ("own > 파일", f"echo hi > {f1}/a.txt", False, s, proj),
+        ("own >> 파일(폴더 미존재)", f"echo hi >> {f2}/a.txt", False, s, proj),
+        ("own 2> 파일", f"ls x 2> {f1}/err.txt", False, s, proj),
+        ("own &> 파일", f"ls x &> {f1}/err.txt", False, s, proj),
+        ("own 붙여 쓴 >파일", f"echo hi >{f1}/a.txt", False, s, proj),
+        ("own 작은따옴표 대상", f"echo hi > '{f1}/a.txt'", False, s, proj),
+        ("own 큰따옴표 대상", f'echo hi > "{f1}/a.txt"', False, s, proj),
+        ("mkdir 은 원래 안 막힘(고정; 예외와 무관)", f"mkdir -p {f1}/cm_1102", False, s, proj),
+        ("own mkdir + > 함께", f"mkdir -p {f1}/x && echo hi > {f1}/x/f.txt", False, s, proj),
+        ("own mkdir + cp 함께", f"mkdir -p {f1}/x && cp a {f1}/x/", False, s, proj),
+        ("own touch", f"touch {f1}/t", False, s, proj),
+        ("own cp 원본은 폴더 밖 절대", f"cp /etc/hostname {f1}/", False, s, proj),
+        ("own cp 원본은 상대", f"cp src.png {f1}/out.png", False, s, proj),
+        ("own cp -r", f"cp -r src {f1}/", False, s, proj),
+        ("own mv 안→안", f"mv {f1}/a {f1}/b", False, s, proj),
+        ("own rm -rf", f"rm -rf {f1}/cm_1102", False, s, proj),
+        ("own rm 파일", f"rm {f1}/a.txt", False, s, proj),
+        ("own 폴더 자신 rm -rf", f"rm -rf {f2}", False, s, proj),
+        ("own 무해 리다이렉션 동반", f"cp a {f1}/ 2>/dev/null", False, s, proj),
+        ("own 줄바꿈 두 줄", f"mkdir -p {f1}/a\necho hi > {f1}/a/b", False, s, proj),
+        ("own 하위 cwd 에서도 git 뿌리", f"echo hi > {f2}/s.txt", False, s, sub),
+        ("own ~/ 머리", f"echo hi > ~/proj/.scratch/{s[:8]}/h.txt", False, s, proj),
+        ("own $HOME/ 머리", f"echo hi > $HOME/proj/.scratch/{s[:8]}/h.txt", False, s, proj),
+        ("own \"$HOME/\" 머리", f'echo hi > "$HOME/proj/.scratch/{s[:8]}/h.txt"', False, s, proj),
+        # ── 차단 유지: 폴더 밖·판정 불가
+        ("다른 세션 폴더", f"echo hi > {o1}/a.txt", True, s, proj),
+        ("프로젝트 폴더 바로 아래", f"echo hi > {scr}/proj/a.txt", True, s, proj),
+        ("세션 id 다름(입력)", f"echo hi > {f1}/a.txt", True, other, proj),
+        ("세션 id 없음", f"echo hi > {f1}/a.txt", True, None, proj),
+        ("cwd 없음", f"echo hi > {f1}/a.txt", True, s, None),
+        (".. 탈출", f"echo hi > {f1}/../{other[:8]}/a.txt", True, s, proj),
+        ("심볼릭 링크 탈출", f"echo hi > {f1}/link/a.txt", True, s, proj),
+        ("심볼릭 링크 touch 탈출", f"touch {f1}/link/d", True, s, proj),
+        ("심볼릭 링크 rm 탈출", f"rm -rf {f1}/link/d", True, s, proj),
+        ("mkdir 는 종전부터 통과(중화 무관)", f"mkdir -p {f1}/link/d", False, s, proj),
+        # ── 2026-11-02 검수 반영: 같은 명령 «링크 심고 쓰기» · 이미 있는 링크 · 비 git cwd · 워크트리
+        ("링크 심기 cp -a + >", f"cp -a /proc/self/root {f1}/r && echo x > {f1}/r/tmp/zz-{s[:8]}", True, s, proj),
+        ("링크 심기 cp -a + rm", f"cp -a /proc/self/root {f1}/r && rm -rf {f1}/r/tmp/zz-{s[:8]}", True, s, proj),
+        ("링크 심기 cp -a + mv", f"cp -a /proc/self/root {f1}/r && mv {f1}/r/tmp/a {f1}/r/tmp/b", True, s, proj),
+        ("링크 심기 cp -a + touch", f"cp -a /proc/self/root {f1}/r && touch {f1}/r/tmp/zz-{s[:8]}", True, s, proj),
+        ("cp 둘", f"cp a {f1}/x && cp b {f1}/y", True, s, proj),
+        ("cp 단독은 통과", f"cp -a /proc/self/root {f1}/r", False, s, proj),
+        ("touch 와 > 는 cp·mv 없으면 함께 통과", f"touch {f1}/t && echo hi > {f1}/a", False, s, proj),
+        ("이미 있는 링크 > (밖)", f"echo x > {f1}/link", True, s, proj),
+        ("이미 있는 링크 너머 > ", f"echo x > {f1}/link/x", True, s, proj),
+        ("끊긴 링크 >", f"echo x > {f1}/dang", True, s, proj),
+        ("폴더 안을 가리키는 링크 너머 > (실경로가 폴더 아래라 통과)", f"echo x > {f1}/inlink/f", False, s, proj),
+        ("rm 대상이 링크(밖)", f"rm -rf {f1}/link", True, s, proj),
+        ("rm 대상이 링크(안)", f"rm {f1}/inlink", True, s, proj),
+        # ── 2026-11-02 보안 재검수: cp·mv 실제 대상 = <목적지>/<원본 basename>
+        ("cp 목적지 디렉터리 안 기존 링크 덮어쓰기", f"cp x {f1}/d/", True, s, proj),
+        ("cp 슬래시 없는 디렉터리 목적지", f"cp x {f1}/d", True, s, proj),
+        ("cp 원본 여럿 중 하나가 링크", f"cp a x {f1}/d/", True, s, proj),
+        ("cp -r 목적지 안 기존 링크", f"cp -r x {f1}/d/", True, s, proj),
+        ("mv 목적지 디렉터리 안 기존 링크", f"mv {f1}/m {f1}/d/", True, s, proj),
+        ("cp 기존 일반 파일 덮어쓰기", f"cp a {f1}/d/", False, s, proj),
+        ("cp 기존 일반 파일 덮어쓰기(슬래시 없음)", f"cp a {f1}/d", False, s, proj),
+        ("cp -r 대상 디렉터리가 이미 있음", f"cp -r src {f1}/d/", True, s, proj),
+        ("cp -r 대상이 아직 없음", f"cp -r src2 {f1}/d/", False, s, proj),
+        ("mv 디렉터리 대상이 이미 있음", f"mv {f1}/real {f1}/dd/", True, s, proj),
+        ("mv 디렉터리 대상이 아직 없음", f"mv {f1}/real {f1}/d/", False, s, proj),
+        ("cp 원본 basename 이 ..", f"cp .. {f1}/d/", True, s, proj),
+        ("비 git cwd 의 .scratch 후보 없음", f"echo hi > {nongit}/.scratch/{s[:8]}/a", True, s, nongit),
+        ("워크트리: 주 저장소 이름 폴더", f"echo hi > {scr}/mainrepo/{s[:8]}/a", False, s, wt),
+        ("워크트리: 워크트리 이름 폴더", f"echo hi > {scr}/wt-x/{s[:8]}/a", False, s, wt),
+        ("워크트리: 그 밖 이름 폴더", f"echo hi > {scr}/other/{s[:8]}/a", True, s, wt),
+        ("워크트리: 주 저장소 이름 다른 세션", f"echo hi > {scr}/mainrepo/{other[:8]}/a", True, s, wt),
+        ("변수 대상", f"echo hi > $X/{s[:8]}/a", True, s, proj),
+        ("글롭 대상", f"echo hi > {f1}/*.txt", True, s, proj),
+        ("브레이스 대상", f"echo hi > {f1}/{{a,b}}", True, s, proj),
+        ("백틱 포함", f"echo `date` > {f1}/a", True, s, proj),
+        ("$( ) 포함", f"echo $(date) > {f1}/a", True, s, proj),
+        ("heredoc 은 판정 불가", f"cat > {f1}/a <<'EOF'\nx\nEOF", True, s, proj),
+        ("상대 경로 대상", f"echo hi > .scratch/{s[:8]}/a", True, s, proj),
+        ("따옴표 접합 대상", f'echo hi > {f1}/"a"', True, s, proj),
+        ("HOME 재정의 뒤 ~/", f"HOME=/x; echo hi > ~/proj/.scratch/{s[:8]}/a", True, s, proj),
+        ("자기 폴더 + 밖 리다이렉션", f"echo hi > {f1}/a; echo hi > /tmp/zz-{s[:8]}", True, s, proj),
+        ("cp 대상이 밖", f"cp {f1}/a /tmp/zz-{s[:8]}", True, s, proj),
+        ("mv 원본이 밖", f"mv /tmp/zz-{s[:8]} {f1}/b", True, s, proj),
+        ("mv 대상이 밖", f"mv {f1}/a /tmp/zz-{s[:8]}", True, s, proj),
+        ("rm 인자 하나가 밖", f"rm -rf {f1}/a /tmp/zz-{s[:8]}", True, s, proj),
+        ("cp -s(링크 생성)", f"cp -s /etc/hostname {f1}/l", True, s, proj),
+        ("cp -t(대상 지정)", f"cp -t {f1} a", True, s, proj),
+        ("rm 긴 옵션", f"rm --recursive {f1}/x", True, s, proj),
+        ("touch -d 시각 값", f"touch -d 2020-01-01 {f1}/t", True, s, proj),
+        ("xargs 뒤 cp", f"ls | xargs cp {f1}/a {f1}/", True, s, proj),
+        ("ln 은 중화 대상 아님", f"ln -s /etc {f1}/l", True, s, proj),
+        ("tee 는 중화 대상 아님", f"echo hi | tee {f1}/a", True, s, proj),
+        ("뒤따르는 pkill", f"cp a {f1}/ ; pkill -f foo", True, s, proj),
+        ("뒤따르는 rm /", f"mkdir -p {f1}/a && rm -rf /", True, s, proj),
+        # ── 차단 유지: 자기 폴더 대상이어도 기존 규칙 위반
+        ("own + python3 -c 쓰기", f"python3 -c \"open('x','w')\" > {f1}/out", True, s, proj),
+        ("own + | bash", f"echo x | bash > {f1}/out", True, s, proj),
+        ("own + | python3", f"echo x | python3 > {f1}/out", True, s, proj),
+        ("own + 명령 위치 변수", f"$X a > {f1}/out", True, s, proj),
+        ("own + 명령 위치 글롭", f"{{r,}}m -rf x > {f1}/out", True, s, proj),
+        ("own + curl -o", f"curl -o {f1}/out https://u/y", True, s, proj),
+        ("own + sed -i", f"sed -i s/a/b/ {f1}/out", True, s, proj),
+        ("own + eval", f"eval x > {f1}/out", True, s, proj),
+        ("own + 인라인 xargs python -c", f"ls | xargs python3 -c x > {f1}/out", True, s, proj),
+    ]
+    return cases, home
+
+
+def run_own_cases():
+    """자기 임시 폴더 예외 시험 실행 + scratch-root 부재 홈에서 두 번째 후보만 쓰이는지 확인. 실패 수 반환."""
+    bad = 0
+    n = 0
+    with tempfile.TemporaryDirectory() as home:
+        cases, _ = build_own_cases(home)
+        for name, cmd, want, sid, cwd in cases:
+            blocked, rc, reason = run_own(cmd, home, sid, cwd)
+            ok = blocked == want and rc == 0
+            bad += 0 if ok else 1
+            n += 1
+            print(f"{'OK ' if ok else 'FAIL'} [자기 폴더] {name}: block={blocked} (기대 {want}) rc={rc}")
+            if not ok and reason:
+                print(f"     사유: {reason}")
+    with tempfile.TemporaryDirectory() as home:
+        proj = os.path.join(home, "proj")
+        subprocess.run(["git", "init", "-q", proj], check=True)
+        sid = "ab12cd34-0000-4000-8000-000000000000"
+        for name, cmd, want in [
+            ("scratch-root 부재: 프로젝트 안 폴더는 통과", f"echo hi > {proj}/.scratch/ab12cd34/a", False),
+            ("scratch-root 부재: 그 밖은 차단", f"echo hi > {home}/scr/proj/ab12cd34/a", True),
+        ]:
+            blocked, rc, reason = run_own(cmd, home, sid, proj)
+            ok = blocked == want and rc == 0
+            bad += 0 if ok else 1
+            n += 1
+            print(f"{'OK ' if ok else 'FAIL'} [자기 폴더] {name}: block={blocked} (기대 {want}) rc={rc}")
+    return bad, n
+
+
+fail = 0
+total = 0
+if not os.environ.get("BWC_ONLY_OWN"):   # 자기 폴더 시험만 빠르게 돌리고 싶을 때
+    with tempfile.TemporaryDirectory() as home:
+        prompt_log = os.path.join(home, "prompts.jsonl")
+        with open(prompt_log, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": "2026-09-14T00:00:00Z", "cwd": home,
+                                "prompt": FIXTURE_PROMPT}, ensure_ascii=False) + "\n")
+        for name, cmd, want in CASES:
+            blocked, rc, reason = run(cmd, home, prompt_log)
+            ok = blocked == want and rc == 0
+            fail += 0 if ok else 1
+            print(f"{'OK ' if ok else 'FAIL'} {name}: block={blocked} (기대 {want}) rc={rc}")
+            if not ok and reason:
+                print(f"     사유: {reason}")
+    total += len(CASES)
+
+own_fail, own_n = run_own_cases()
+fail += own_fail
+total += own_n
+
+print(f"\n{'ALL PASS' if fail == 0 else f'FAIL {fail}'} ({total} cases)")
 sys.exit(1 if fail else 0)

@@ -12,13 +12,21 @@ export LC_ALL=C   # 바이트 단위 매칭 고정 (15라운드 Grok 낮음: bas
 # 시크릿·lint 검사를 건너뛴 채 통과 수에 셌다(2026-10-01 감사). 개행이 든 이름은 조각나 아래 조회 실패 → 차단(fail-closed).
 FILES=$(git diff --cached -z --name-only --diff-filter=ACMR 2>/dev/null | tr '\0' '\n')
 FAIL=0
+SECRET_FAIL=0   # 시크릿 검사 단계(탐지·검사 불가)에서 난 실패만 1 — 종료 안내 문구를 원인에 맞추는 데 쓴다
 REPORT=""
+
+# 기록 폴더 목록(정규식 교대) — 아래 두 검사(삭제 역참조 · stage 문서의 포인터)가 한 곳에서 같이 쓴다
+# 기록은 당시 사실이라 고쳐 쓰지 않는다. 다만 한 번도 없던 경로를 새로 적는 실수는 계속 잡는다 (2026-11-10 사용자 결정 · designer 정의 삭제 커밋 실사고)
+RECORD_DIRS='_audit|intent|docs|graphify-out'
 
 # 삭제·rename 옛 경로 역참조 검사는 **조기 종료보다 먼저** (5라운드 Codex: 삭제-only 커밋은 FILES 가 비어 검사 없이 통과했고 rename 옛 경로는 대상 밖이었다)
 DELETED=$( { git diff --cached --name-only --diff-filter=D 2>/dev/null; git diff --cached --name-status --diff-filter=R 2>/dev/null | awk -F'\t' '{print $2}'; } | grep -E '^(rules|rules-lazy|agents|skills|commands|scripts)/.*\.(md|sh)$') || true
 while IFS= read -r DEL; do
     [ -z "$DEL" ] && continue
-    HITS=$(git grep --cached -l -F "$DEL" -- '*.md' 2>/dev/null | grep -vxF "$DEL" | head -3 | paste -sd, -)
+    # 기록 폴더(_audit·intent·docs·graphify-out)는 날짜 붙은 사실 기록과 생성물이라 고쳐 쓰지 않는다 → 히트에서 뺀다
+    # (2026-11-10 사용자 결정. designer 정의 삭제 커밋이 기록 14건에 막힌 실사고). git grep 은 비ASCII 경로를 "…" 로 감싸므로 앞 따옴표 허용.
+    # head -3 보다 앞에서 거른다: 기록 3건이 앞자리를 채워 살아 있는 히트를 가리지 않게.
+    HITS=$(git grep --cached -l -F "$DEL" -- '*.md' 2>/dev/null | grep -vxF "$DEL" | grep -vE "^\"?($RECORD_DIRS)/" | head -3 | paste -sd, -)
     if [ -n "$HITS" ]; then
         REPORT="${REPORT}\n🔗 [BROKEN POINTER] 삭제·이동 대상 $DEL 을 아직 참조: $HITS\n"
         FAIL=1
@@ -50,7 +58,7 @@ while IFS= read -r FILE; do
     # 조회 실패는 건너뛰지 않고 실패로 센다(검사 없이 통과 수에 세던 구멍, 2026-10-01 감사)
     if ! git cat-file -e ":$FILE" 2>/dev/null; then
         REPORT="${REPORT}\n🔐 [SECRET SCAN SKIPPED] index 에서 파일을 읽지 못해 검사 불가(이름에 개행·특수문자?): ${#FILE}자 이름 — 이름을 바꿔 다시 stage\n"
-        FAIL=1
+        FAIL=1; SECRET_FAIL=1
         continue
     fi
     # 바이너리 스킵 폐지 (6라운드 렌즈2 실측: NUL 1바이트만 섞어도 file 이 binary 로 판정해 시크릿 검사를 통째로 건너뛰었다)
@@ -81,7 +89,7 @@ while IFS= read -r FILE; do
     esac
     if [ -n "$SECRET_LOC" ]; then
         REPORT="${REPORT}\n🔐 [SECRET DETECTED] $FILE (${SECRET_LOC} — 원문 비출력, 해당 라인을 직접 확인 후 키 회전·제거)\n"
-        FAIL=1
+        FAIL=1; SECRET_FAIL=1
     fi
 done <<< "$FILES"
 
@@ -89,10 +97,18 @@ done <<< "$FILES"
 # 출력·모델 ID 라인 출력)가 시크릿이 든 라인 원문을 재노출할 수 있으므로 도달 자체를 차단
 if [ $FAIL -eq 1 ]; then
     echo ""
-    echo "❌ ci-gate-commit FAILED — commit blocked (secret 탐지 — 후속 검사 생략)"
-    echo -e "$REPORT"
-    echo ""
-    echo "💡 해당 라인 확인 → 키 회전·제거 후 재커밋"
+    if [ "$SECRET_FAIL" -eq 1 ]; then
+        echo "❌ ci-gate-commit FAILED — commit blocked (secret 탐지 — 후속 검사 생략)"
+        echo -e "$REPORT"
+        echo ""
+        echo "💡 해당 라인 확인 → 키 회전·제거 후 재커밋"
+    else
+        # 비밀값 히트 없이 깨진 포인터(삭제·이동 대상 역참조)만 있는 경우 — 원인을 오해하지 않게 별도 문구
+        echo "❌ ci-gate-commit FAILED — commit blocked (깨진 포인터 — 후속 검사 생략)"
+        echo -e "$REPORT"
+        echo ""
+        echo "💡 삭제·이동한 파일을 가리키는 문서가 남았다 → 포인터를 고친 뒤 재커밋"
+    fi
     exit 1
 fi
 
@@ -100,6 +116,7 @@ fi
 # worktree 검사는 stage 후 worktree 수정 시 커밋될 내용과 다른 것을 검사하게 됨)
 LINT_TMP=$(mktemp -d)
 trap 'rm -rf "$LINT_TMP"' EXIT
+ESLINT_NOCONF=0   # 설정 파일이 없어 린트를 못 돈 JS·TS 파일 수(실패로 세지 않고 아래에서 경고만 낸다)
 while IFS= read -r FILE; do
     [ -z "$FILE" ] && continue
     git cat-file -e ":$FILE" 2>/dev/null || continue
@@ -108,13 +125,35 @@ while IFS= read -r FILE; do
     SNAP="$LINT_TMP/$FILE"
     mkdir -p "$(dirname "$SNAP")"
     git show ":$FILE" > "$SNAP" 2>/dev/null || continue
+    # 임시 사본은 실행 권한이 없어, shebang 있는 실행 .py(mode 100755)를 ruff 가 EXE001 로 오탐해 커밋이 막혔다(2026-11-12 두 번).
+    # mode 는 worktree 가 아니라 index 에서 읽는다(이 블록의 원칙: 커밋될 내용 기준). 조회·chmod 실패는 종전과 같게 둔다.
+    # 사본은 lint 만 하고 실행하지 않으므로 소유자 실행 권한만 줘도 안전하다.
+    [ "$(git --literal-pathspecs ls-files -s -- "$FILE" 2>/dev/null | cut -d' ' -f1)" = "100755" ] && chmod u+x "$SNAP" 2>/dev/null
 
     case "$EXT" in
         py)
             command -v ruff &>/dev/null && LINT_OUT=$(ruff check "$SNAP" 2>&1 | head -10 | sed "s|$LINT_TMP/||g")
             ;;
         ts|tsx|js|jsx)
-            command -v eslint &>/dev/null && LINT_OUT=$(eslint "$SNAP" 2>&1 | head -10 | sed "s|$LINT_TMP/||g")
+            if command -v eslint &>/dev/null; then
+                ES_RAW=$(eslint "$SNAP" 2>&1); ES_RC=$?
+                # ESLint 설정 파일이 없으면 코드를 검사한 것이 아니라 도구가 돌지 못한 것이다. 이를 실패로 세면 설정이 없는
+                # 서버에서 JS·TS 를 만지는 커밋이 전부 막힌다(2026-10-27 실사고: 병합이 들여온 mods/ 17개). 건너뛰고 아래에서
+                # 경고만 낸다. 설정이 있는데 나는 오류(문법 오류 포함)는 그대로 실패다.
+                # 판별은 종료 코드 2(ESLint 가 설정·내부 오류에 쓰는 값, 린트 오류는 1)와 문구가 둘 다 맞을 때만이다.
+                # 문구만 보면 소스에 같은 문구를 심어 진짜 오류를 가릴 수 있다(qa 2026-10-27 지적).
+                ES_NOCONF=0
+                if [ "$ES_RC" -eq 2 ]; then
+                    case "$ES_RAW" in
+                        *"ESLint couldn't find a configuration file"*|*"ESLint couldn't find an eslint.config"*) ES_NOCONF=1 ;;
+                    esac
+                fi
+                if [ "$ES_NOCONF" -eq 1 ]; then
+                    ESLINT_NOCONF=$((ESLINT_NOCONF + 1))
+                else
+                    LINT_OUT=$(printf '%s\n' "$ES_RAW" | head -10 | sed "s|$LINT_TMP/||g")
+                fi
+            fi
             ;;
         sh|bash)
             command -v shellcheck &>/dev/null && LINT_OUT=$(shellcheck "$SNAP" 2>&1 | head -10 | sed "s|$LINT_TMP/||g")
@@ -137,12 +176,13 @@ while IFS= read -r FILE; do
         FAIL=1
     fi
 done <<< "$FILES"
+if [ "$ESLINT_NOCONF" -gt 0 ]; then
+    echo "⚠️  [ESLINT NO CONFIG] ESLint 설정 파일이 없어 JS·TS ${ESLINT_NOCONF}개의 린트(문법 오류 검사 포함)를 건너뜀 (실패 아님) — 이 서버에서 린트하려면 ESLint 설정이 필요"
+fi
 
 # 하네스 .md 무결성 검사 (staged *.md만 대상 — 없으면 즉시 스킵)
 MD_FILES=$(echo "$FILES" | grep -E '\.md$') || true
 if [ -n "$MD_FILES" ]; then
-    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || REPO_ROOT="$HOME/.claude"
-
     # 1) 깨진 파일 포인터 검사 (FAIL — 커밋 차단)
     POINTER_PATTERN='(rules|rules-lazy|agents|skills|commands|scripts)/[A-Za-z0-9_/.-]+\.(md|sh)'
     while IFS= read -r FILE; do
@@ -166,6 +206,10 @@ if [ -n "$MD_FILES" ]; then
             esac
             # 대상 존재도 index 기준 (4라운드 Codex 지적: 워킹트리 확인은 "포인터만 stage + 대상 untracked" 를 통과시켰다)
             if ! git cat-file -e ":$REF" 2>/dev/null; then
+                # 기록 폴더 문서가 «과거에 저장소에 있던 경로» 를 가리키면 히트로 세지 않는다 (이력 조회는 히트가 난 때만)
+                if [[ "$FILE" =~ ^($RECORD_DIRS)/ ]] && [ -n "$(git --literal-pathspecs log -1 --format=%H HEAD -- "$REF" 2>/dev/null)" ]; then
+                    continue
+                fi
                 REPORT="${REPORT}\n🔗 [BROKEN POINTER] $FILE: $REF (index 에 없음 — untracked 대상이면 함께 stage)\n"
                 FAIL=1
             fi
@@ -201,7 +245,6 @@ fi
 # 예산 갱신 시 _audit/history 기준선과 함께.
 AO_TOUCHED=$(echo "$FILES" | grep -E '^(CLAUDE\.md|rules/.*\.md)$') || true
 if [ -n "$AO_TOUCHED" ]; then
-    AO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || AO_ROOT="$HOME/.claude"
     # index blob 기준 합산 (2026-08-25 3라운드 검수: 워킹트리 cat 은 stage 후 되돌리기로 우회 가능했음 — 위 원칙과 일치시킴)
     AO_TOTAL=0
     while IFS= read -r AO_F; do   # 줄 단위 (공백 포함 파일명 분할 방지 — 5라운드 Codex)

@@ -13,7 +13,7 @@
 | **Interval `/loop`** | `/loop interval=5m` 등 | 고정 (5m / 30m / 1h) | wandb 학습 모니터링, PR 상태 babysit | 사용자 중단 또는 목표 달성 |
 | **Dynamic `/loop`** | `/loop dynamic` | 자가 페이싱 (이전 결과 기반 조정) | CI 대기, deploy 점검, 비동기 작업 완료 감지 | 조건 충족 시 자동 종료 |
 | **Ralph Wiggum** | `ralph-loop:ralph-loop` | 테스트 FAIL 시마다 | qa 테스트 자동 재시도, import/경로 오류 반복 수정 | PASS 또는 위임 한도 초과 |
-| **G-E Loop** | (내장 — 스킬 없음) | coder ↔ qa 메시지 교환 라운드 | coder 수정 → qa 검증 → 재수정 자동화 | 3회 초과 → main 에스컬레이션 |
+| **G-E Loop** | (내장 — 스킬 없음) | coder ↔ qa 메시지 교환 라운드 | coder 수정 → qa 검증 → 재수정 자동화 (호출은 main 중계) | 3회 소진 → main 에스컬레이션 |
 
 ---
 
@@ -22,6 +22,8 @@
 아래 키워드가 감지될 때 자동으로 모니터링 여부를 질문한다:
 - 파일명: `train.py`, `run_trains.py`
 - 출력 패턴: `wandb run started`, `epoch begin`, `Epoch [N`, `step [N`
+
+> 학습 와쳐(`tools/train-watcher/train-watcher.sh`)가 부착돼 있으면 ntfy·eval 이 자동이므로 폴링 모니터링은 불필요하다(`background-task.md` § 학습 와쳐 부착). 아래 선택은 고르게 하는 것이므로 결정 팝업이 우선이다(CLAUDE.md 원칙 7.5).
 
 ```
 루프 학습 시작이 감지되었습니다. 지속적으로 진행 상황을 모니터링할까요?
@@ -42,7 +44,7 @@
 
 `/loop` 또는 모니터링 추천 시 아래 4개 표를 반드시 출력한다.
 
-### 1) Sonnet 1턴 추정 (모니터링 경량 기준 — 참고치)
+### 1) Sonnet 1턴 추정 (모니터링 경량 기준 — 참고치, 이하 단가표 전부 Sonnet 가격에 묶인 참고치)
 
 | 항목 | 수치 |
 |------|------|
@@ -81,7 +83,7 @@ G-E 루프는 아래 조건 **모두** 충족 시 자동 진입한다:
 |------|------|
 | FAIL 위치 명확 | `{파일}:{라인}` 단위로 특정 가능 |
 | FAIL 원인 명확 | 단일 지점 수정으로 해결 가능 (아키텍처 변경 ❌) |
-| 재시도 횟수 < 3 | 동일 파일·함수 기준 |
+| 재시도 3회 미소진 | 동일 파일·함수 기준 |
 | 동일 원인 < 2회 연속 | 무한 루프 방지 |
 
 > **이중 카운터 (병행)**: 총 재시도 상한 3회(원인 불문) + 동일 원인 2회 연속 시 **조기** 에스컬레이션 — 후자는 상한이 아니라 조기 종료 조건. coder.md·qa.md의 동일 서술과 한 설계다. (Ralph 루프의 동일 원인 3회 기준과는 별개 루프)
@@ -115,7 +117,8 @@ FAIL 발생 시 아래 순서로 판단:
 ralph-loop:ralph-loop
 
 # G-E Loop (자동 진입 — 별도 명령 없음)
-# qa FAIL 보고 수신 시 coder가 자동으로 G-E Loop 진입
+# qa FAIL 보고를 받은 main 이 coder 를 다시 spawn 해 G-E Loop 진입
+# (subagent 는 Agent 도구가 없어 coder·qa 호출은 main 이 번갈아 중계한다)
 ```
 
 ---
@@ -123,7 +126,7 @@ ralph-loop:ralph-loop
 ## G-E Loop 흐름도
 
 ```
-[main 요청]
+[main 요청]   ※ 아래 coder·qa·scout 호출은 전부 main 이 번갈아 spawn 한다(subagent 는 서로 못 부름)
   ↓
 [scout 정찰] → 파일 목록·라인 정보
   ↓
@@ -141,14 +144,14 @@ ralph-loop:ralph-loop
                 ↓
               ↑ 최대 3회 반복 ↑
                 ↓
-              3회 초과 → main 에스컬레이션 또는 Ralph Wiggum 트리거
+              3회 소진 → main 에스컬레이션 또는 Ralph Wiggum 트리거
 ```
 
 ---
 
 ## main 에스컬레이션 형식
 
-G-E Loop 종료 시 (3회 초과 또는 조건 미충족):
+G-E Loop 종료 시 (3회 소진 또는 조건 미충족):
 
 ```
 ⚠️ G-E Loop 종료 (자동 해결 실패):

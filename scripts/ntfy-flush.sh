@@ -58,8 +58,20 @@ sent_count() {
     echo "${n:-0}"
 }
 
+# halt 가 유효 = 파일이 있고 수정 시각이 NTFY_HALT_RETRY_SEC(기본 3600, 0=하루 통째) 초 이내.
+# claude-notify.sh 의 halt_active 와 같은 판정이다(새 공용 파일을 만들지 않으려고 두 스크립트에 같은 몇 줄을 둔다).
+halt_active() {
+    local f="$USAGE_DIR/ntfy-$DAY.halt" sec="${NTFY_HALT_RETRY_SEC:-3600}" age
+    [ -f "$f" ] || return 1
+    [[ "$sec" =~ ^[0-9]{1,6}$ ]] || sec=3600
+    sec=$((10#$sec))
+    [ "$sec" -eq 0 ] && return 0
+    age=$(( $(date +%s) - $(stat -c %Y "$f" 2>/dev/null || echo 0) ))
+    [ "$age" -lt "$sec" ]
+}
+
 [ "$(queue_count)" -gt 0 ] || exit 0
-[ -f "$USAGE_DIR/ntfy-$DAY.halt" ] && exit 0
+halt_active && exit 0
 
 # 진행 없이 멈춘 뒤에는 BACKOFF_SEC 동안 쉰다: 장애 중 매분 시도가 발송 기록을 불리지 않게 한다.
 BACKOFF_FILE="$USAGE_DIR/ntfy-flush.backoff"
@@ -79,7 +91,7 @@ while [ "$sent" -lt "$MAX" ] && [ "$SECONDS" -lt 42 ]; do
     before=$(queue_count)
     sent_before=$(sent_count)
     [ "$before" -gt 0 ] || break
-    [ -f "$USAGE_DIR/ntfy-$DAY.halt" ] && break
+    halt_active && break
     CLAUDE_NOTIFY_FLUSH_ONLY=1 timeout 15 bash "$NOTIFY" </dev/null
     rc=$?
     after=$(queue_count)

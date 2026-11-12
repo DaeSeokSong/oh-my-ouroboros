@@ -61,7 +61,7 @@ model: inherit
 ### 최신 근거 외부 검색 (Tavily 발견 + citation-verifier 검증)
 Mem0에 저장된 논문이 2년 이상 경과했거나 최신 반박 논문이 필요할 때:
 → tavily-auto.md §1 쿼리 컨벤션 참조 (신경과학 유형) — 최신 리뷰 논문·메타 분석 결과로 인용 근거 최신성 보강
-→ **신경과학 논문 citation-verifier 검증 필수(철회게이트+stance 디베이트)**: 인용하는 신경과학 논문에 대해 citation-verifier 소집
+→ **신경과학 논문 citation-verifier 검증 필수(철회게이트+원문 대조, 메커니즘 근거라 stance 디베이트 선택 가능)**: 인용하는 신경과학 논문에 대해 citation-verifier 소집
   - editorialNotices(철회/정정) 확인 → 철회 논문 인용 방지
   - supporting/contrasting 비율로 학계 합의 수준 확인
   - 검증 결과를 Mem0에 저장: → mem0-templates.md T21 참조(source=citation-verifier)

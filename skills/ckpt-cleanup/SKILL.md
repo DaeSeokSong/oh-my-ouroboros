@@ -34,6 +34,8 @@ allowed-tools:
 | **DELETE 후보** | state ∈ {crashed, failed, killed} 또는 태그 `ABORTED` / (`--assume-cleaned` 시) 매칭됐으나 무태그 = wandb-cleanup의 "나머지" 계층 | purge 스크립트에 포함 (사용자 검토 후 직접 실행) |
 | **HOLD** | 태그 `ambiguous` / 매칭 실패(unmatched) / wandb 미연결 | 보류 — 목록만 보고, 사용자 수동 판단 |
 
+분류는 KEEP → HOLD → DELETE 순 첫 일치입니다(`ambiguous` 는 실패 상태여도 HOLD).
+
 `--assume-cleaned`는 **wandb-cleanup 완료를 전제**로 무태그 run을 비유의미로 간주하는 플래그 — wandb-cleanup을 안 돌린 프로젝트에서 켜면 오분류하므로 금지.
 
 ## 절차

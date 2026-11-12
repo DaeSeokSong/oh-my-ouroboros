@@ -17,6 +17,8 @@ export type DecisionItem = {
   id: string
   title: string
   problem?: string
+  scenario: string
+  terms?: Array<{ term: string; meaning: string }>
   experiments?: DecisionExperiment[]
   options: DecisionOption[]
 }
@@ -33,6 +35,11 @@ declare module 'claude-code' {
       answers: Record<string, number>
       texts: Record<string, string>
       page: number
+      userSaidHidden: boolean
+      unplaced: boolean
+      t41Logged: number
+      answeredSinceHuman: boolean
+      mobileMode: boolean
     }
   }
 }

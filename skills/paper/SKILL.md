@@ -29,13 +29,15 @@ $ARGUMENTS 를 파싱하여 아래 순서로 실행:
 
 ## 페르소나 배정 기준
 
-| 페르소나 | 모델 | 역할 |
-|----------|------|------|
-| Retriever | sonnet (**searcher 에이전트로 spawn** — Tavily 직접 호출 허용 주체) | 레퍼런스 논문/Figure 스타일 탐색 (Tavily 1순위 + WebSearch 보조) |
-| Planner | opus | 구성 요소 및 배치 구조 설계 |
-| Stylist | sonnet | 학술지 규정 맞춤 디자인 |
-| Visualizer | haiku | 템플릿 기반 고화질 다이어그램/그래프 스크립트 한정 — 신규 수식·복잡 로직 포함 시 sonnet 격상 (model-assignment §3) |
-| Critic | opus | 논문-코드 일치성 검토, 리뷰어 관점 평가 |
+| 페르소나 | 수행 주체 | 역할 |
+|----------|----------|------|
+| Retriever | **searcher 에이전트** (Tavily 직접 호출 허용 주체, 학술 문헌 탐색의 모델 · effort 는 `rules/model-assignment.md` 예외 표) | 레퍼런스 논문/Figure 스타일 탐색 (Tavily 1순위 + WebSearch 보조) |
+| Planner | **planner 에이전트** | 구성 요소 및 배치 구조 설계 |
+| Stylist | **main** (`/figure` 스킬의 스타일 단계) | 학술지 규정 맞춤 디자인 |
+| Visualizer | **main** (`/figure` 스킬의 그리기 단계, 신규 수식·복잡 로직이 든 스크립트는 coder 위임) | 템플릿 기반 고화질 다이어그램/그래프 스크립트 |
+| Critic | **researcher 에이전트** | 논문-코드 일치성 검토, 리뷰어 관점 평가 |
+
+> 페르소나 이름은 역할 구분용이고 소집 대상이 아니다. Stylist · Visualizer · Critic 같은 이름의 에이전트는 에이전트 표에 없어 훅이 거부한다(`skills/figure/SKILL.md` § 단계 구성). 소집은 main 이 한다.
 
 ## 작업 유형별 필요 멤버
 
@@ -52,7 +54,7 @@ $ARGUMENTS 를 파싱하여 아래 순서로 실행:
 논문팀 내 Figure 작업 시 `/figure` 스킬 품질 기준 자동 적용:
 - 아키텍처/흐름도 → **TikZ** (matplotlib 금지)
 - 데이터 플롯 → matplotlib/seaborn
-- 생성 후 sonnet UX/UI 검수 **필수**
+- 생성 후 main 이 PNG 를 Read 로 열어 UX/UI 검수 **필수** (`/figure` 스킬 10단계), 논문 본문 대조는 researcher 검수
 
 ## 논문용 실험 설계 점검 (학습이 걸린 경우, 2026-10-12)
 

@@ -221,7 +221,7 @@ Phase별 task가 독립적이면 **subagent-driven** 실행을 권장:
 - task별 fresh subagent(coder) + 2단계 리뷰(qa: spec 준수 → 코드 품질)
 - subagent는 세션 히스토리 상속 ❌ — main이 필요한 컨텍스트만 정밀 구성
 - spawn prompt 서두에 `[SKILL_DEPTH: 1]` 표기(discuss 와 같은 표기, `rules/agent-routing.md` § SKILL_DEPTH 전달)
-- 모델 선택: 기계적=haiku/sonnet, 통합·판단=sonnet, 설계·리뷰=opus (model-assignment 정렬)
+- 모델 선택: 기계적=haiku/sonnet, 설계·리뷰=opus. 통합·판단·결합도 높은 구현은 main 직접 또는 opus 구현 subagent 1개 (`rules/model-assignment.md` §1·«구현 갈래» 정렬)
 - coder status 4종(DONE/CONCERNS/NEEDS_CONTEXT/BLOCKED) 핸들링
 > worktree 강제·자체 커밋 미적용 — 커밋은 `/commit`, push는 사용자 직접 (우리 git 규칙 우선).
 

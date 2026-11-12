@@ -307,7 +307,7 @@ if G.number_of_nodes() == 0:
 # 오염 시그니처 가드 (2026-08-06 신설 — 동일 오염 재발: 4a2cc52f·e8136924·0cc685e5):
 # md 파일에 AST 노드가 붙은 그래프(+1,800여 노드)가 타 서버에서 생성·커밋돼 pull로 전파.
 # 원인 규명(2026-08-07 ad45edfc): graphify 차이가 아니라 $HOME/.claude가 심링크인 서버
-# 에서 autoindex 훅의 하네스 격리 가드가 편측 물리화로 무력화 → git commit마다
+# (주력 빌더 서버)에서 autoindex 훅의 하네스 격리 가드가 편측 물리화로 무력화 → git commit마다
 # AST-only `graphify update`가 하네스에 몰래 실행돼 md AST 노드를 주입한 것.
 # 발생원은 수정됐지만 이 가드는 유지한다 — 동일 계열(경로 가드 우회·수동 update 등)의
 # 미지 발생원이 또 생겨도 여기서 차단된다. shrink/팽창 가드는 크기 "비율"이라 기준선이
@@ -461,7 +461,7 @@ PYEOF
         exit 1
     fi
 
-    "$PY" - <<'PYEOF' >> "$LOG" 2>&1
+    if ! "$PY" - <<'PYEOF' >> "$LOG" 2>&1
 import json, os
 from pathlib import Path
 from datetime import datetime, timezone
@@ -475,8 +475,10 @@ cost = json.loads(cp.read_text(encoding="utf-8")) if cp.exists() else {"runs": [
 cost["runs"].append({"date": datetime.now(timezone.utc).isoformat(), "input_tokens": 0, "output_tokens": 0, "files": detect.get("total_files", 0), "mode": "auto-refresh"})
 cp.write_text(json.dumps(cost, ensure_ascii=False), encoding="utf-8")
 PYEOF
-    # save_manifest 실패는 stale manifest → 다음 증분 detect 기준 오염 (correctness) → 중단 (2026-07-17 Codex)
-    [[ $? -eq 0 ]] || { log "manifest/cost 저장 실패 — 중단 (stale manifest 방지)"; exit 1; }
+    then
+        # save_manifest 실패는 stale manifest → 다음 증분 detect 기준 오염 (correctness) → 중단 (2026-07-17 Codex)
+        log "manifest/cost 저장 실패 — 중단 (stale manifest 방지)"; exit 1
+    fi
 
     rm -f graphify-out/.graphify_detect.json graphify-out/.graphify_extract.json \
           graphify-out/.graphify_ast.json graphify-out/.graphify_semantic_new.json \

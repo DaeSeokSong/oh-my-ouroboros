@@ -17,7 +17,7 @@ except ImportError:   # 시험은 네트워크를 쓰지 않으므로 빈 모듈
     sys.modules["requests"] = types.ModuleType("requests")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import confluence_patch_page as cpp  # noqa: E402
+import confluence_patch_page as cpp
 
 
 def test_sequential_replace_interference_is_avoided():
@@ -185,6 +185,26 @@ def test_dry_run_does_not_need_or_consume_approval(tmp_path, monkeypatch, approv
     monkeypatch.setattr(sys, "argv", sys.argv + ["--apply"])
     cpp.main()
     assert sent["body"] == "BBB ... CCC ..."
+
+
+def test_apply_with_credential_in_new_body_stops_before_put(tmp_path, monkeypatch, approval_env):
+    """2026-11-10 검토 관문: 스탬프가 통과로 바뀌어 있어도 게시 본문에 자격증명 꼴이 있으면 put 전에 멈춘다(가짜 값)."""
+    approval_env("9")
+    sent = _apply_setup(tmp_path, monkeypatch)
+    (tmp_path / "p.json").write_text('[{"anchor":"AAA","new":"password = FAKEpw12345"}]')
+    with pytest.raises(SystemExit) as e:
+        cpp.main()
+    assert "검토 관문" in str(e.value) and "FAKEpw" not in str(e.value) and not sent
+
+
+def test_future_skeleton_stamp_is_invalid(tmp_path, monkeypatch):
+    """2026-11-10 검수: 시각이 미래인 스탬프는 무효, 지금 시각이면 유효."""
+    monkeypatch.setattr(cpp, "SKELETON_STAMP_DIR", str(tmp_path))
+    h = cpp.hashlib.sha256(b"<p>x</p>").hexdigest()
+    for when, ok in ((time.time() + 3600, False), (time.time(), True)):
+        iso = cpp.datetime.fromtimestamp(when).astimezone().isoformat()
+        (tmp_path / f"{h}.json").write_text(json.dumps({"time": iso}))
+        assert cpp._skeleton_stamp_ok("<p>x</p>") is ok
 
 
 def test_main_rejects_bad_site_before_any_call(monkeypatch):

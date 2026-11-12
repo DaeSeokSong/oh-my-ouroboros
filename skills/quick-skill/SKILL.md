@@ -96,7 +96,7 @@ npx skills add anthropics/skills --skill skill-creator
 
 - **rule**: `~/.claude/rules-lazy/{name}.md` **기본** — `# 제목` + `> **로드 시점**: ...` 형식. always-on(`rules/`)은 매 턴 적용이 필수인 경우만 — 상시 로드 예산(CLAUDE.md·`rules/*.md` 합계 75,000B)은 커밋 시 `scripts/ci-gate-commit.sh` 가 검사하며 초과는 경고만 하고 커밋은 막지 않는다(2026-10-01 사용자 지시, learner.md § Zero-Sum)
 - **skill**: `~/.claude/skills/{name}/SKILL.md` **표준** — frontmatter(`description`, `model`) + 본문. **스킬 자체가 `/{name}` 슬래시 진입점 제공 — 동명 `commands/` wrapper 추가 금지** (중복 등재 재발 방지, 2026-07-15 전수 제거)
-- **agent**: `~/.claude/agents/{name}.md` — YAML frontmatter (`name`, `description`, `model`(별칭), `tools`) + 프롬프트 본문. 본문 말미에 최종 보고 계약(행두 `RESULT: <값>` 한 줄, 정본 `agents/coder.md` § 수정 완료 후)을 둔다
+- **agent**: `~/.claude/agents/{name}.md` — YAML frontmatter (`name`, `description`, `model`(별칭), `effort`(머리에 고정, 근거 `rules-lazy/model-assignment-rules.md` §9), `tools`, 필요 시 `mcpServers`·`disallowedTools`) + 프롬프트 본문. 본문 말미에 최종 보고 계약(행두 `RESULT: <값>` 한 줄, 정본 `agents/coder.md` § 수정 완료 후)을 둔다
 - **신설 커밋의 Intent**: `rules/`·`rules-lazy/`·`agents/`·`skills/`·`scripts/`·`tools/`·`config/` 에 새 파일을 넣는 커밋은 타입(`feat:`·`fix:`·`refactor:`)과 무관하게 본문에 `Intent: intent/YYYY-MM-DD-<slug>.md` 줄이 필요하다(commit-msg 훅이 차단, `skills/commit/SKILL.md`). 비자명하면 신설 전에 `/intent` 를 순차로 먼저 거친다
 
 초안 완료 후:

@@ -5,27 +5,55 @@ import os
 import pathlib
 import sys
 
+import pytest
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import band_server_collect as srv
 
-NVSMI = "0, 0, 14, 46068\n3, 96, 26419, 81559\n"
+NVSMI = "0, 0, 14, 46080\n3, 96, 26419, 81920\n"
 FREE = ("               total        used        free      shared  buff/cache   available\n"
         "Mem:    269484695552 41851256832 1000 0 2 227633438720\n"
         "Swap:            0           0           0\n")
 DF = ("Filesystem 1-blocks Used Available Capacity Mounted on\n"
-      "/dev/nvme0n1p2 943804760064 813882097664 129922662400 87% /\n")
+      "/dev/nvme0n1p2 1000000000000 813882097664 129922662400 87% /\n")
 
 def test_parse_gpus():
     assert srv.parse_gpus(NVSMI) == [
-        {"i": 0, "util": 0, "used": 14, "total": 46068},
-        {"i": 3, "util": 96, "used": 26419, "total": 81559}]
+        {"i": 0, "util": 0, "used": 14, "total": 46080},
+        {"i": 3, "util": 96, "used": 26419, "total": 81920}]
 
 def test_parse_gpus_garbage_is_none():
     assert srv.parse_gpus("NVIDIA-SMI has failed") is None
 
+# DGX Spark GB10(통합 메모리, 2026-10-16 실측): memory.used·total 이 [N/A] 라 시스템 메모리로 대신 채운다.
+NVSMI_UNIFIED = "0, 0, [N/A], [N/A]\n"
+MEMINFO = ("MemTotal:       125513944 kB\n"
+           "MemFree:        72910848 kB\n"
+           "MemAvailable:   104733472 kB\n")
+
+def test_parse_gpus_unified_uses_system_memory():
+    mem = srv.parse_meminfo(MEMINFO)
+    assert srv.parse_gpus(NVSMI_UNIFIED, mem) == [
+        {"i": 0, "util": 0, "used": (mem["total"] - mem["avail"]) // (1 << 20), "total": mem["total"] // (1 << 20), "unified": True}]
+    assert srv.parse_gpus(NVSMI, mem) == srv.parse_gpus(NVSMI)   # 전용 메모리 장치는 mem 을 주어도 그대로
+
+def test_parse_gpus_unified_without_mem_is_none():
+    assert srv.parse_gpus(NVSMI_UNIFIED) is None
+    assert srv.parse_gpus("0, 0, [N/A], 46080\n", {"total": 1, "avail": 0}) is None   # 한쪽만 [N/A] 는 쓰레기
+
+def test_parse_meminfo():
+    assert srv.parse_meminfo(MEMINFO) == {"total": 125513944 * 1024, "avail": 104733472 * 1024}
+    assert srv.parse_meminfo("MemTotal:       125513944 kB\n") is None
+    assert srv.parse_meminfo("") is None
+
 def test_parse_mem_and_disk():
     assert srv.parse_mem(FREE) == {"total": 269484695552, "avail": 227633438720}
-    assert srv.parse_disk(DF) == {"total": 943804760064, "avail": 129922662400}
+    assert srv.parse_disk(DF) == {"total": 1000000000000, "avail": 129922662400}
+
+def test_parse_mem_korean_locale_is_none():
+    # ko_KR 로케일의 free 는 첫 열이 «메모리:» 라 Mem: 파싱이 비므로 read_mem 은 /proc/meminfo 를 먼저 쓴다.
+    assert srv.parse_mem("               총계         사용        여분      공유    버퍼/캐시    가용\n"
+                         "메모리:    128526278656 21287047168 74641092608 835584 34661683200 107239231488\n") is None
 
 def test_read_sessions_whitelist_and_clean(tmp_path):
     (tmp_path / "111.json").write_text(json.dumps(
@@ -48,6 +76,15 @@ def test_read_sessions_job_id_only_8_hex(tmp_path):
 def test_read_sessions_skips_dead(tmp_path):
     (tmp_path / "222.json").write_text(json.dumps({"pid": 222, "sessionId": "a" * 8 + "-0000-0000-0000-" + "0" * 12, "name": "x", "status": "idle"}))
     assert srv.read_sessions(tmp_path, alive=lambda pid: False) == []
+
+def test_read_sessions_hides_spare_true_keeps_missing_or_false(tmp_path):
+    # 2026-11-06: spare=true(데몬 예비 세션, 입력 전)는 claude agents 화면처럼 숨기고, 키 없음·False 는 포함한다.
+    sid = "0c7530cd-4cc9-47a1-9df0-ab9103f6e70d"
+    (tmp_path / "301.json").write_text(json.dumps({"pid": 301, "sessionId": sid, "name": "0c7530cd", "status": "idle", "spare": True}))
+    (tmp_path / "302.json").write_text(json.dumps({"pid": 302, "sessionId": sid, "name": "used", "status": "idle"}))
+    (tmp_path / "303.json").write_text(json.dumps({"pid": 303, "sessionId": sid, "name": "f", "status": "idle", "spare": False}))
+    got = srv.read_sessions(tmp_path, alive=lambda pid: True, jobs_dir=tmp_path / "nojobs")
+    assert [s["name"] for s in got] == ["used", "f"]
 
 import band_work_collect as wrk
 
@@ -105,10 +142,9 @@ def _gpu_env(monkeypatch, tmp_path, elapsed, prev_age=None):
     calls = []
     def fake(argv, timeout=3):
         calls.append(argv[0])
-        if argv[0] == "pgrep":
-            return "123\n"
         return NVSMI if argv[0] == "nvidia-smi" else None
     monkeypatch.setattr(srv, "run", fake)
+    monkeypatch.setattr(srv, "nvidia_smi_pids", lambda: [123])   # pgrep 대신 /proc 훑기(2026-10-26)
     monkeypatch.setattr(srv, "_elapsed", lambda pid: elapsed)
     monkeypatch.setattr(srv, "CACHE_DIR", tmp_path)
     if prev_age is not None:
@@ -244,8 +280,8 @@ def test_parse_compute_apps_and_uuids():
     assert srv.parse_gpu_uuids("garbage\n\n") == {}
 
 def test_run_name_from_cgroup():
-    cg = "0::/user.slice/user-1000.slice/memguard-exp-mtl-14t-r72-1t-2731642.scope\n"
-    assert srv.run_name_from_cgroup(cg) == "exp-mtl-14t-r72-1t"
+    cg = "0::/user.slice/user-1000.slice/memguard-exp-demo-1a-x72-1t-2731642.scope\n"
+    assert srv.run_name_from_cgroup(cg) == "exp-demo-1a-x72-1t"
     assert srv.run_name_from_cgroup("0::/user.slice/session-3.scope\n") is None
     assert srv.run_name_from_cgroup("0::/memguard-bad name;x-12.scope") is None   # 이상한 글자
     assert srv.run_name_from_cgroup("0::/memguard-" + "a" * 70 + "-12.scope") is None   # 60자 초과
@@ -255,16 +291,16 @@ def test_cmdline_helpers():
     assert srv.max_epochs_from_cmdline(args) == 60                    # 여러 개면 마지막
     assert srv.max_epochs_from_cmdline(["python", "a.py"]) is None
     assert srv.max_epochs_from_cmdline(["max_epochs=abc"]) is None
-    assert srv.script_name_from_cmdline(["python", "/x/y/train_mtl.py", "--a"]) == "train_mtl.py"
+    assert srv.script_name_from_cmdline(["python", "/x/y/train_demo.py", "--a"]) == "train_demo.py"
     assert srv.script_name_from_cmdline(["python", "/x/bad name.py"]) is None
     assert srv.script_name_from_cmdline(["bash", "-c"]) is None
 
 def test_parse_ckpt_names_real_examples():
-    names = ["best-epoch=0004-val_gated_tri_mean=-0.2779.ckpt", "best-epoch=0009-val_gated_tri_mean=-0.2345.ckpt",
-             "best-epoch=0014-val_gated_tri_mean=-0.2247.ckpt", "last.ckpt", "notes.txt"]
+    names = ["best-epoch=0005-val_score=-0.3136.ckpt", "best-epoch=0010-val_score=-0.2688.ckpt",
+             "best-epoch=0015-val_score=-0.2571.ckpt", "last.ckpt", "notes.txt"]
     metric, ckpts, last = srv.parse_ckpt_names(names)
-    assert metric == "val_gated_tri_mean" and last is True
-    assert ckpts == [{"epoch": 4, "value": -0.2779}, {"epoch": 9, "value": -0.2345}, {"epoch": 14, "value": -0.2247}]
+    assert metric == "val_score" and last is True
+    assert ckpts == [{"epoch": 5, "value": -0.3136}, {"epoch": 10, "value": -0.2688}, {"epoch": 15, "value": -0.2571}]
 
 def test_parse_ckpt_names_edge_cases():
     assert srv.parse_ckpt_names([]) == (None, [], False)
@@ -586,7 +622,7 @@ def test_collect_carries_recent_train_when_stuck(monkeypatch, tmp_path):
 
 # ---- 와쳐 · 세션 작업(개정 11, 2026-10-16) ----
 def test_runner_pid_from_cgroup():
-    assert srv.runner_pid_from_cgroup("0::/user.slice/memguard-exp-mtl-14t-r72-1t-2731642.scope\n") == 2731642
+    assert srv.runner_pid_from_cgroup("0::/user.slice/memguard-exp-demo-1a-x72-1t-2731642.scope\n") == 2731642
     assert srv.runner_pid_from_cgroup("0::/user.slice/session-3.scope\n") is None
     assert srv.runner_pid_from_cgroup("0::/memguard-bad name;x-12.scope") is None
     assert srv.runner_pid_from_cgroup(None) is None
@@ -611,9 +647,139 @@ def test_collect_train_watcher_three_values(monkeypatch):
     monkeypatch.setattr(srv, "read_mounts", list)
     monkeypatch.setattr(srv, "read_watcher_pids", lambda: {100})
     monkeypatch.setattr(srv, "read_run", lambda pid, mounts: dict(runs[pid]))
+    monkeypatch.setattr(srv, "read_boot_id", lambda: "B")
+    monkeypatch.setattr(srv, "project_dirs_of", lambda pid, mounts: ["/root"])
+    monkeypatch.setattr(srv, "launch_state_runners", lambda dirs, boot, mounts, start=None: {100, 200})   # b 는 launch-set 판(와쳐 없음)
     got = srv.collect_train()
     assert [(r["name"], r["watcher"]) for r in got] == [("a", True), ("b", False), ("c", None)]
     assert all("runner_pid" not in r for r in got)                                              # 러너 pid 는 캐시에 쓰지 않는다
+
+@pytest.fixture(autouse=True)
+def _isolated_band_cache(tmp_path_factory, monkeypatch):
+    """Keep collect_train's remembered-watcher file out of the real cache dir (tests that need their own dir patch it again)."""
+    monkeypatch.setattr(srv, "CACHE_DIR", tmp_path_factory.mktemp("bandcache"))
+
+def _state(d, name, scope, boot="B"):
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / f"launch-state-{name}.json"
+    f.write_text(json.dumps({"name": name, "boot_id": boot, "train_scope": scope}))
+    return f
+
+def _lsr(*dirs, boot="B", start=None):
+    return srv.launch_state_runners([str(d) for d in dirs], boot, [], start)
+
+def test_watcher_state_five_cases(tmp_path):
+    launched = lambda rp: rp in _lsr(tmp_path)
+    assert srv.watcher_state(None, {5}, launched) is None                                       # 1) 러너 pid 없음
+    assert srv.watcher_state(5, {5}, launched) is True                                          # 2) 와쳐 있음
+    f = _state(tmp_path / ".scratch" / "launch", "a", "memguard-a-7.scope")
+    assert srv.watcher_state(7, set(), launched) is False                                       # 3) 상태 파일 있음 + 와쳐 없음
+    assert srv.watcher_state(8, set(), launched) is None                                        # 4) 상태 파일에 없는 러너(평가 작업)
+    f.write_text("{broken")
+    assert srv.watcher_state(7, set(), launched) is None                                        # 5) 상태 파일 깨짐
+
+def test_launch_state_runners_shapes_and_filters(tmp_path):
+    assert _lsr(tmp_path / "none") == set()                                                     # 폴더 없음
+    s = tmp_path / ".scratch"
+    _state(s / "launch", "a", "memguard-a-7.scope")                                             # 종전 꼴 .scratch/launch/
+    _state(s / "j1" / "launch", "b", "memguard-b-9.scope")                                      # 종전 꼴 .scratch/<잡>/launch/
+    _state(s / "launch-1024", "e", "memguard-e-21.scope")                                       # --state 임의 위치: launch/ 폴더 없이 한 단계
+    _state(s, "f", "memguard-f-23.scope")                                                       # .scratch 바로 아래
+    _state(s / "j2" / "launch" / "run1", "h", "memguard-h-27.scope")                            # project-C 꼴 .scratch/<잡>/launch/<판>/
+    _state(s / "x" / "y" / "z" / "w", "g", "memguard-g-25.scope")                               # 그보다 깊은 곳은 안 본다
+    _state(s / "launch", "c", "memguard-c-11.scope", boot="OLD")                                # 다른 부팅의 pid 는 무시
+    _state(s / "launch", "d", "not-a-scope")
+    (s / "launch" / "launch-state-list.json").write_text("[1]")
+    (s / "launch" / "launch-state-big.json").write_text(" " * (srv.MAX_STATE_BYTES + 1))
+    assert _lsr(tmp_path) == {7, 9, 21, 23, 27}
+    assert _lsr(tmp_path, boot=None) == set()
+
+def test_launch_state_runners_symlinked_scratch_and_nonlocal(tmp_path):
+    real = tmp_path / "disk2" / "scratch"; _state(real / "launch-1024", "a", "memguard-a-7.scope")
+    repo = tmp_path / "repo"; repo.mkdir(); os.symlink(real, repo / ".scratch")                 # .scratch 가 다른 디스크로 가는 심볼릭 링크
+    assert _lsr(repo) == {7}
+    nonlocal_mounts = [(str(tmp_path / "disk2"), "nfs4"), ("/", "ext4")]                       # 링크 대상이 네트워크 FS 이면 건너뜀(security)
+    assert srv.launch_state_runners([str(repo)], "B", nonlocal_mounts) == set()
+
+def test_launch_state_runners_newest_first_cap_and_boot_start(tmp_path, monkeypatch):
+    d = tmp_path / ".scratch" / "launch"; now = time.time()
+    for i in range(6):                                                                          # 낡은 상태 5개 + 가장 새 1개
+        os.utime(_state(d, f"o{i}", f"memguard-o{i}-{100 + i}.scope"), (now - 1000 + i,) * 2)
+    os.utime(_state(d, "new", "memguard-new-999.scope"), (now,) * 2)
+    monkeypatch.setattr(srv, "MAX_STATE_FILES", 3)
+    assert 999 in _lsr(tmp_path) and len(_lsr(tmp_path)) == 3                                   # 자르기 전에 최신순 정렬 — 새 판이 밀려나지 않는다
+    assert _lsr(tmp_path, start=now - 10) == {999}                                              # 이번 부팅 이전 수정 시각은 읽지 않고 버린다
+
+def test_launch_state_runners_survives_deeply_nested_json(tmp_path):
+    d = tmp_path / ".scratch" / "launch"; d.mkdir(parents=True)
+    (d / "launch-state-deep.json").write_text("[" * 20000 + "]" * 20000)                          # RecursionError 를 내는 입력
+    _state(d, "ok", "memguard-ok-31.scope")
+    assert _lsr(tmp_path) == {31}                                                               # 그 파일만 건너뛴다
+    assert srv.read_json_file(d / "launch-state-deep.json") is None
+
+def test_project_dirs_of(tmp_path, monkeypatch):
+    (tmp_path / ".git").write_text("gitdir: /x")                                                # worktree: .git 이 파일
+    sub = tmp_path / "a" / "b"; sub.mkdir(parents=True)
+    monkeypatch.setattr(srv.os, "readlink", lambda p: str(sub))
+    assert srv.project_dirs_of(1, []) == [str(sub), str(tmp_path / "a"), str(tmp_path)]         # cwd 에서 뿌리까지(뿌리 포함)
+    assert srv.project_dirs_of(1, None) == []                                                   # 마운트 표를 못 읽으면 건드리지 않는다
+    monkeypatch.setattr(srv.os, "readlink", lambda p: str(tmp_path / "a"))
+    assert srv.project_dirs_of(1, [(str(tmp_path / "a"), "nfs")]) == []                         # 로컬이 아니면 건드리지 않는다
+    monkeypatch.setattr(srv.os, "readlink", lambda p: (_ for _ in ()).throw(OSError()))
+    assert srv.project_dirs_of(1, []) == []
+
+def test_project_dirs_of_without_git_is_cwd_only(tmp_path, monkeypatch):
+    sub = tmp_path / "plain"; sub.mkdir()
+    monkeypatch.setattr(srv.os, "readlink", lambda p: str(sub))
+    monkeypatch.setattr(srv.os.path, "lexists", lambda p: False)
+    assert srv.project_dirs_of(1, []) == [str(sub)]
+
+def test_load_save_watched(tmp_path):
+    p = tmp_path / "w.json"; me = os.getpid(); st = srv._starttime(me)
+    assert st is not None and srv.load_watched(p, "B") == {}                                    # 파일 없음
+    srv.save_watched(p, "B", {me: st, 2**30: 5})
+    assert oct(p.stat().st_mode & 0o777) == "0o600"
+    assert srv.load_watched(p, "B") == {me: st}                                                 # 죽은 pid 는 정리
+    assert srv.load_watched(p, "OTHER") == {}                                                   # 다른 부팅
+    srv.save_watched(p, "B", {me: st + 1})
+    assert srv.load_watched(p, "B") == {}                                                       # 같은 pid 번호여도 starttime 이 다르면 다른 프로세스
+    p.write_text("{broken"); assert srv.load_watched(p, "B") == {}
+    p.write_text("[" * 20000 + "]" * 20000); assert srv.load_watched(p, "B") == {}              # 깊은 중첩도 견딘다
+
+def _run_collect_train(monkeypatch, rp, watchers):
+    """Run the real collect_train/launched/remembered path; only nvidia-smi, the proc scan and read_run are injected."""
+    out = {"--query-compute-apps=pid,gpu_uuid": "11, U3\n", "--query-gpu=index,uuid": "3, U3\n"}
+    monkeypatch.setattr(srv, "run", lambda argv, timeout=3: out[argv[1]])
+    monkeypatch.setattr(srv, "read_watcher_pids", lambda: watchers)
+    monkeypatch.setattr(srv, "read_run", lambda pid, mounts: {"name": "r", "max_epochs": None, "done": None, "metric": None, "ckpts": [], "last": False, "runner_pid": rp})
+    return srv.collect_train()[0]["watcher"]
+
+def test_collect_train_real_state_search_from_cwd(tmp_path, monkeypatch):
+    boot = srv.read_boot_id()
+    if boot is None:
+        pytest.skip("no boot_id")
+    repo = tmp_path / "repo"; (repo / ".git").mkdir(parents=True); sub = repo / "sub"; sub.mkdir()
+    me = os.getpid(); monkeypatch.chdir(sub)                                                    # 러너 cwd = 저장소의 하위 폴더(이 시험 프로세스가 러너 역)
+    assert _run_collect_train(monkeypatch, me, set()) is None                                   # 상태 파일 없음
+    f = _state(sub / ".scratch" / "j" / "launch", "a", f"memguard-a-{me}.scope", boot=boot)     # 하위 폴더 자신의 .scratch/<잡>/launch/
+    assert _run_collect_train(monkeypatch, me, set()) is False
+    f.write_text("{broken")
+    assert _run_collect_train(monkeypatch, me, set()) is None
+    f.write_text("[" * 20000 + "]" * 20000)
+    assert _run_collect_train(monkeypatch, me, set()) is None                                   # 깊게 중첩한 상태 파일: 수집이 죽지 않고 그 판만 None
+    _state(repo / ".scratch" / "launch-1024", "b", f"memguard-b-{me}.scope", boot=boot)         # 뿌리의 launch/ 밖 배치
+    assert _run_collect_train(monkeypatch, me, set()) is False
+
+def test_collect_train_remembers_watched_runner(tmp_path, monkeypatch):
+    if srv.read_boot_id() is None:
+        pytest.skip("no boot_id")
+    me = os.getpid(); monkeypatch.chdir(tmp_path)
+    assert _run_collect_train(monkeypatch, me, set()) is None                                   # 한 번도 와쳐가 없던 러너(평가 작업)
+    assert _run_collect_train(monkeypatch, me, {me}) is True                                    # 와쳐가 붙어 있음 -> 기억
+    assert "pids" in json.loads((srv.CACHE_DIR / srv.WATCHED_FILE).read_text())
+    assert _run_collect_train(monkeypatch, me, set()) is False                                  # 와쳐가 사라진 뒤: 경고
+    (srv.CACHE_DIR / srv.WATCHED_FILE).write_text("{broken")
+    assert _run_collect_train(monkeypatch, me, set()) is None                                   # 기억 파일이 깨지면 None
 
 def test_read_watcher_pids_only_own_user_processes(monkeypatch):
     w = "/t/train-watcher.sh"
@@ -687,19 +853,19 @@ def _sys_block(root, rot):
 def test_parse_disks_classifies_sorts_and_drops_small(tmp_path):
     sysb = _sys_block(tmp_path, {"sda": "0", "sdd": "0", "sdb": "1", "sdc": "1", "nvme0n1": "0"})
     df = DF_HEAD + (
-        f"/dev/sdc {4000 * GIB} {1000 * GIB} {3000 * GIB} 25% /mnt/Data1\n"
+        f"/dev/sdc {2000 * GIB} {500 * GIB} {1500 * GIB} 25% /mnt/hdd1\n"
         f"/dev/sda2 {900 * GIB} {800 * GIB} {100 * GIB} 89% /\n"
         f"/dev/sda1 {512 << 20} 1 {500 << 20} 1% /boot/efi\n"                  # 2 GiB 미만 -> 제외
-        f"/dev/sdb {4000 * GIB} {1000 * GIB} {3000 * GIB} 25% /mnt/Data0\n"
-        f"/dev/sdd {3600 * GIB} {2700 * GIB} {903 * GIB} 75% /mnt/ssd\n"
+        f"/dev/sdb {2000 * GIB} {500 * GIB} {1500 * GIB} 25% /mnt/hdd0\n"
+        f"/dev/sdd {2000 * GIB} {1500 * GIB} {500 * GIB} 75% /mnt/ssd\n"
         f"/dev/nvme0n1p2 {500 * GIB} {100 * GIB} {400 * GIB} 20% /mnt/nv\n"   # 파티션 -> nvme0n1
         f"/dev/sde {100 * GIB} {1 * GIB} {99 * GIB} 1% /mnt/unknown\n"         # sys 정보 없음 -> ?
         f"tmpfs {10 * GIB} 0 {10 * GIB} 0% /run\n")                            # /dev/ 아님 -> 제외
     got = srv.parse_disks(df, sysb)
     assert [(d["dev"], d["kind"], d["mount"]) for d in got] == [
         ("nvme0n1p2", "SSD", "/mnt/nv"), ("sda2", "SSD", "/"), ("sdd", "SSD", "/mnt/ssd"),
-        ("sdb", "HDD", "/mnt/Data0"), ("sdc", "HDD", "/mnt/Data1"), ("sde", "?", "/mnt/unknown")]
-    assert got[2]["total"] == 3600 * GIB and got[2]["avail"] == 903 * GIB
+        ("sdb", "HDD", "/mnt/hdd0"), ("sdc", "HDD", "/mnt/hdd1"), ("sde", "?", "/mnt/unknown")]
+    assert got[2]["total"] == 2000 * GIB and got[2]["avail"] == 500 * GIB
 
 def test_parse_disks_cap_dedup_and_clean(tmp_path):
     sysb = _sys_block(tmp_path, {"sdz": "0"})
@@ -733,7 +899,7 @@ def test_collect_has_disks_key_and_keeps_root_disk(monkeypatch, tmp_path):
         return DF if argv[:2] == ["df", "-B1"] and argv[-1] == "/" else base(argv, timeout)
     monkeypatch.setattr(srv, "run", fake)
     out = srv.collect()
-    assert out["disk"] == {"total": 943804760064, "avail": 129922662400}                              # 접힌 띠용 루트 디스크는 그대로
+    assert out["disk"] == {"total": 1000000000000, "avail": 129922662400}                              # 접힌 띠용 루트 디스크는 그대로
     assert "disks" in out and any(a[:2] == ["df", "-B1"] and "-x" in a for a in seen)
 
 
@@ -795,3 +961,218 @@ def test_strip_ranges_match_band_model():
     assert js == sorted(wrk._STRIP_RANGES)                                      # 수집기와 띠의 정화 집합이 같다(security 2026-10-23)
     hidden = "".join(chr(c) for c in (0xAD, 0x2061, 0x206A, 0xFE0F, 0xE0041, 0x3164))
     assert wrk.strip_text("a" + hidden + "b") == "ab"
+
+
+# ---- 정지 스위치 · 남은 자식 감지 (2026-10-26, GPU 서버 실측: 갇힌 pgrep 63개) ----
+import subprocess
+
+
+def _comm_of_self():
+    return pathlib.Path("/proc/self/comm").read_text().strip()
+
+def _no_children(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("no child process may be started")
+    monkeypatch.setattr(subprocess, "Popen", boom)
+    monkeypatch.setattr(subprocess, "run", boom)
+
+def _named_sleep(tmp_path, name):
+    """Start `sleep 30` under a symlink called name so /proc/<pid>/comm is name; returns the Popen."""
+    link = tmp_path / name
+    os.symlink("/bin/sleep", link)
+    return subprocess.Popen([str(link), "30"])
+
+def test_server_main_off_file_does_nothing(tmp_path, monkeypatch):
+    d = tmp_path / "band"; d.mkdir()
+    (d / "off").write_text("")
+    monkeypatch.setattr(srv, "CACHE_DIR", d)
+    _no_children(monkeypatch)
+    monkeypatch.setattr(srv, "collect", lambda: (_ for _ in ()).throw(AssertionError("collect must not run")))
+    srv.main()
+    assert [p.name for p in d.iterdir()] == ["off"]                              # attempt·server.json·lock 모두 없다
+
+def test_server_main_off_dangling_symlink_also_stops(tmp_path, monkeypatch):
+    d = tmp_path / "band"; d.mkdir()
+    os.symlink(tmp_path / "nowhere", d / "off")                                   # lexists: 깨진 링크도 «있음»
+    monkeypatch.setattr(srv, "CACHE_DIR", d)
+    _no_children(monkeypatch)
+    srv.main()
+    assert [p.name for p in d.iterdir()] == ["off"]
+
+def test_collect_inflight_alive_starts_no_children_and_carries(monkeypatch, tmp_path):
+    calls = _gpu_env(monkeypatch, tmp_path, 2.0, prev_age=30)
+    monkeypatch.setattr(srv, "SESS_DIR", tmp_path / "nosess")
+    monkeypatch.setattr(srv, "INFLIGHT_COMMS", srv.INFLIGHT_COMMS | {_comm_of_self()})  # 시험 프로세스 이름을 허용 목록에 더한다
+    (tmp_path / "server.inflight").write_text(json.dumps({"pid": os.getpid(), "comm": _comm_of_self()}))
+    prev = json.loads((tmp_path / "server.json").read_text())
+    prev.update(train=[{"gpu": 1}], train_ts=time.time() - 30)
+    (tmp_path / "server.json").write_text(json.dumps(prev))
+    out = srv.collect()
+    assert calls == [] and out["stuck"] is True
+    assert out["gpus"] == [{"i": 9}] and out["train"] == [{"gpu": 1}]             # 60초 이월
+    assert out["mem"] is None and out["disk"] is None and out["disks"] is None
+
+def test_collect_inflight_stuck_drops_gpus_older_than_60s(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, 2.0, prev_age=90)
+    monkeypatch.setattr(srv, "SESS_DIR", tmp_path / "nosess")
+    monkeypatch.setattr(srv, "INFLIGHT_COMMS", srv.INFLIGHT_COMMS | {_comm_of_self()})
+    (tmp_path / "server.inflight").write_text(json.dumps({"pid": os.getpid(), "comm": _comm_of_self()}))
+    out = srv.collect()
+    assert out["stuck"] is True and out["gpus"] is None and out["train"] is None
+
+def test_collect_inflight_dead_pid_or_other_comm_is_normal(monkeypatch, tmp_path):
+    calls = _gpu_env(monkeypatch, tmp_path, 2.0)
+    done = subprocess.Popen(["true"]); done.wait()
+    for rec in ({"pid": done.pid, "comm": "true"},                                # 죽은 pid
+                {"pid": os.getpid(), "comm": "nvidia-smi"},                       # pid 재사용: 이름 불일치
+                {"pid": "x", "comm": 1}, [1, 2]):                                 # 깨진 기록
+        calls.clear()
+        (tmp_path / "server.inflight").write_text(json.dumps(rec))
+        out = srv.collect()
+        assert "nvidia-smi" in calls and "stuck" not in out and out["gpus"][0]["i"] == 0
+
+def test_inflight_rejects_unlisted_comm_and_deep_json(monkeypatch, tmp_path):
+    """security 낮음 2건: 살아 있는 남의 이름(허용 목록 밖)을 가리켜도 갇힘이 아니고, 깊은 중첩 JSON 도 수집기를 죽이지 않는다."""
+    monkeypatch.setattr(srv, "CACHE_DIR", tmp_path)
+    (tmp_path / "server.inflight").write_text(json.dumps({"pid": os.getpid(), "comm": _comm_of_self()}))
+    assert srv.inflight_stuck() is False
+    (tmp_path / "server.inflight").write_text("[" * 100000)
+    assert srv.inflight_stuck() is False
+    monkeypatch.setattr(wrk, "CACHE_DIR", tmp_path)
+    (tmp_path / "work_ps.inflight").write_text("[" * 100000)
+    assert wrk.ps_stuck() is False
+
+def test_run_clears_inflight_after_normal_exit_and_timeout(tmp_path, monkeypatch):
+    monkeypatch.setattr(srv, "CACHE_DIR", tmp_path)
+    assert srv.run(["echo", "hi"]) == "hi\n"
+    assert not (tmp_path / "server.inflight").exists()
+    assert srv.run(["false"]) is None and not (tmp_path / "server.inflight").exists()
+    assert srv.run(["sleep", "5"], timeout=0.2) is None                           # kill 이 먹으면 목록에서 지운다
+    assert not (tmp_path / "server.inflight").exists()
+    assert srv.run(["no-such-binary-xyz"]) is None
+
+def test_run_records_child_while_running(tmp_path, monkeypatch):
+    monkeypatch.setattr(srv, "CACHE_DIR", tmp_path)
+    seen = {}
+    orig = srv.clear_inflight
+    def spy():
+        seen["rec"] = json.loads((tmp_path / "server.inflight").read_text())
+        orig()
+    monkeypatch.setattr(srv, "clear_inflight", spy)
+    srv.run(["echo", "x"])
+    assert seen["rec"]["comm"] == "echo" and isinstance(seen["rec"]["pid"], int)
+
+def test_run_keeps_inflight_when_child_survives_kill(tmp_path, monkeypatch):
+    monkeypatch.setattr(srv, "CACHE_DIR", tmp_path)
+    real = subprocess.Popen
+    class Immortal(real):                                                          # D 상태 흉내: kill 해도 안 죽는다
+        def kill(self):
+            pass
+    monkeypatch.setattr(subprocess, "Popen", Immortal)
+    monkeypatch.setattr(srv, "INFLIGHT_COMMS", srv.INFLIGHT_COMMS | {"sleep"})
+    assert srv.run(["sleep", "30"], timeout=0.2) is None
+    rec = json.loads((tmp_path / "server.inflight").read_text())
+    try:
+        assert rec["comm"] == "sleep" and srv.inflight_stuck()                     # 살아 있으니 다음 회차가 «갇힘» 으로 본다
+    finally:
+        os.kill(rec["pid"], 9)
+        os.waitpid(rec["pid"], 0)
+
+def test_nvidia_smi_stuck_uses_proc_not_pgrep(tmp_path, monkeypatch):
+    p = _named_sleep(tmp_path, "nvidia-smi")
+    try:
+        _no_children(monkeypatch)                                                  # pgrep 등 하위 프로세스 호출 시 AssertionError
+        assert p.pid in srv.nvidia_smi_pids()
+        monkeypatch.setattr(srv, "_elapsed", lambda pid: 15.0)
+        assert srv.nvidia_smi_stuck() is True
+        monkeypatch.setattr(srv, "_elapsed", lambda pid: 1.0)
+        assert srv.nvidia_smi_stuck() is False
+    finally:
+        p.kill(); p.wait()
+
+def _fake_proc(monkeypatch, cmdline, state="S", elapsed=15.0):
+    """Fake one nvidia-smi pid 123 with the given argv tail, stat state and age (cmdline None = unreadable)."""
+    monkeypatch.setattr(srv, "nvidia_smi_pids", lambda: [123])
+    monkeypatch.setattr(srv, "_elapsed", lambda pid: elapsed)
+    def fake(pid, name, limit):
+        if name == "cmdline":
+            return "" if cmdline is None else "nvidia-smi\0" + "\0".join(cmdline) + "\0"
+        return f"123 (nvidia-smi) {state} 1 1 1" if name == "stat" else ""
+    monkeypatch.setattr(srv, "_read_proc", fake)
+
+@pytest.mark.parametrize("argv", [
+    ["-i", "2", "--query-gpu=memory.used", "--format=csv,noheader", "-lms", "500"],
+    ["-l", "5"], ["--loop=1"], ["--loop-ms", "200"], ["-lms=500"], ["-l5"], ["-lms500"], ["dmon"], ["pmon", "-i", "0"]])
+def test_nvidia_smi_stuck_ignores_loop_monitors(monkeypatch, argv):
+    _fake_proc(monkeypatch, argv)
+    assert srv.nvidia_smi_stuck() is False
+
+def test_nvidia_smi_stuck_plain_query_over_limit(monkeypatch):
+    _fake_proc(monkeypatch, ["--query-gpu=memory.used", "--format=csv"])
+    assert srv.nvidia_smi_stuck() is True
+
+def test_nvidia_smi_stuck_d_state_under_limit(monkeypatch):
+    _fake_proc(monkeypatch, ["-q"], state="D", elapsed=1.0)
+    assert srv.nvidia_smi_stuck() is True
+
+def test_nvidia_smi_stuck_loop_in_d_state_is_stuck(monkeypatch):
+    _fake_proc(monkeypatch, ["-lms", "500"], state="D")
+    assert srv.nvidia_smi_stuck() is True
+
+def test_nvidia_smi_stuck_d_state_does_not_read_cmdline(monkeypatch):
+    _fake_proc(monkeypatch, ["-q"], state="D")
+    def no_cmdline(pid):
+        raise AssertionError("cmdline must not be read for a D-state pid")
+    monkeypatch.setattr(srv, "_is_loop_mode", no_cmdline)
+    assert srv.nvidia_smi_stuck() is True
+
+def test_nvidia_smi_stuck_unreadable_cmdline_old_is_stuck(monkeypatch):
+    _fake_proc(monkeypatch, None)
+    assert srv.nvidia_smi_stuck() is True
+
+def test_is_d_state_comm_with_paren_and_space(monkeypatch):
+    monkeypatch.setattr(srv, "_read_proc", lambda pid, name, limit: "123 (a) D b) S 1 1")
+    assert srv._is_d_state(123) is False                                           # 상태는 마지막 ')' 뒤의 S
+    monkeypatch.setattr(srv, "_read_proc", lambda pid, name, limit: "123 (a) S b) D 1 1")
+    assert srv._is_d_state(123) is True
+
+def test_nvidia_smi_pids_skips_other_uid(tmp_path, monkeypatch):
+    p = _named_sleep(tmp_path, "nvidia-smi")
+    try:
+        monkeypatch.setattr(os, "getuid", lambda: os.stat("/proc/self").st_uid + 1)
+        assert p.pid not in srv.nvidia_smi_pids()
+    finally:
+        p.kill(); p.wait()
+
+def test_work_main_off_file_skips_ps(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(wrk, "CACHE_DIR", tmp_path)
+    (tmp_path / "off").write_text("")
+    monkeypatch.setattr(wrk, "SESS_DIR", tmp_path / "nosess")
+    monkeypatch.setattr(wrk, "TASKS_DIR", tmp_path / "notasks")
+    _no_children(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["x", "--session-id", "0c7530cd-4cc9-47a1-9df0-ab9103f6e70d", "--cwd", "relative"])
+    wrk.main()
+    assert json.loads(capsys.readouterr().out) == {"codex": None, "grok": None, "train": None, "todos": None}
+
+def test_work_ps_inflight_blocks_ps_then_recovers(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(wrk, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(wrk, "SESS_DIR", tmp_path / "nosess")
+    monkeypatch.setattr(wrk, "TASKS_DIR", tmp_path / "notasks")
+    monkeypatch.setattr(sys, "argv", ["x", "--session-id", "0c7530cd-4cc9-47a1-9df0-ab9103f6e70d", "--cwd", "relative"])
+    p = _named_sleep(tmp_path, "ps")                                               # comm == "ps" 인 살아 있는 자식
+    try:
+        (tmp_path / "work_ps.inflight").write_text(json.dumps({"pid": p.pid, "comm": "ps"}))
+        assert wrk.ps_stuck()
+        _no_children(monkeypatch)
+        wrk.main()                                                                 # 갇힌 ps 가 있으면 ps 를 부르지 않는다
+        assert json.loads(capsys.readouterr().out)["codex"] is None
+    finally:
+        p.kill(); p.wait()
+    assert not wrk.ps_stuck()                                                      # 죽은 뒤에는 정상
+    (tmp_path / "work_ps.inflight").write_text(json.dumps({"pid": os.getpid(), "comm": "nvidia-smi"}))
+    assert not wrk.ps_stuck()
+
+def test_work_run_ps_clears_inflight(tmp_path, monkeypatch):
+    monkeypatch.setattr(wrk, "CACHE_DIR", tmp_path)
+    out = wrk.run_ps()
+    assert out and out.splitlines() and not (tmp_path / "work_ps.inflight").exists()

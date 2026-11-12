@@ -37,7 +37,7 @@
 | Tavily / 검색 | MCP (searcher 경유) | 🔶 허용(결과 파싱 편의) — curl 대체 가능하나 marginal |
 | context7 (라이브러리 문서) | MCP | ✅ 허용(Anthropic 권장, 전용 검색) |
 | arxiv / scientific-papers | MCP | 🔶 검토(arXiv는 단순 HTTP API — Skill+curl 대체 후보) |
-| Confluence/Jira | claude.ai Atlassian 커넥터 (OAuth MCP — docs 에이전트 경유) | ✅ 정당화(강력 CLI 부재 + 공유 인증) |
+| Confluence/Jira | claude.ai Atlassian 커넥터 (OAuth MCP — 조회·게시는 main, docs 는 초안 파일만: `skills/confluence/SKILL.md` §3-1) | ✅ 정당화(강력 CLI 부재 + 공유 인증) |
 
 ## §4 MCP 사용 시 의무 (채택했다면)
 

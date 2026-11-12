@@ -1,4 +1,4 @@
-"""민감 파일 차단 정규식 시험 (2026-10-17 G1-2, 원본 .scratch/9d9904f7/audit/cred_regex_test.py).
+"""민감 파일 차단 정규식 시험 (2026-10-17 G1-2, 원본 .scratch/0a1b2c3d/audit/cred_regex_test.py).
 
 실행: uv run -q --no-project --with pytest python -m pytest scripts/tests/test_sensitive_path_regex.py -q
 

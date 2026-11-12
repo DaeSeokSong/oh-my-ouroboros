@@ -4,6 +4,10 @@
 > **모(母) 파일**: `~/.claude/rules/mem0-auto.md` (always-on — 트리거·카테고리·limit 가드)
 > 이 파일은 "어떻게 저장/검색하는지"의 상세만 담는다. "언제 하는지"(트리거)는 mem0-auto.md에 있다.
 
+**category 별 기본 저장 주체(`source`)** (2026-11-10 `rules/mem0-auto.md` §1.2 표에서 이관): `decision`=memory-write·discuss / `experiment`=experiment 스킬 / `code_pattern`=qa·coder / `paper`=paper-read 스킬 / `feedback`=learner·prompt-routing / `discuss`=discuss 스킬 / `context`=compact·docs·gitops.
+
+**Smart Retrieval 3축 정의** (같은 날 §1.4 에서 이관): History=과거 이력·결정·실패/성공 패턴 / Current=현재 작업 직결 맥락·활성 결정 / Future=다음 단계·미완 TODO. 실행 패턴은 §D.
+
 ---
 
 ## §A 프로젝트명 식별 규칙
@@ -90,6 +94,7 @@ LLM은 개인화 맥락에서 증거 이상으로 사용자 속성을 지어낸�
 3. **양식 ≠ 증거**: 템플릿 필드를 채울 근거가 없으면 그 필드는 비우거나 "없음"으로 — task 양식이 요구한다는 사실은 증거가 아니다.
 
 4. **저장 금지 내용 (D5, 2026-10-01)**: Mem0 는 외부 SaaS 라 `text` 에 자격증명·환자 식별자·DICOM UID 를 넣지 않는다. 1번의 사용자 원문 인용에 들어 있으면 그 부분을 가린 뒤 저장한다. 정확한 config·수치는 허용한다(출구별 표: `rules-lazy/untrusted-quarantine.md` §7).
+5. **상세 문서 금지 (2026-11-09)**: searcher · scout 상세 문서의 발췌 · 경로 목록은 `text` 에 넣지 않는다. 검증된 결론만 저장한다(정본: `rules-lazy/memory-write.md` § 메모리 구조).
 
 recall 시 `(추정)` 항목은 §1.5 advisory보다 한 단계 더 낮게 취급(사용자 확인 전 단정 금지).
 
@@ -115,6 +120,8 @@ search_memories(query="[현재 작업] 활성 설정 진행 중", filters={"meta
 # 3. Future — 다음 계획 (반드시 포함)
 search_memories(query="[프로젝트] 다음 단계 TODO 계획 예정", filters={"metadata": {"category": "context"}}, limit=3)
 ```
+
+> T03(세션 시작 복원)에 한해 셋째 채널은 code_pattern(과거 QA 실패 · 코드 관례)이다(정본: `rules/mem0-auto.md` T03 행, 호출: `rules-lazy/mem0-templates.md` T03).
 
 ### 관련성 평가 및 필터링
 

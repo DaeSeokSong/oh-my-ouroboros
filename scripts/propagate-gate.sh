@@ -9,6 +9,8 @@
 #   4) 세션마다 ack/<세션 id> 에 그 해시가 있으면 받음. 최대 $PROPAGATE_WAIT 초(기본 6) 2초 간격으로 다시 본다(띠 mod 는 3초마다 돈다).
 #      6초인 까닭: settings.json 이 이 Stop 훅(toolcall-text-guard.sh)에 15초 제한을 두고, 그 스크립트의 영어 문장 판정이 최대 8초를 쓴다.
 #      커밋은 보통 턴 중간에 일어나 Stop 까지 시간이 흐르므로 대개 기다리지 않고 끝난다.
+#      예외: asleep/<세션 id> 첫 칸이 asleep 이고 시각이 120초 안인 세션은 대기 대상에서 뺀다. 첫 지시 전 세션은 mod 가 알림을 미루므로
+#      ack 가 없는 게 정상이고, 여기서 직접 SendMessage 하라고 시키면 빈 세션이 깨어난다(intent/2026-11-02-no-work-in-spare-sessions.md).
 #   5) 끝까지 못 받은 세션이 있으면 decision:block 으로 이름·해시와 할 일(SendMessage 직접 알림 → ack manual 기록)을 준다.
 #      막은 해시는 blocked/<이 세션 id> 에 적고 다음 Stop 부터는 다시 막지 않는다(성공 기준 4 «한 번만 차단», qa 2026-10-21:
 #      mod 가 안 올라간 세션이 하나만 있어도 매 턴 6초 대기 뒤 차단이 되풀이됐다). 세션 목록은 pid 가 살아 있는 것만 센다.
@@ -51,6 +53,11 @@ while IFS=$'\t' read -r psid pname ppid; do
     [ -n "$psid" ] || continue
     # pid 가 있으면 살아 있는 것만 센다(끝난 세션이 목록에 남아도 막지 않는다). pid 가 없는 항목은 그대로 둔다.
     if [[ "$ppid" =~ ^[0-9]+$ ]] && ! kill -0 "$ppid" 2>/dev/null; then continue; fi
+    # 첫 지시 전(asleep) 표지가 120초 안이면 건너뛴다(ack 가 없는 게 정상). 표지가 오래되면 종전처럼 센다.
+    if [[ "$psid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] && [ -f "$DIR/asleep/$psid" ]; then
+        IFS=$'\t' read -r akind ats < "$DIR/asleep/$psid" || true
+        if [ "${akind:-}" = "asleep" ] && [[ "${ats:-}" =~ ^[0-9]+$ ]] && [ $((NOW - 10#$ats)) -le 120 ] && [ $((NOW - 10#$ats)) -ge -120 ]; then continue; fi
+    fi
     PEERS+="$psid"$'\t'"$pname"$'\n'
 done <<< "$ALL"
 [ -n "$PEERS" ] || exit 0

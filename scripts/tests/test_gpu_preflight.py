@@ -13,8 +13,8 @@ spec.loader.exec_module(gp)
 
 GPUS = {
     0: {"name": "L40S", "total_gb": 45.0, "used_gb": 27.0, "procs": 1},
-    3: {"name": "H100 PCIe", "total_gb": 79.6, "used_gb": 27.0, "procs": 1},
-    4: {"name": "H100 PCIe", "total_gb": 79.6, "used_gb": 0.5, "procs": 0},
+    3: {"name": "H100 PCIe", "total_gb": 80.0, "used_gb": 27.0, "procs": 1},
+    4: {"name": "H100 PCIe", "total_gb": 80.0, "used_gb": 0.5, "procs": 0},
 }
 
 

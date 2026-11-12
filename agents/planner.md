@@ -2,6 +2,7 @@
 name: planner
 description: 아키텍처 설계, 실험 설계, 워크플로우 계획 전문 에이전트. 설계·기획 요청, 실험 순서 결정, 워크플로우 구축 시 사용. 계획 설계만 담당 — 코드 수정/생성 불가.
 model: opus
+effort: high
 tools: Read, Glob, Grep
 mcpServers:
   - context7
@@ -153,4 +154,4 @@ multi-step 계획 산출 후, 사용자 보고 전 1회 자체 검증:
 
 ### Bite-sized 작업 입도
 각 task는 **자기완결 + 검증 가능** 단위로: 정확한 파일 경로(생성/수정) + 검증 명령 + 기대 결과. DRY·YAGNI.
-> worktree 강제·TDD 강제·`docs/superpowers/` 경로는 미적용 (연구코드 특성, 우리 환경 우선).
+> worktree 강제·TDD 강제는 미적용 (연구코드 특성, 우리 환경 우선). plan 저장 경로 `docs/superpowers/` 는 하네스 규칙을 그대로 따른다(`skills/workflow/SKILL.md`, `skills/intent/SKILL.md`).

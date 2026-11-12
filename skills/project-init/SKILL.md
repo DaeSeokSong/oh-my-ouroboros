@@ -107,7 +107,7 @@ project_root/
 ```
 TRAIN_TMUX_PREFIX=<프로젝트 슬러그>-mtl   # 학습 tmux 세션 이름 접두. 세션은 <접두>1, <접두>2 …
 CKPT_ROOT=/path/to/local-ssd/weights   # 로컬 SSD. NFS·NAS 경로 금지
-CKPT_REMOTE=/path/to/remote/weights   # 선택. 학습 뒤 rsync 목적지
+CKPT_REMOTE=/home/<user>/workspace/_mnt/<원격 저장소>/<user>/weights   # 선택. 학습 뒤 rsync 목적지
 ```
 이 파일이 없거나 tmux 세션 밖이거나 `CKPT_ROOT` 가 네트워크 파일시스템이면 main 은 발사 명령서를 내지 않는다(2026-09-13 사용자 지시).
 

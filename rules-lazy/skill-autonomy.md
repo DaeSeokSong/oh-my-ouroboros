@@ -51,15 +51,16 @@ discuss로 소집된 teammate가 다시 `/discuss`를 호출하는 경우 **허�
 
 ## 신규 정식 등재 스킬 (Phase A·B 통합 — MANDATORY)
 
-아래 3 스킬은 정식 라우팅 대상이며, 해당 에이전트가 `NEEDS_SKILL` 로 요청하면 main 이 4-Gate 를 적용해 호출한다.
+아래 4 스킬은 정식 라우팅 대상이며, 해당 에이전트가 `NEEDS_SKILL` 로 요청하면 main 이 4-Gate 를 적용해 호출한다.
 
 | 스킬 | 호출 요청 주체 | 호출 요청 트리거 (main 중계) |
 |------|----------|----------------|
 | `superpowers:dispatching-parallel-agents` | coder, scout, searcher, qa | 독립 작업 2+ 감지 시 (공유 state 없음) |
 | `/loop` (bundled — interval / dynamic) | main | 학습 모니터링·반복 패턴 감지 + 사용자 비용 결정 후 |
 | `ralph-loop:ralph-loop` | qa | 테스트 자동 재시도 — 5-Gate (`rules-lazy/qa-process.md` Ralph 섹션) |
+| `/pydicom` (설치 시 활성) | coder, qa | DICOM 메타·픽셀·전송 구문·비식별 검토 코드를 다룰 때 (`agents/coder.md`·`agents/qa.md` 스킬 표) |
 
-**비용 모델**: 3개 모두 Pro/Max 구독 토큰만 (추가 API 비용 ❌)
+**비용 모델**: 4개 모두 Pro/Max 구독 토큰만 (추가 API 비용 ❌)
 **상세 룰**:
 - parallel-dispatch: `rules-lazy/parallel-dispatch.md`
 - /loop · G-E Loop: `rules-lazy/loop-auto.md`

@@ -39,6 +39,7 @@ printf '%s' "$CMD" | grep -qE '(^|[;&|[:space:]])git[[:space:]]+commit([[:space:
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 CDTARGET=$(printf '%s' "$CMD" | sed -nE 's/^[[:space:]]*cd[[:space:]]+"?([^"&;|]+)"?[[:space:]]*&&.*/\1/p' | head -1)
 CDTARGET=$(printf '%s' "${CDTARGET:-}" | sed -e 's/[[:space:]]*$//')
+# shellcheck disable=SC2088  # "~/" is a literal case pattern for a cd target typed with a tilde, not a path to expand
 case "$CDTARGET" in
     "~") CDTARGET="$HOME_DIR" ;;
     "~/"*) CDTARGET="$HOME_DIR/${CDTARGET#\~/}" ;;
@@ -132,7 +133,7 @@ mkdir "$LOCK" 2>/dev/null || exit 0
 ( MYTOKEN="$BASHPID-$(date +%s 2>/dev/null || echo 0)"
   echo "$MYTOKEN" > "$LOCK/owner" 2>/dev/null
   # `graphify .`가 아닌 `graphify update .`(코드 전용) — pending 문서가 1건이라도 있으면
-  # `graphify .`는 LLM API 키를 요구하며 exit 1 전체 중단 (2026-07-31 8일 정체 실증:
+  # `graphify .`는 LLM API 키를 요구하며 exit 1 전체 중단 (2026-07-31 한 프로젝트의 8일 정체 실증:
   # 문서 107건 pending → headless 훅 무키 환경에서 코드 291건 갱신까지 통째 실패)
   cd "$ROOT" 2>/dev/null && graphify update . >/dev/null 2>&1 \
     && printf '%s %s' "$(date '+%m-%d %H:%M')" "$(basename "$ROOT")" > "$GRAPH_DIR/.autoindex-updated" 2>/dev/null \

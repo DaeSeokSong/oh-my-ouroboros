@@ -54,7 +54,7 @@ Step 1 브레인스토밍 ──▶ Step 2 초안(템플릿 6항목) ──▶ S
 ### Step 5 — 체인과 게이트
 - **plan**: 승인된 intent.md 를 입력으로 `superpowers:writing-plans`(저장 `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`)가 plan.md 를 만든다. 계획 머리에 intent 경로와 SHA 를 적는다. 기준은 플레이북 그대로 «대화를 못 본 엔지니어가 계획만으로 구현할 수 있을 때까지». 심문은 «무엇이 깨질 수 있나·가장 위험한 단계·버린 대안».
 - **spec**: 설계가 intent 와 갈릴 때만(실험은 Stage B 설계) `spec.md` 를 같은 폴더에 둔다. 갈리지 않으면 만들지 않는다.
-- **대조하는 게이트**: ① 하네스 `feat:` 커밋(및 새 핵심 파일이 있는 `fix:`·`refactor:`) → commit-msg 훅이 `Intent: intent/….md` 줄과 파일 실재를 요구(차단) ② 학습 발사 → `launch-set.sh launch --intent <경로>`가 state 에 경로·sha256 을 기록하고 `verify` 가 표시한다(경고 항목, 진행 중 세션을 깨지 않기 위해 차단 아님) ③ qa 계획-대비 검수(`rules-lazy/qa-process.md`)는 plan 뿐 아니라 intent 의 성공 기준·제약과도 대조한다 ④ 3줄 요약의 「왜」 줄은 intent 6항목을 가리킨다(2026-09-08 형식 개정).
+- **대조하는 게이트**: 1) 하네스 `feat:` 커밋(및 새 핵심 파일이 있는 `fix:`·`refactor:`) → commit-msg 훅이 `Intent: intent/….md` 줄과 파일 실재를 요구(차단) 2) 학습 발사 → `launch-set.sh launch --intent <경로>`가 state 에 경로·sha256 을 기록하고 `verify` 가 표시한다(경고 항목, 진행 중 세션을 깨지 않기 위해 차단 아님) 3) qa 계획-대비 검수(`rules-lazy/qa-process.md`)는 plan 뿐 아니라 intent 의 성공 기준·제약과도 대조한다 4) 3줄 요약의 「왜」 줄은 intent 6항목을 가리킨다(2026-09-08 형식 개정).
 
 ## 금지·경계
 - intent.md 에 정답처럼 보이는 구현 세부(파일·함수 순서)를 쓰지 않는다. 그건 plan.md 몫이다.

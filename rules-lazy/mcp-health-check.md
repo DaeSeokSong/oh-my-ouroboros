@@ -109,4 +109,4 @@ ToolSearch 호출 1회 = 토큰 ~200~500 (작음). 매 MCP 호출 직전 1회 �
 ## 참고
 
 - Claude Code 이슈: [#52565](https://github.com/anthropics/claude-code/issues/52565) (OAuth 토큰 미지속), [#48670](https://github.com/anthropics/claude-code/issues/48670) (auth cache 무효화)
-- 영구 해결: Bearer header (API key 필요) — `~/.claude/rules-lazy/mcp-fallback-mem0.md` 패턴 참조
+- 영구 해결: Bearer header (API key 필요)

@@ -56,6 +56,7 @@
 | **실험·연구** | wandb run 정리/태그 정리/눈끄기 (정리 목적 — 일반 wandb 언급은 아래 행) | `/wandb-cleanup` |
 | **실험·연구** | 체크포인트 정리/ckpt 삭제/학습 산출물 디스크 회수 | `/ckpt-cleanup` |
 | **실험·연구** | 새 실험 설계/config 수정/wandb/결과 분석 | `/experiment` |
+| **실험·연구** | 재학습 없이 가중치 직접 편집(가지치기·양자화·표적 편집)·편집 기록 누적 비교 | `/weight-edit` |
 | **실험·연구** | Figure 단독 생성/TikZ/다이어그램 | `/figure` |
 | **실험·연구** | 논문 검색/서칭/읽기 — "논문 찾아", "논문 서칭", arXiv/CVPR/ICCV/NeurIPS/ICLR/ICML/ECCV + 논문 언급 | `/paper-read` |
 | **실험·연구** | 심층 리서치/deep research/종합 조사 — 다출처 종합 리포트 필요 | `/research` |

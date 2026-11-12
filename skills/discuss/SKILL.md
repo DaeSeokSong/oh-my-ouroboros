@@ -77,9 +77,9 @@ researcher는 비판적 연구 검토자이지만, 본 discuss에서는 **비판
 
 > 200자 기준은 **teammate 간 SendMessage** 전용 — subagent→main 반환은 100자 기준 별도 적용 (`rules-lazy/token-efficiency.md` § Subagent 반환값 적재 최소화).
 
-**경로 규칙**:
+**경로 규칙**(`<long_term_root>` = 환경변수 `LONG_TERM_ROOT`, 없으면 서버 등록부 `paths.long_term_root`. 등록부 값은 `python3 ~/.claude/scripts/harness_registry.py host paths.long_term_root` 로 얻는다):
 ```
-${LONG_TERM_ROOT:-~/workspace/_data/workspaces/user/.claude/long-term}/{project}/meetings/{year}/{month}/{date}/{회의_제목}/_workspace/
+<long_term_root>/{project}/meetings/{year}/{month}/{date}/{회의_제목}/_workspace/
 ```
 
 ---
@@ -87,7 +87,7 @@ ${LONG_TERM_ROOT:-~/workspace/_data/workspaces/user/.claude/long-term}/{project}
 ## § 회의록 + _workspace 통합 경로 (MANDATORY)
 
 ```
-${LONG_TERM_ROOT:-~/workspace/_data/workspaces/user/.claude/long-term}/{project}/meetings/{year}/{month}/{date}/{회의_제목}/
+<long_term_root>/{project}/meetings/{year}/{month}/{date}/{회의_제목}/
 ├── 회의록.md
 ├── discuss-state.md
 └── _workspace/
@@ -225,7 +225,7 @@ ${LONG_TERM_ROOT:-~/workspace/_data/workspaces/user/.claude/long-term}/{project}
 
 ## § compact 금지 + 종료 순서 (MANDATORY)
 
-**discuss 진행 중 compact 절대 금지** — `context-management.md` § "/discuss 활성 중 compaction 주의" 참조.
+**discuss Round 도중 compact 금지(Round 경계에서는 `context-management.md` 절차대로 허용)** — `context-management.md` § "/discuss 활성 중 compaction 주의" 참조.
 Round 도중 compaction 발생 시 → discuss-state.md에 저장된 마지막 Round부터 재시작.
 
 **종료 순서 (MANDATORY)**:
@@ -259,7 +259,7 @@ Round 도중 compaction 발생 시 → discuss-state.md에 저장된 마지막 R
 
 $ARGUMENTS 파싱 후 순서대로:
 
-1. **기존 팀 확인 (MANDATORY)**: `~/.claude/teams/` 하위 활성 팀 확인
+1. **기존 팀 확인 (MANDATORY)**: 활성 팀은 `ListAgents` 와 위 § 회의록 + _workspace 통합 경로의 `discuss-state.md` 로 확인 (옛 경로 `~/.claude/teams/` 는 쓰지 않는다)
    - 동일 목적 팀 + state 있음 → 이어서 진행 여부 질문
    - 동일 목적 팀 (state 없음) → 재활용 (TeamCreate 금지)
    - 다른 목적 팀 → **이 세션이 만든 팀만** TeamDelete 후 새 팀 생성. 다른 세션이 만든 팀이거나 누가 만들었는지 확인되지 않으면 삭제하지 않고 사용자에게 확인
@@ -383,7 +383,6 @@ Step 0.5 주제 세분화 결과를 기반으로 main이 추천안을 자동 생
 - {추천3}    [{담당 항목}]
 
 가용한 추가 에이전트:
-- designer  (Figure·다이어그램)
 - docs      (문서화)
 - qa        (검증·테스트)
 - security  (보안 취약점 검토)
@@ -758,7 +757,7 @@ multi-agent debate에서 에이전트 한 명이 강한 설득 어조를 사용�
 │  ✅ D (비판적검토): researcher ({모델}) [teammate]              │
 │  ❌ {페르소나}: 제외 — 이유                                     │
 ├──────────────────────────────────────────────────────────────┤
-│ 회의록 경로: ${LONG_TERM_ROOT:-~/workspace/_data/workspaces/user/.claude/long-term}/          │
+│ 회의록 경로: <long_term_root>/                                │
 │   {project}/meetings/{year}/{month}/{date}/{회의_제목}/회의록.md │
 │ 상태 파일: <회의 폴더>/discuss-state.md                      │
 └──────────────────────────────────────────────────────────────┘

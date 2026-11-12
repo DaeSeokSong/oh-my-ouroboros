@@ -27,7 +27,7 @@
 
 > **파일 기록은 기계가 한다 (2026-09-14)**: T41 파일 기록은 `scripts/agent-spawn-log.sh` post(**동기 소집 결과**)와 `scripts/t41-subagent-stop.sh`(**비동기 소집 결과** — SubagentStop 훅이 서브에이전트의 마지막 답을 읽는다)가 훅에서 자동으로 남기고, main 은 훅이 못 본 신호(사용자 재작업 지시·T12 교정·과잉 위임)만 보탠다. 두 훅은 행 앞에 고정된 강형 표기(`RESULT: FAIL`·`STATUS: BLOCKED`·행 첫 `NEEDS_CONTEXT` 등)만 신호로 본다. 느슨한 «실패·재작업·반려»는 «실패 스위트: 0» 같은 성공 문장에도 맞아 제외했고, 비동기 소집의 즉시 응답(«Async agent launched …», 보낸 프롬프트 원문 포함)은 결과가 아니므로 판정에서 건너뛴다(같은 날 실사고: 검수용 qa 소집이 자기 프롬프트의 «RESULT: FAIL» 문구로 T41 을 낳았다).
 
-> **역할 별칭 표(접두 기준, 정본 `scripts/role-alias.sh`, 2026-10-17)**: `sec|security`→security · `qa` · `coder` · `scout` · `searcher` · `planner` · `researcher` · `reviewer` · `designer` · `docs` · `gitops` · `tutor` · `citation`→citation-verifier.
+> **역할 별칭 표(접두 기준, 정본 `scripts/role-alias.sh`, 2026-10-17)**: `sec|security`→security · `qa` · `coder` · `scout` · `searcher` · `planner` · `researcher` · `reviewer` · `docs` · `gitops` · `tutor` · `citation`→citation-verifier.
 > 접두 뒤는 끝이거나 `-`·`_`·숫자일 때만 인정하고(`sec-g1`→security, `qa-2`→qa), 표에 없는 이름(`foo`·`dfs-2`)은 그대로 둔다.
 
 ### §1.5 집계 규율 (2026-08-25 Codex·Grok 교차감사 반영)
@@ -44,11 +44,10 @@
 | searcher | 출처 품질 · 1차 출처 · 정확도 표기 |
 | scout | 탐색 완전성 · 누락 파일 · 호출부 범위 |
 | planner | 타당성 · 다중안 · 검증 가능 기준 |
-| designer | 시각 품질 · 검수 누락 · 스타일 일관 |
 | researcher | 비판성 · 근거 · 낙관 가정 회피 |
 | docs | 형식 준수 · 정확성 |
 | gitops | 커밋 규칙 · 파일 명시 |
-| citation-verifier | 철회 게이트 · 편향 회피 · 디베이트 균형 |
+| citation-verifier | 철회 게이트 · 원문 대조 정확성 · (디베이트 시) 편향 회피 · 균형 |
 | tutor | 문항 근거 정확성(notes 인용 일치) · 유형 혼합 준수(숫자·단답 포함) · 정답 누설·전사 방지 · 설명 사다리 준수 · NEEDS_SEARCH 상한 준수 |
 
 > **자동 기록의 차원·역할 귀속 규칙** (코드 `scripts/t41-append.sh --from` 과 일치하며, §1·§2 표와 다르면 이 줄이 우선한다. 위 §2 표의 차원은 사람이 수동 기록할 때의 분류이고 자동 기록은 구현 정확성·범위 준수·결과 실패 3종만 쓴다): qa·reviewer·security의 FAIL/REJECT → 주체 coder·구현 정확성, BLOCKED/NEEDS_CONTEXT → 낸 에이전트·범위 준수, 그 밖 → 자기 자신·결과 실패. 같은 role/dim/signal은 10분 안 1회만 기록.

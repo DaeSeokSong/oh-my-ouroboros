@@ -15,7 +15,7 @@
 # ★경고 유지 결정 (2026-09-13 사용자 지시 — 2026-09-14 감사 때 재확인): 발사 게이트를 차단으로
 # 승격하자는 제안(launch-set.sh --intent 강제)은 «규칙만 추가하고 강제 검사는 넣지 말라»는 지시에
 # 막혀 보류됐다. 그래서 이 훅의 종료 코드는 앞으로도 0 이고 탐지 범위만 넓힌다. 탐지 범위를 넓히는 것은
-# 경고를 못 받던 발사(train_mtl.py 류)에 같은 경고를 주는 일이라 «강제 검사 추가»에 해당하지 않는다.
+# 경고를 못 받던 발사(train_demo.py 류)에 같은 경고를 주는 일이라 «강제 검사 추가»에 해당하지 않는다.
 #
 # ★permissionDecision을 쓰지 않는 이유 (2026-07-27 main 교정): 초안은
 # `permissionDecision: "allow"`를 반환했으나 allow는 경고가 아니라 **권한 부여**라,
@@ -31,8 +31,8 @@ INPUT=$(cat 2>/dev/null) || exit 0
 CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 [ -z "$CMD" ] && exit 0
 
-# 읽기 명령 오탐 제외 (2026-09-14 재감사): 탐지 범위를 넓힌 뒤 `grep train_mtl.py tools/`·
-#   `cat tools/train_mtl.py` 처럼 학습 파일을 **읽기만** 하는 명령에도 발사 경고가 떴다. 경고가 흔해지면
+# 읽기 명령 오탐 제외 (2026-09-14 재감사): 탐지 범위를 넓힌 뒤 `grep train_demo.py tools/`·
+#   `cat tools/train_demo.py` 처럼 학습 파일을 **읽기만** 하는 명령에도 발사 경고가 떴다. 경고가 흔해지면
 #   진짜 발사에서도 읽히지 않는다. 첫 토큰(파이프라인 첫 단계의 명령 이름)이 읽기 명령이면 발사가 아니다 —
 #   발사는 언제나 실행 형태(python·uv run·torchrun·lightning·bash·tmux send-keys)로 시작한다.
 #   경로 접두(`/usr/bin/grep`)는 떼고 본다. 토큰 하나로만 판단하는 한계는 감수한다: 이 훅은 차단이 아니라 경고다.
@@ -49,11 +49,11 @@ esac
 #  초안 그대로면 실제 발사를 하나도 못 잡아 훅이 무용지물이 된다 — 런처 패턴을 추가한다.
 #  (false positive 가드: tmux send-keys 없이 단순히 "launch" 단어만 있는 명령은 잡지 않는다.)
 #  ★범위 확장(2026-09-14 감사): 종전 정규식은 `train.py`·`run_trains?.py` **리터럴**이라
-#  `train_mtl.py` 류 실제 진입점과 모듈·런처 실행(`python -m pkg.train`·`torchrun … train`·
+#  `train_demo.py` 류 실제 진입점과 모듈·런처 실행(`python -m pkg.train`·`torchrun … train`·
 #  `lightning … fit`)에는 경고조차 뜨지 않았다(_audit/loop-audit-20260914.md §3).
 #  파일명은 토큰 앞머리가 train 인 것까지(`train[a-z_]*.py`), 나머지는 실행 형태로 넓힌다.
 #  파일명 뒤 종결자는 두지 않는다 — 종전의 `([[:space:]]|$)` 는 tmux 명령의 인용 끝
-#  (`… "uv run python tools/train_mtl.py" Enter`)에서 매칭이 깨졌다(실측). 앞 경계에 따옴표를 넣어
+#  (`… "uv run python tools/train_demo.py" Enter`)에서 매칭이 깨졌다(실측). 앞 경계에 따옴표를 넣어
 #  `pretrain.py` 같은 접두 오탐만 막는다.
 LAUNCH_RX='(^|[[:space:]/"'"'"'])(train[a-z_]*|run_trains?)\.py|python[0-9.]*[[:space:]]+-m[[:space:]]+[a-z_.]*train|torchrun[[:space:]][^;&|]*train|lightning[[:space:]][^;&|]*fit'
 IS_LAUNCH=false

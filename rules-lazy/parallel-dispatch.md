@@ -164,13 +164,13 @@ Q4. 작업이 단일인가 복수인가?
 Agent(
   subagent_type="coder",   # 에이전트명 — 모델은 별도 model 파라미터 (예: model="sonnet")
   description="sonnet: Modify foo.py independently",
-  prompt="[SKILL_DEPTH: 1]\n\nfoo.py의 {함수명}에서 {수정 내용}을 적용하라. ...(self-contained 지시)"
+  prompt="[SKILL_DEPTH: 0]\n\nfoo.py의 {함수명}에서 {수정 내용}을 적용하라. ...(self-contained 지시)"
 )
 
 Agent(
   subagent_type="coder",   # 에이전트명 — 모델은 별도 model 파라미터 (예: model="sonnet")
   description="sonnet: Modify bar.py independently",
-  prompt="[SKILL_DEPTH: 1]\n\nbar.py의 {함수명}에서 {수정 내용}을 적용하라. ...(self-contained 지시)"
+  prompt="[SKILL_DEPTH: 0]\n\nbar.py의 {함수명}에서 {수정 내용}을 적용하라. ...(self-contained 지시)"
 )
 ```
 
@@ -222,7 +222,7 @@ N개 Agent 결과 수신 후 main이 통합하여 사용자에게 보고:
 
 ## main 추천 패턴 (자율 dispatch 권한 없는 에이전트용)
 
-자율 호출 권한이 없는 에이전트(designer/docs/researcher/planner)가 parallel-dispatch 적합한 작업을 받았을 때, **main이 사용자에게 추천**한다.
+자율 호출 권한이 없는 에이전트(docs/researcher/planner)가 parallel-dispatch 적합한 작업을 받았을 때, **main이 사용자에게 추천**한다.
 
 ### Case B — main 자동 감지 + 추천
 
@@ -230,7 +230,6 @@ main이 작업 분석 중 아래 패턴 감지 시 사용자에게 추천:
 
 | 에이전트 | 추천 트리거 |
 |---------|-----------|
-| designer | "Figure N개", "다이어그램 N종" — figure 간 독립 시 |
 | docs | "페이지 N개 업데이트" — cross-link 없는 페이지 |
 | researcher | "논문 N편 동시 평가", "여러 실험 비교" |
 | planner | (보수적) 다중 설계 옵션 평가 — 사용자 명시 시만 |
@@ -253,7 +252,7 @@ main이 작업 분석 중 아래 패턴 감지 시 사용자에게 추천:
 
 판단 패턴:
 - 숫자 명시: "researcher 3명", "coder 5개"
-- 복수형: "여러 researcher", "designer들"
+- 복수형: "여러 researcher", "coder들"
 - 사용자가 "parallel-dispatch" / "병렬로" / "동시에" 직접 명시
 
 ### 다수 호출 기능 통합 매핑

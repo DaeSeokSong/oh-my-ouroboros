@@ -5,8 +5,8 @@
 (와쳐 시험은 실제 train-watcher.sh 를 수 초짜리 가짜 프로세스로 돌려 15초쯤 걸린다.)
 """
 import copy
-import importlib.util
 import fcntl
+import importlib.util
 import json
 import os
 import re
@@ -32,7 +32,7 @@ def gpu(name, total, procs=0, used=0.5):
     return {"name": name, "total_gb": total, "used_gb": used, "procs": procs}
 
 
-H100, L40S = ("H100 PCIe", 79.6), ("L40S", 45.0)
+H100, L40S = ("H100 PCIe", 80.0), ("L40S", 45.0)
 
 
 def six_gpus():
@@ -188,7 +188,7 @@ def test_launch_script_is_quoted_substituted_and_valid_bash(tmp_path):
     assert "FAKE_GPU=3" in text and "'run it.sh'" in text and "unset GPU_PREFLIGHT_FAKE" in text
     assert "--gpu 3 --vram-gb 20 --cpu-cores 4" in text and f"--queue {qp}" in text and "--queue-item a1" in text
     assert "--name tq3-a1-1" in text and f"--state {tmp_path}/logs/a1/launch-state-tq3-a1-1.json" in text and f"--watcher-log {tmp_path}/logs/a1/watcher-tq3-a1-1.log" in text
-    assert subprocess.run(["bash", "-n", str(script)]).returncode == 0
+    assert subprocess.run(["bash", "-n", str(script)], check=False).returncode == 0
     assert script.name == "a1-1.sh" and script.parent.name == "q1.launch"
 
 
@@ -228,7 +228,7 @@ def test_gpu_preflight_fake_env_drives_exit_code(tmp_path):
 
     def pf(g, vram):
         return subprocess.run(["python3", str(TW_DIR / "gpu_preflight.py"), "--gpu", g, "--vram-gb", vram, "--cpu-cores", "4"],
-                              env=env, capture_output=True, text=True, timeout=20)
+                              check=False, env=env, capture_output=True, text=True, timeout=20)
     assert pf("0", "60").returncode == 76
     assert pf("1", "60").returncode == 0
     assert pf("0", "20").returncode == 0
@@ -400,7 +400,7 @@ def test_watcher_on_exit_runs_once_with_watch_exit(tmp_path):
 def _launch_set(tmp_path, *extra):
     cmd = ["bash", str(SCRIPT_DIR / "launch-set.sh"), "launch", "--name", "n", "--log", "l.log", "--done-regex", "x", "--eval-cmd", "true",
            "--title", "t", "--expect", "e", *extra, "--", "sleep", "1"]
-    r = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True, timeout=30)
+    r = subprocess.run(cmd, check=False, cwd=tmp_path, capture_output=True, text=True, timeout=30)
     assert not list(tmp_path.glob("*.log")) and not list(tmp_path.glob("launch-state*")), "인자 단계에서 끝나야 하는데 파일이 생김"
     return r
 
@@ -429,7 +429,7 @@ def _launch_set_at(cwd, *extra):
     cmd = ["bash", str(SCRIPT_DIR / "launch-set.sh"), "launch", "--name", "n", "--log", "l.log", "--done-regex", "x", "--eval-cmd", "true",
            "--title", "t", "--expect", "e", *extra, "--", "sleep", "1"]
     env = {k: v for k, v in os.environ.items() if k not in ("CUDA_VISIBLE_DEVICES", "GPU_PREFLIGHT_FAKE")}
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=30, env=env)
+    return subprocess.run(cmd, check=False, cwd=cwd, capture_output=True, text=True, timeout=30, env=env)
 
 
 def test_launch_set_default_state_and_watcher_log_go_under_scratch_launch(tmp_path):
@@ -471,7 +471,7 @@ def test_launch_set_default_dir_unwritable_is_refused_before_launch(tmp_path):
 
 @pytest.mark.parametrize("name", ["launch-set.sh", "train-watcher.sh"])
 def test_shell_scripts_parse(name):
-    assert subprocess.run(["bash", "-n", str(SCRIPT_DIR / name)]).returncode == 0
+    assert subprocess.run(["bash", "-n", str(SCRIPT_DIR / name)], check=False).returncode == 0
 
 
 # ───────────── 검수 차단 B1: 시험 전용 GPU_PREFLIGHT_FAKE 가 운영 경로에 남지 않는다 ─────────────
@@ -480,7 +480,7 @@ def test_launch_set_refuses_fake_preflight_env(tmp_path):
     env = {**os.environ, "GPU_PREFLIGHT_FAKE": str(tmp_path / "fake.json")}
     for cmd in (["launch", "--name", "n", "--log", "l.log", "--done-regex", "x", "--eval-cmd", "true", "--title", "t", "--expect", "e", "--", "sleep", "1"],
                 ["reattach", str(tmp_path / "none.json")]):
-        r = subprocess.run(["bash", str(SCRIPT_DIR / "launch-set.sh"), *cmd], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
+        r = subprocess.run(["bash", str(SCRIPT_DIR / "launch-set.sh"), *cmd], check=False, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
         assert r.returncode == 64 and "GPU_PREFLIGHT_FAKE" in r.stderr
     assert not list(tmp_path.glob("*.log")) and not list(tmp_path.glob("launch-state*"))
 
@@ -586,7 +586,7 @@ def test_launch_script_cd_failure_writes_rc_file(tmp_path):
     broken.write_text(text)
     rc_file = script.with_suffix(".rc")
     rc_file.unlink(missing_ok=True)
-    assert subprocess.run(["bash", str(broken)], capture_output=True).returncode == 64
+    assert subprocess.run(["bash", str(broken)], check=False, capture_output=True).returncode == 64
     assert rc_file.read_text().strip() == "64"
 
 
@@ -956,7 +956,7 @@ def test_should_wait_pure_cases():
 
 def test_collect_estimates_medians_per_kind_and_remaining():
     q = {"items": [{"id": i, "log_dir": "/nonexistent/" + i} for i in ("r", "d1", "d2")]}
-    ago = lambda s: time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - s))   # noqa: E731
+    ago = lambda s: time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - s))
     st = {"items": {"r": {"status": "running", "gpu": 1, "started": ago(1800)},
                     "d1": {"status": "done", "gpu": 1, "started": ago(7200), "ended": ago(5400)},
                     "d2": {"status": "done", "gpu": 0, "started": ago(7200), "ended": ago(3600)}}}
@@ -1000,13 +1000,13 @@ def test_slow_gpu_waits_when_fast_gpu_frees_soon(tmp_path):
 
 
 @pytest.mark.parametrize("kw,reason", [
-    (dict(hrun_hours=4, n_hdone=2), "일찍 끝나는 빠른 GPU 가 없어"),    # 멀면 즉시
-    (dict(progress=None), "읽지 못해"),                                  # 남은 시간 None → 즉시
-    (dict(progress=None, n_hdone=0), "소요 자료가 없어"),                # 자료 없음 → 즉시
-    (dict(n_queued=2), "k > m"),                                          # k > m → 즉시
+    ({"hrun_hours": 4, "n_hdone": 2}, "일찍 끝나는 빠른 GPU 가 없어"),    # 멀면 즉시
+    ({"progress": None}, "읽지 못해"),                                  # 남은 시간 None → 즉시
+    ({"progress": None, "n_hdone": 0}, "소요 자료가 없어"),                # 자료 없음 → 즉시
+    ({"n_queued": 2}, "k > m"),                                          # k > m → 즉시
 ])
 def test_slow_gpu_launches_immediately_when_wait_not_justified(tmp_path, kw, reason):
-    qp, be = _wait2(tmp_path, **kw)
+    qp, _be = _wait2(tmp_path, **kw)
     st = state(qp)
     assert st["items"]["q1"]["status"] == "running" and st["items"]["q1"]["gpu"] == 0 and not st["idle_gpus"]
     d = last_decision(qp)
@@ -1150,7 +1150,7 @@ def test_ddp_ready_zero_is_not_a_declaration():
 
 
 def test_placement_table_values_match_benchmark_note():
-    want = {"1": (0.16, 0.55), "2": (0.32, 0.55), "3": (0.48, 0.88), "4": (0.55, 0.88), "5": (0.73, 0.88)}   # knowledge/harness/gpu-placement-benchmark-2026-09-30.md «3차» 표
+    want = {"1": (0.2, 0.6), "2": (0.3, 0.6), "3": (0.5, 0.9), "4": (0.6, 0.9), "5": (0.7, 0.9)}   # placement_table.json 예시 표
     assert set(TABLE["rows"]) == set(want) and TABLE["config"] == {"H100": 2, "L40S": 4}
     for n, (fin, par) in want.items():
         assert (TABLE["rows"][n]["finish_h"], TABLE["rows"][n]["parallel_h"]) == (fin, par)
@@ -1188,7 +1188,7 @@ def test_table_escapes_cells_masks_secrets_and_lists_exec_summary(tmp_path, caps
 
 
 def test_approve_rejects_secret_shape_in_eval_cmd_and_argv_joined(tmp_path):
-    for kw in (dict(eval_cmd="curl -H 'Authorization: Bearer abc'"), dict(argv=["bash", "run.sh", "--password", "pw", "{GPU}"])):
+    for kw in ({"eval_cmd": "curl -H 'Authorization: Bearer abc'"}, {"argv": ["bash", "run.sh", "--password", "pw", "{GPU}"]}):
         qp = mk_queue(tmp_path / str(len(kw)), [mk_item(tmp_path, "a1", **kw)])
         assert run(lq.FakeBackend(six_gpus()), "approve", qp) == 2
 
@@ -1225,7 +1225,7 @@ def test_code_snapshot_is_none_outside_git_repo(tmp_path):
 
 def test_oversight_signatures_for_approve_relaunch_release_halt(tmp_path):
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
-    gates = lambda: [s[0] for s in be.signs]   # noqa: E731
+    gates = lambda: [s[0] for s in be.signs]
     assert gates() == ["approve"] and be.signs[0][1].startswith("q1 ") and len(be.signs[0][1].split()[1]) == 12 and "test" in be.signs[0][2]
     be.rc["a1"] = 65
     run(be, "start", qp, "--gpus", "0")
@@ -1275,7 +1275,7 @@ def test_state_events_launch_dir_and_script_permissions_and_umask_restored(tmp_p
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
     run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)             # needs-fix 이벤트
-    mode = lambda p: os.stat(p).st_mode & 0o777   # noqa: E731
+    mode = lambda p: os.stat(p).st_mode & 0o777
     assert mode(lq.state_path(qp)) == 0o600 and mode(qp.with_name("q1.lock")) == 0o600
     assert mode(qp.with_name("q1.events")) == 0o700 and mode(qp.with_name("q1.launch")) == 0o700 and mode(be.launches[0][2]) == 0o600
     assert all(mode(p) == 0o600 for p in qp.with_name("q1.events").glob("*.json"))
@@ -1424,7 +1424,7 @@ def test_log_dir_and_child_processes_keep_the_original_umask(tmp_path):
     finally:
         os.umask(old)
     ld = Path(mk_item(tmp_path, "a1")["log_dir"])
-    mode = lambda p: os.stat(p).st_mode & 0o777   # noqa: E731
+    mode = lambda p: os.stat(p).st_mode & 0o777
     assert seen == ["0022"] and mode(ld) == 0o755 and mode(ld.parent) == 0o755          # 학습 로그 폴더는 도구가 권한을 바꾸지 않는다
     assert mode(lq.state_path(qp)) == 0o600 and mode(qp.with_name("q1.launch")) == 0o700   # 도구 자신의 파일은 그대로 0600/0700
     assert lq._ORIG_UMASK is None                                                       # main 이 끝나면 되돌린다
@@ -1790,7 +1790,7 @@ def _run_launch_set(tmp_path, home, *extra, state="s.json"):
     cmd = ["bash", str(SCRIPT_DIR / "launch-set.sh"), "launch", "--name", "n", "--log", "l.log", "--done-regex", "x", "--eval-cmd", "true",
            "--title", "t", "--expect", "e", "--state", state, "--settle-sec", "1", *extra, "--", "sleep", "1"]
     env = {k: v for k, v in os.environ.items() if k not in ("CUDA_VISIBLE_DEVICES", "GPU_PREFLIGHT_FAKE")}
-    return subprocess.run(cmd, cwd=tmp_path, env={**env, "HOME": str(home)}, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+    return subprocess.run(cmd, check=False, cwd=tmp_path, env={**env, "HOME": str(home)}, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
 
 
 @needs_new_shell
@@ -1826,8 +1826,8 @@ def test_queue_attempt_must_be_integer_and_is_baked_into_on_exit(tmp_path):
     r = _run_launch_set(tmp_path, _fake_home(tmp_path), "--queue", str(q), "--queue-item", "a1", "--gpu", "0", "--queue-attempt", "x1")
     assert r.returncode == 64 and "정수" in r.stderr
     text = (SCRIPT_DIR / "launch-set.sh").read_text()
-    func = re.search(r"^queue_on_exit\(\) \{.*?^\}", text, re.S | re.M).group(0)
-    run_fn = lambda *a: subprocess.run(["bash", "-c", f'{func}\nTW=/x/train-watcher.sh\nqueue_on_exit "$@"', "_", *a], capture_output=True, text=True).stdout   # noqa: E731
+    func = re.search(r"^queue_on_exit\(\) \{.*?^\}", text, re.DOTALL | re.MULTILINE).group(0)
+    run_fn = lambda *a: subprocess.run(["bash", "-c", f'{func}\nTW=/x/train-watcher.sh\nqueue_on_exit "$@"', "_", *a], check=False, capture_output=True, text=True).stdout
     assert run_fn("/q.json", "a1", "0", "3").endswith(' --attempt 3 --exit "$WATCH_EXIT"')
     assert "--attempt" not in run_fn("/q.json", "a1", "0") and run_fn("/q.json", "a1", "0").endswith(' --exit "$WATCH_EXIT"')   # 옛 호출은 옛 문자열 그대로
 
@@ -1841,7 +1841,7 @@ def test_concurrent_launch_or_reattach_on_same_state_is_refused_with_67(tmp_path
         fcntl.flock(held, fcntl.LOCK_EX)                     # 다른 launch·reattach 가 잡고 있는 상태
         r = _run_launch_set(tmp_path, home, "--gpu", "0", "--force")
         assert r.returncode == 67 and "진행 중" in r.stderr
-        re_ = subprocess.run(["bash", str(SCRIPT_DIR / "launch-set.sh"), "reattach", str(tmp_path / "s.json")], cwd=tmp_path,
+        re_ = subprocess.run(["bash", str(SCRIPT_DIR / "launch-set.sh"), "reattach", str(tmp_path / "s.json")], check=False, cwd=tmp_path,
                              env={**os.environ, "HOME": str(home)}, capture_output=True, text=True, timeout=30)
         assert re_.returncode == 67 and "진행 중" in re_.stderr
 
@@ -1850,7 +1850,7 @@ def test_concurrent_launch_or_reattach_on_same_state_is_refused_with_67(tmp_path
 def test_reattach_appends_to_watcher_log_but_new_launch_truncates(tmp_path):
     """#16: 재부착이 와쳐 로그를 비워 이전 와쳐의 종료·실패 기록이 사라지던 결함(첫 줄 nonce 는 유지돼야 verify 가 통과한다)."""
     text = (SCRIPT_DIR / "launch-set.sh").read_text()
-    funcs = "\n".join(re.search(rf"^{n}\(\) \{{.*?(?:^\}}|\}}$)", text, re.S | re.M).group(0) for n in ("alive", "proc_cmdline", "proc_start", "start_watcher"))
+    funcs = "\n".join(re.search(rf"^{n}\(\) \{{.*?(?:^\}}|\}}$)", text, re.DOTALL | re.MULTILINE).group(0) for n in ("alive", "proc_cmdline", "proc_start", "start_watcher"))
     dummy_tw = tmp_path / "tw.sh"
     dummy_tw.write_text("sleep 7\n")
     wlog = tmp_path / "w.log"
@@ -1858,7 +1858,7 @@ def test_reattach_appends_to_watcher_log_but_new_launch_truncates(tmp_path):
     def start(nonce_in_file):
         wlog.write_text(f"[launch-set] nonce={nonce_in_file} train_pid=1 started=x\n[watcher] 이전 와쳐의 종료 기록\n")
         drv = f'{funcs}\nTW={shlex.quote(str(dummy_tw))} WLOG={shlex.quote(str(wlog))} NONCE=abc TRAIN_PID=1 STARTED=x LOG=l DONE_RX=x EVAL_CMD=true TITLE=t TW_ARGS= DONE_LOG= ON_EXIT=\nstart_watcher; echo rc=$?'
-        subprocess.run(["bash", "-c", drv], capture_output=True, text=True, timeout=30)
+        subprocess.run(["bash", "-c", drv], check=False, capture_output=True, text=True, timeout=30)
         return wlog.read_text()
     kept = start("abc")                                      # 같은 발사의 재부착
     assert kept.splitlines()[0].startswith("[launch-set] nonce=abc") and "이전 와쳐의 종료 기록" in kept and "reattach" in kept
@@ -1871,7 +1871,7 @@ def test_watcher_argument_validation(tmp_path):
     """#20: --interval 0·비숫자가 검증 없이 통과해 PID 감시 루프가 CPU 를 태우던 것 / --eval-timeout-h 형식."""
     base = ["bash", str(SCRIPT_DIR / "train-watcher.sh"), "--pid", "1", "--log", str(tmp_path / "x.log"), "--done-regex", "x", "--eval-cmd", "true", "--no-notify"]
     for bad in (["--interval", "0"], ["--interval", "abc"], ["--timeout-h", "x"], ["--eval-timeout-h", "-1"], ["--eval-timeout-h", "1.2.3"]):
-        r = subprocess.run([*base, *bad], capture_output=True, text=True, timeout=20)
+        r = subprocess.run([*base, *bad], check=False, capture_output=True, text=True, timeout=20)
         assert r.returncode == 64, bad
 
 
@@ -1883,7 +1883,7 @@ def test_watcher_marker_scope_eval_timeout_signal_and_early_exit(tmp_path):
     gone = subprocess.Popen(["true"])
     gone.wait()                                              # 이미 없는 PID
     time.sleep(3)                                            # 마커 파일 mtime 이 «지금 -2초» 보다 오래되게(옛 코드는 이 조건에서 놓쳤다)
-    hook = lambda n: f'echo "$WATCH_EXIT" >> {tmp_path / (n + ".txt")}'   # noqa: E731
+    hook = lambda n: f'echo "$WATCH_EXIT" >> {tmp_path / (n + ".txt")}'
     evalpid = tmp_path / "evalpid.txt"
     procs = {
         "stale": _watch(tmp_path, "stale", "", on_exit=hook("stale"), old_log="TRAIN_DONE (옛 실행)\n"),
@@ -1927,7 +1927,7 @@ esac
 """
 FAKE_SMI_E2E = """#!/bin/bash
 case "$*" in
-  *--query-gpu=index,pci.bus_id,name*) echo "0, 00000000:01:00.0, NVIDIA H100 PCIe, 81559, 512" ;;
+  *--query-gpu=index,pci.bus_id,name*) echo "0, 00000000:01:00.0, NVIDIA H100 PCIe, 81920, 512" ;;
   *--query-compute-apps*) : ;;
   *--query-gpu=index,utilization.gpu*) echo "0, 5" ;;
 esac
@@ -1965,8 +1965,8 @@ def test_e2e_chain_fake_tmux_and_smi_launches_second_item_when_first_ends(tmp_pa
     env = {**os.environ, "HOME": str(home), "PATH": f"{fakebin}:{os.environ['PATH']}", "FAKE_TMUX_DIR": str(fdir)}
     env.pop("GPU_PREFLIGHT_FAKE", None)
     py = ["/usr/bin/python3", str(tools / "launch_queue.py")]
-    assert subprocess.run([*py, "approve", str(qp), "--session", "e2e"], env=env, capture_output=True, text=True, timeout=60, cwd=proj).returncode == 0
-    r = subprocess.run([*py, "start", str(qp), "--gpus", "0"], env=env, capture_output=True, text=True, timeout=240, cwd=proj)
+    assert subprocess.run([*py, "approve", str(qp), "--session", "e2e"], check=False, env=env, capture_output=True, text=True, timeout=60, cwd=proj).returncode == 0
+    r = subprocess.run([*py, "start", str(qp), "--gpus", "0"], check=False, env=env, capture_output=True, text=True, timeout=240, cwd=proj)
     assert r.returncode == 0 and "발사: 판 a1" in r.stdout, (r.stdout, r.stderr)
     sp = qp.with_name("q.state.json")
     deadline = time.time() + 240
@@ -2002,7 +2002,7 @@ def _dr_launch(tmp_path, *extra):
     cmd = ["bash", str(SCRIPT_DIR / "launch-set.sh"), "launch", "--name", "n", "--log", "l.log", "--done-regex", "x", "--eval-cmd", "true",
            "--title", "t", "--expect", "e", "--state", "s.json", "--settle-sec", "1", *extra, "--", "sleep", "3"]
     env = {k: v for k, v in os.environ.items() if k not in ("CUDA_VISIBLE_DEVICES", "GPU_PREFLIGHT_FAKE")}
-    return subprocess.run(cmd, cwd=tmp_path, env={**env, "HOME": str(home)}, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+    return subprocess.run(cmd, check=False, cwd=tmp_path, env={**env, "HOME": str(home)}, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
 
 
 def _mk_intent(tmp_path):
@@ -2060,8 +2060,8 @@ def test_old_state_without_design_review_fields_verifies_and_reattach_does_not_c
     state = tmp_path / "s.json"
     state.write_text(json.dumps({"schema": 3, "name": "n", "status": "launched", "host": "other-host", "train_pid": 999999, "watcher_pid": 0, "eval_cmd": "true", "intent": "", "intent_sha256": ""}))
     state.chmod(0o600)
-    v = subprocess.run(["bash", str(SCRIPT_DIR / "launch-set.sh"), "verify", str(state)], cwd=tmp_path, capture_output=True, text=True, timeout=30)
+    v = subprocess.run(["bash", str(SCRIPT_DIR / "launch-set.sh"), "verify", str(state)], check=False, cwd=tmp_path, capture_output=True, text=True, timeout=30)
     assert v.returncode == 1 and "design_review 미기록" in v.stdout and "VERIFY FAIL" in v.stdout   # 끝까지 돌았고 새 항목은 참고(⚠)로만 나온다
-    assert "판정에 미포함" in [ln for ln in v.stdout.splitlines() if "design_review" in ln][0]
-    re_ = subprocess.run(["bash", str(SCRIPT_DIR / "launch-set.sh"), "reattach", str(state), "--confirm-eval", "true"], cwd=tmp_path, capture_output=True, text=True, timeout=30)
+    assert "판정에 미포함" in next(ln for ln in v.stdout.splitlines() if "design_review" in ln)
+    re_ = subprocess.run(["bash", str(SCRIPT_DIR / "launch-set.sh"), "reattach", str(state), "--confirm-eval", "true"], check=False, cwd=tmp_path, capture_output=True, text=True, timeout=30)
     assert re_.returncode == 65 and "host 불일치" in re_.stdout and "unbound" not in re_.stderr

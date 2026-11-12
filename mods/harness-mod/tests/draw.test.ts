@@ -16,14 +16,14 @@ const SITE = {
 const WORK = { codex: [{ model: 'gpt-6.1-sol', effort: 'xhigh' }], grok: [], train: { running: ['exp-a1'], ended: [] } }
 const serverJson = () => JSON.stringify({
   ts: Date.now() / 1000,
-  gpus: [{ i: 0, util: 0, used: 14, total: 46068 }, { i: 3, util: 96, used: 26419, total: 81559 }],
+  gpus: [{ i: 0, util: 0, used: 14, total: 46080 }, { i: 3, util: 96, used: 26419, total: 81920 }],
   mem: { total: 503 * 2 ** 30, avail: 212 * 2 ** 30 },
-  disk: { total: 879 * 2 ** 30, avail: 121 * 2 ** 30 },
+  disk: { total: 931 * 2 ** 30, avail: 121 * 2 ** 30 },
   sessions: [{ sid: SID, name: '[Harness] Manager', status: 'busy', job_state: 'working', job_detail: '띠 와쳐 표시 반영 확인' },
     { sid: 'b', name: '[PRJ] Manager', status: 'shell', job_state: 'needs_input', job_detail: 'run_exp.py 추론 결과 확인' },
     { sid: 'c', name: '[PRJ] 2.0.0', status: 'idle', job_state: null, job_detail: null }],
-  train: [{ gpu: 3, name: 'exp-mtl-14t-r72-1t', max_epochs: 60, done: 17, metric: 'val_gated_tri_mean', last: true, watcher: true,
-    ckpts: [{ epoch: 4, value: -0.2779 }, { epoch: 14, value: -0.2247 }] }],
+  train: [{ gpu: 3, name: 'exp-demo-1a-x72-1t', max_epochs: 60, done: 17, metric: 'val_score', last: true, watcher: true,
+    ckpts: [{ epoch: 5, value: -0.3136 }, { epoch: 15, value: -0.2571 }] }],
 })
 
 function stubs(on, home: string | null = '/home/user', opts: { server?: () => string, ran?: string[][], work?: object } = {}) {
@@ -57,7 +57,7 @@ test('띠가 터미널·Desktop 두 앱에서 엔진 검증을 통과해 그려�
     const ui = await $.ui.mount({ ...SITE, surface })
     expect(await ui.find({ type: 'Text', text: '작업' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: '작업1' })).toBeDefined()   // 접힌 띠의 Codex·Grok 호출은 개수만(개정 13)
-    expect(await ui.find({ type: 'Text', text: /121\/879G|121G/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /121\/931G|121G/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: ' │ ' })).toBeDefined() // 칸 사이 구분선
     expect(await ui.find({ type: 'Text', text: 'GPU3' })).toBeDefined()   // 접힌 띠의 GPU 별 학습 칸(판 이름 없음)
     expect(await ui.find({ type: 'Text', text: ' 1' })).toBeDefined()     // 그 GPU 에서 도는 판 수(개정 15)
@@ -72,11 +72,11 @@ test('띠가 터미널·Desktop 두 앱에서 엔진 검증을 통과해 그려�
     expect(await ui.find({ type: 'Text', text: /^이름\s*$/ })).toBeDefined()       // 세션 표 머리 줄(개정 21)
     expect(await ui.find({ type: 'Text', text: /run_exp\.py 추론 결과 확인/ })).toBeDefined()   // 세션별 현재 활동 한 줄
     expect(await ui.find({ type: 'Text', text: /26\/80G/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: 'r72-1t' })).toBeDefined()   // 펼친 보기의 판 짧은 이름
+    expect(await ui.find({ type: 'Text', text: 'x72-1t' })).toBeDefined()   // 펼친 보기의 판 짧은 이름
     expect(await ui.find({ type: 'Text', text: 'last' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /17\/60/ })).toBeDefined()   // 펼친 보기의 판 줄에만 끝낸 에폭 / 최대 에폭
-    expect(await ui.find({ type: 'Text', text: /val_gated_tri_mean/ })).toBeUndefined()   // 지표·체크포인트는 펼친 보기에서 빠졌다(개정 15)
-    expect(await ui.find({ type: 'Text', text: /e14 -0\.2247/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /val_score/ })).toBeUndefined()   // 지표·체크포인트는 펼친 보기에서 빠졌다(개정 15)
+    expect(await ui.find({ type: 'Text', text: /e15 -0\.2571/ })).toBeUndefined()
     await ui.press({ key: 'band-toggle' })
     await ui.unmount()
   }

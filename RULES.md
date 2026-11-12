@@ -9,8 +9,8 @@ Rules are split into two tiers: **eager** (always loaded) and **lazy** (on-deman
 Context is finite. Loading every rule on every turn wastes ~30–50K tokens per session.
 
 ```
-rules/       ← 5 files, always loaded (CLAUDE.md + rules/*.md = 73,054B (2026-10-02 실측) — 예산 75,000B, 초과는 경고만)
-rules-lazy/  ← 51 files, loaded only when triggered
+rules/       ← 5 files, always loaded (CLAUDE.md + rules/*.md = 73,568B (2026-11-12 실측) — 예산 75,000B, 초과는 경고만)
+rules-lazy/  ← 53 files, loaded only when triggered
 ```
 
 A lazy rule loads only when its trigger condition fires within the current turn. After loading, it applies for that turn and is not re-loaded unless triggered again.
@@ -41,10 +41,10 @@ Three principles sit above individual rule files and gate every turn. Their full
 | `mem0-auto.md` | Always | Mem0 triggers are automatic — no user prompt needed | §1 metadata, §2 trigger table T01~T41, §4 infer strategy |
 | `model-assignment.md` | Always | Non-Opus work → subagent by default | §1 Opus conditions, §2 Sonnet, §3 Haiku, §4 delegation rules |
 | `prompt-routing.md` | Always | Clarify before execute | Step 0~3: CLAUDE.md check, ground truth, clarification, model dispatch |
-| `code-execution.md` | Always | Write to file; user runs | Execution prohibition, auto-allow (read-only), Figure exception |
+| `code-execution.md` | Always | Write to file; user runs | Execution prohibition, auto-allow (read-only), closed list of 7 AI-execution exceptions |
 
 ### `agent-routing.md`
-Defines all 13 agents, routing priority table (24 rows, 0.5–10), TeamCreate duplicate guard, SKILL_DEPTH propagation protocol, and `/discuss` recursion exception.
+Defines all 12 agents, routing priority table (25 rows, 0.5–10), TeamCreate duplicate guard, SKILL_DEPTH propagation protocol, and `/discuss` recursion exception.
 
 ### `mem0-auto.md`
 T01~T41 auto-triggers covering decision capture, compact backup, session restore, QA failures, experiment results, paper reviews, and user feedback. Includes 3-axis Smart Retrieval (History/Current/Future) and project-name isolation pattern.
@@ -56,7 +56,7 @@ Opus handles math, biology, architecture, cross-module deps, complex debug, and 
 Step 0: CLAUDE.md check. Step 0.5: Continuation ground truth. Step 1: Clarification (8 ambiguity patterns). Step 1.5: Model dispatch with pre-report. Step 1.7: Repeat-pattern preprocessing skip.
 
 ### `code-execution.md`
-Code → file → user runs. Read-only commands auto-allowed. Figure scripts (`gen_*.py` under `docs/paper/figures/scripts/`) are the only AI-executable exception.
+Code → file → user runs. Read-only commands auto-allowed. AI-executable exceptions are the closed list (7 kinds) in `rules/code-execution.md`.
 
 ---
 
@@ -86,12 +86,13 @@ Code → file → user runs. Read-only commands auto-allowed. Figure scripts (`g
 | `scope-gate.md` | Edit/Write 호출 직전 (ralph loop·G-E Loop) | PreToolUse hook scope gate — 상세: rules-lazy/scope-gate.md |
 | `tool-dependency-gate.md` | 작업이 전제하는 도구·설정 부재 감지 시 | 3택 게이트(설치 위임/직접/미사용) + mem0 재질문 방지 + 서드파티 스킬 격리 검토 특칙 |
 | `code-graph.md` | 대형 프로젝트 정찰·변경영향 분석 / graphify-out 보유 프로젝트 질문 | Graphify 코드 그래프 게이트·소비·§7 하네스 온톨로지·§8 무인 자동 갱신 타이머 |
-| `codex-model-gate.md` | codex·grok 위임 직전 (작업 사이클당 1회) | 모델(Sol/Terra/Luna/기타)·effort(≤xhigh 플러그인, max 직접 exec) 선택 게이트 — config 기본값 제거와 한 쌍 |
+| `codex-model-gate.md` | codex·grok 위임 직전 (작업 사이클당 1회) | 모델(Sol/Terra/Luna/기타)·effort(직접 exec 기본, 플러그인은 사용자 허용 시 대체·≤xhigh) 선택 게이트 — config 기본값 제거와 한 쌍 |
+| `session-handoff.md` | 세션 시작·일한 턴의 최종 보고 직전·커밋·발사·compact 전, Stop 훅이 갱신을 요구할 때 | 세션 작업 현황 파일(`.scratch/handoff/<세션 id 8자>.md`) 위치·형식·Grok 이어받는 법 — 토큰 소진 대비 |
 | `security-scan-gate.md` | claude-security 플러그인 스캔 직전 (매회) | 깊이(Instant~max)·범위 선택 게이트 — max=754k+ 토큰 실사용 근거, 최초 실행 플랜 검증 절차 |
 | `notification-turn-reduction.md` | 알림 턴 처리 방침·보고 1회 규칙 근거 확인 시 | 프롬프트1회·알림 턴 감축의 근거·경위·실측 원문 (agent-routing 해당 § 상세) |
 | `knowledge-capture.md` | 대화 중 재사용 가능 지식 확정 시 (CLAUDE.md 10.5) | knowledge/<프로젝트>/ 노트 즉시 작성 → 일간 빌드가 온톨로지 편입 — 트리거·스키마·중복 방지 |
 | `agent-eval.md` | 재작업·부정 피드백·qa FAIL 신호 시 | T41 약점 축적 — 동일 약점 3회+ 시 agents 개선, 조정 2회 무효 시 구조 전환 게이트 |
-| `agent-personas.md` | 페르소나·비판 모드 커스터마이즈 시 | 페르소나 카탈로그 11종 × 3 (citation-verifier 는 자체 3모드) + 4 비판 모드 |
+| `agent-personas.md` | 페르소나·비판 모드 커스터마이즈 시 | 페르소나 카탈로그 10종 × 3 (citation-verifier 는 자체 5모드) + 4 비판 모드 |
 | `doc-format-registry.md` | 프로젝트 관련 문서 작성·수정 전 (Confluence·연구 기록 등) | 프로젝트별 문서 양식 단일 인덱스 + 필수 조회 게이트 + 미등록 부트스트랩 |
 | `citation-verification-log.md` | 논문 검증 완료 후 기록 시 | 2층 저장(T21 요약+상세 로그) — 저장 주체는 main, verifier는 payload 반환만 |
 | `dynamic-workflow.md` | Workflow 도구(모드 B) 검토 시 | 사용자 opt-in 필수 — over-application 금지 |
@@ -108,7 +109,7 @@ Code → file → user runs. Read-only commands auto-allowed. Figure scripts (`g
 | `untrusted-quarantine.md` | 외부 콘텐츠 열람 후 고권한 행동 전 | 격리 → 구조화 반환 → main 실행 (Mem0 쓰기 금지 포함) |
 | `peer-session-messages.md` | 타 세션·서버 Claude 피어 메시지 수신 시 | 자기 권한 범위만·에스컬레이션 불가·permission laundering 거부+surface |
 | `before-after-report.md` | 적용 전후가 나뉘는 변경 보고 시 | 전·후 각각 무엇을·어떻게·왜 6줄 + 수치 예시 + 도해 |
-| `code-execution-detail.md` | 임시·최종 코드 저장 위치 결정·다른 저장소 관련 시 | code-execution.md 의 프로젝트 경계·코드 저장 규칙 정본 상세 |
+| `code-execution-detail.md` | 임시·최종 코드 저장 위치 결정·다른 저장소 관련 시·사용자에게 명령 2개+ 부탁 시 | code-execution.md 의 프로젝트 경계·코드 저장 규칙·명령 묶음 스크립트 정본 상세 |
 | `code-review-dfs.md` | 브랜치·모듈 전수 코드 리뷰 시작 시 | 한 함수씩 파고드는 DFS 리뷰 방법론(실행은 reviewer·main) |
 | `decision-sovereignty.md` | 사용자 결정 지점 발견·AskUserQuestion 직전 | 추천·유도 금지, 선택지는 장단점 표 |
 | `oversight-signature.md` | 비가역 게이트 결정 직후·서명 로그 집계 시 | 감시 품질 서명 기록(oversight-append.sh) |

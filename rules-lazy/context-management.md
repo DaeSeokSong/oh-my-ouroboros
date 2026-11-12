@@ -6,10 +6,10 @@
 
 ### autocompact 발동 조건 (2026-07-19 근원 규명·수정)
 
-`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75`는 **단독으로는 1M 컨텍스트 창 세션(예: 로컬 Opus 4.8/Fable 5)에서 무효**다 — 공식 env-vars 문서 실측 확인. 원문 취지: 1M 컨텍스트 창 세션(예: 로컬 Opus 4.8) 등에서는 override 값과 무관하게 "대화가 모델 context limit에 도달할 때" autocompact가 발동한다. override가 실제로 임계를 낮추려면 **`CLAUDE_CODE_AUTO_COMPACT_WINDOW`를 함께 설정**해야 한다 — 이 변수가 statusline `used_percentage`의 분모(denominator)를 모델 실제 윈도우에서 분리해, override의 % 계산이 그 분모 기준으로 동작하게 만든다.
+`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75`는 **단독으로는 1M 컨텍스트 창 세션에서 무효**다 — 공식 env-vars 문서 실측 확인. 원문 취지: 1M 컨텍스트 창 세션 등에서는 override 값과 무관하게 "대화가 모델 context limit에 도달할 때" autocompact가 발동한다. override가 실제로 임계를 낮추려면 **`CLAUDE_CODE_AUTO_COMPACT_WINDOW`를 함께 설정**해야 한다 — 이 변수가 statusline `used_percentage`의 분모(denominator)를 모델 실제 윈도우에서 분리해, override의 % 계산이 그 분모 기준으로 동작하게 만든다.
 
 - **현재 설정 (settings.json `env`)**: `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75` + `CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000` → 분모 1M 고정 → 75%가 **statusline 750K(=75%)** 에서 발동. 이전에는 window 변수 부재로 override=75가 **줄곧 무효**였고, 그래서 이 세션이 86%까지도 미발동이었음(실측). 이 조합으로 수정.
-- override는 임계를 **낮추기만** 가능(높일 수 없음). override 단독 발동은 200K 컨텍스트 창 모델(예: Sonnet 4.6/Opus 4.6)·클라우드 세션 한정 — 1M 컨텍스트 창 세션(예: 로컬 Opus 4.8/Fable 5)은 window 변수 필수.
+- override는 임계를 **낮추기만** 가능(높일 수 없음). override 단독 발동은 200K 컨텍스트 창 모델·클라우드 세션 한정 — 1M 컨텍스트 창 세션은 window 변수 필수.
 - **정합 조건**: "statusline 75% = compact"가 성립하려면 window 값이 statusline이 쓰는 분모와 같아야 한다. statusline(claudenews HUD)이 다른 분모를 쓰면 발동점이 어긋난다 — 다음 장기 세션에서 statusline 75% 근처 미발동 시 이 값을 재점검.
 
 - `~/.claude/CLAUDE.md`의 Compact Instructions 섹션 기준 적용
@@ -43,8 +43,8 @@ autocompact 미발동 리스크를 상쇄하기 위해 아래 수단을 병행�
 
 세션 시작 시 settings.local.json(없으면 settings.json)의 model 값 확인(시스템 프롬프트의 표시 ID 는 `[1m]` 접미를 보여 주지 않는다):
 - `[1m]` suffix 포함 → "1M 세션"으로 분류, 아래 임계 관리 발동
-- 컨텍스트 창 1M(비-`[1m]`이어도 실제 창이 1M) → override 단독 무효, `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 필요 (예: 로컬 Opus 4.8/Fable 5) (§ 자동 compact)
-- 컨텍스트 창 200K 경계 모델·클라우드 세션 → override 단독으로 75% 발동 (예: Sonnet 4.6/Opus 4.6)
+- 컨텍스트 창 1M(비-`[1m]`이어도 실제 창이 1M) → override 단독 무효, `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 필요 (§ 자동 compact)
+- 컨텍스트 창 200K 경계 모델·클라우드 세션 → override 단독으로 75% 발동
 
 ### 입력 누적 임계 관리
 
@@ -87,7 +87,7 @@ autocompact 미발동 리스크를 상쇄하기 위해 아래 수단을 병행�
 4. **긴 코드/스크립트 생성 전 컨텍스트 50%+ 상태** (TikZ, matplotlib, LaTeX 등 100줄+)
 5. 수동 실행 시 반드시 지시 명시: `/compact 실험 config와 수정 내역 보존, 도구 출력 요약`
 
-**Phase 경계 위생 (2026-08-06 이식 — 출처: mattpocock/skills `ask-matt`, MIT)**: 작업 phase가 끝날 때마다 용량과 무관하게 ①그냥 이어가기 ②/clear ③handover 후 새 세션 ④subagent 위임 ⑤/compact 5택을 의식적으로 고른다 — 원문 요지: "이어가기가 정답인 경우가 가장 적다". 75% 트리거(용량 기준)의 보완 축(작업 경계 기준).
+**Phase 경계 위생 (2026-08-06 이식 — 출처: mattpocock/skills `ask-matt`, MIT)**: 작업 phase가 끝날 때마다 용량과 무관하게 1) 그냥 이어가기 2)/clear 3) handover 후 새 세션 4) subagent 위임 5)/compact 5택을 의식적으로 고른다 — 원문 요지: "이어가기가 정답인 경우가 가장 적다". 75% 트리거(용량 기준)의 보완 축(작업 경계 기준).
 
 ### /discuss 활성 중 compaction 주의 (MANDATORY)
 
@@ -134,9 +134,9 @@ compact 직전 필수 절차 (순서 준수):
   2. Mem0 3축 검색 (MANDATORY):
      History: search_memories(query="세션 상태 이전 작업 진행률", filters={"metadata": {"category": "context"}})
      Current: search_memories(query="활성 결정 합의 config", filters={"metadata": {"category": "decision"}})
-     Future:  search_memories(query="다음 단계 TODO 예정 작업", filters={"metadata": {"category": "context"}})
+     Future:  search_memories(query="QA 실패 코드 관례 패턴", filters={"metadata": {"category": "code_pattern"}})  (T03 의 셋째는 code_pattern: 과거 QA 실패 · 코드 관례)
   3. handover.md + Mem0 결과 교차 확인
-  4. 충돌 시: Mem0(더 상세) 우선, 사용자에게 차이점 보고
+  4. 충돌 시: handover.md·현재 파일 우선(Mem0 는 advisory), 사용자에게 차이점 보고
 ```
 
 - handover.md + Mem0 이중 안전망: 둘 중 하나만 있어도 복구 가능
@@ -358,4 +358,4 @@ cache 감지 시 응답 첫 줄에 반드시 1줄 보고:
 
 ## Subagent 반환 누적 추정 (수동 휴리스틱)
 
-subagent 반환이 세션 내 20회를 넘어가면 compact를 권장한다(35회+ 강력 권장). 자동 카운터는 미배선(2026-07-10 정합화 — 구 MANDATORY 표기는 실행 수단 없는 선언이라 폐지)이며, 실질 방어는 subagent 반환 1,500자 상한(`agent-routing-mcp.md`)과 75% autocompact이 담당한다.
+subagent 반환이 세션 내 20회를 넘어가면 compact를 권장한다(35회+ 강력 권장). 자동 카운터는 미배선(2026-07-10 정합화 — 구 MANDATORY 표기는 실행 수단 없는 선언이라 폐지)이며, 실질 방어는 subagent 반환 1,500자 상한(`token-efficiency.md` § Subagent 반환값 적재 최소화)과 75% autocompact이 담당한다.

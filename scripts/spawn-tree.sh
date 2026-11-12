@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# spawn-tree.sh — Write/Edit 보유 spawn(researcher·qa·docs·tutor·designer)의 쓰기 경계 검사 정본 (paper-read Step 4 / Phase 1.5 / Write 보유 spawn 공통)
+# spawn-tree.sh — Write/Edit 보유 spawn(researcher·qa·docs·tutor)의 쓰기 경계 검사 정본 (paper-read Step 4 / Phase 1.5 / Write 보유 spawn 공통)
 #
 # 왜 스크립트인가 (2026-08-25 12라운드): Step 4 산문의 트리 생성 명령(`%p\t%s`)과 ⓑ 접두 해시 요구가 어긋났고(Grok),
 #   history.md 형식 화이트리스트(`^## \[20`)가 실제 파일(`## 2026-…`·`### 2026-…`)과 달라 실사용 0건 = 정상 감사 기록을 FAIL 로 오판할 상태였으며(렌즈1),
@@ -15,7 +15,7 @@
 #   check <tree파일> [--allow <절대경로접두>]... [--main-only <절대경로>]... [--allow-mcp <mcp__접두>]...
 #       spawn 종료 직후 검사자가 실행(주체 규칙은 아래). 절대 경로 접두만 받는다(`*/notes/*` 같은 접미 광역 금지). ④ 는 subagent 의 `mcp__*` 호출 중 `--allow-mcp` 접두에
 #       맞지 않는 것을 FAIL 로 본다 — 15라운드 Grok: 전면 스위치는 qa·tutor 의 내부 기억(mem0)과 docs 의 외부 발신(Confluence)을 한 스위치로 묶었다. 예: `--allow-mcp mcp__mem0__`.
-#       주체 규칙: 검사자 ≠ 피검사자 — researcher 창은 qa 가, qa·docs·tutor·designer 창은 main 이 실행한다(15라운드 렌즈3).
+#       주체 규칙: 검사자 ≠ 피검사자 — researcher 창은 qa 가, qa·docs·tutor 창은 main 이 실행한다(15라운드 렌즈3).
 #       ④ 는 창 안의 **모든** subagent transcript 를 본다(검사자 자신 포함) — 검사자 qa 는 check 를 마치기 전에 어떤 MCP 도구도 호출하지 않는다(T05 검색은 check 뒤, 16라운드 Grok).
 #       `--allow-mcp` 접두는 서버 단위 `mcp__<서버>__` 만 받는다(`mcp__` 단독 거부).
 #       ① 사라진 파일(드롭퍼 자기삭제) — 심볼릭 링크도 파일로 센다(`-type l`, 14라운드 Grok 낮음: 링크 신설로 스캔을 비켜가던 경로)
@@ -210,7 +210,7 @@ while IFS= read -r p; do
 done < <(find "${ROOTS[@]}" \( -type f -o -type l \) -cnewer "$TREE" -not -path "$TREE" "${RUNTIME_EXEMPT[@]}" 2>/dev/null | sort -u)
 
 # ④ subagent transcript 의 Write/Edit tool_use 경로 + MCP 호출 (tree ctime 이후 timestamp 만)
-#    MCP: 이 검사가 쓰이는 spawn(paper-read researcher·qa·docs·tutor·designer)은 `rules-lazy/untrusted-quarantine.md` §4 로 외부 발신·MCP 가 금지된 격리 spawn 이다.
+#    MCP: 이 검사가 쓰이는 spawn(paper-read researcher·qa·docs·tutor)은 `rules-lazy/untrusted-quarantine.md` §4 로 외부 발신·MCP 가 금지된 격리 spawn 이다.
 #    도구 권한을 spawn 단위로 뗄 수 없으므로 transcript 의 `mcp__*` tool_use 를 FAIL 로 잡는다(14라운드 렌즈2: 파일시스템 감사만으로는 Confluence 생성 같은 발신을 못 봤다). `--allow-mcp` 로만 해제.
 if command -v jq >/dev/null 2>&1; then
     D=$(date -u -d "@$(stat -c %Z -- "$TREE")" +%Y-%m-%dT%H:%M:%S)

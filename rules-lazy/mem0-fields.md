@@ -74,7 +74,7 @@
 | 한계/반박 | 선택 | `rank 선택 기준 명확하지 않음` |
 | citation-verifier 검증 | 선택 | `verdict=허용, supporting=320, contrasting=12, retracted=false, confidence=high, fulltext_coverage=partial` |
 | 인용 부분 | 선택 | `Sec 4.2 Table 2 — WikiSQL rank=2 acc=73.4%` |
-| invoker | 필수 (citation-verifier 검증 시) | `searcher / researcher / main-opus` |
+| invoker | 필수 (citation-verifier 검증 시) | `searcher / researcher / main` |
 | purpose | 필수 (citation-verifier 검증 시) | `본문 인용 / SOTA 베이스라인 / 철회 확인 / paper-read 후속 / 토론 근거` |
 | actual_use | 필수 (citation-verifier 검증 시) | `YES / NO / PENDING` |
 | location | 필수 (citation-verifier 검증 시) | `src/models/lora.py:L42` 또는 `docs/paper/sec3.tex` 또는 `"테스트 호출만"` |

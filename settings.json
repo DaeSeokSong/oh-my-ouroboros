@@ -24,7 +24,9 @@
       "Bash(tmux new-session *)",
       "Bash(tmux send-keys *)",
       "Bash(tmux capture-pane *)",
-      "Bash(bash ~/.claude/tools/train-watcher/launch-set.sh *)"
+      "Bash(bash ~/.claude/tools/train-watcher/launch-set.sh *)",
+      "Write(//path/to/scratch/**)",
+      "Edit(//path/to/scratch/**)"
     ],
     "deny": [
       "Bash(sudo:*)",
@@ -46,10 +48,23 @@
       "Read(./_cache/**)",
       "Read(./_refs/**)"
     ],
-    "defaultMode": "auto"
+    "defaultMode": "auto",
+    "additionalDirectories": [
+      "/path/to/scratch"
+    ]
   },
   "hooks": {
     "PreToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $HOME/.claude/scripts/agent-type-gate.py",
+            "timeout": 5
+          }
+        ]
+      },
       {
         "matcher": "Write|Edit",
         "hooks": [

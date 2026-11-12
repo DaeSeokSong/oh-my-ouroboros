@@ -9,9 +9,21 @@ df 가 D 상태로 쌓인다(검수 researcher 7). 그래서 서버당 파일 1�
 진행 파일(개정 18, 2026-10-22): 판 폴더(연 파일의 폴더 · 명령줄 절대 경로 파일 인자의 폴더)에 band_progress.json 이 있으면 그 done·max 를 앞세운다.
 last 칸(개정 19): 진행 파일의 선택 키 last(bool) → 없으면 last.ckpt 이름 또는 판 폴더의 last.pth.
 와쳐·세션 작업(개정 11): 판마다 watcher(true/false/null)를, 세션마다 jobs/<jobId>/state.json 의 state·detail 두 값만 job_state·job_detail 로 담는다(나머지 키는 버린다).
+메모리는 `/proc/meminfo` 를 먼저 읽는다(2026-10-16 실측: ko_KR 로케일에서 `free` 첫 열이 «메모리:» 라 `Mem:` 파싱이 비어 띠에 «조회 실패» 가 났다).
+통합 메모리 장치(DGX Spark GB10, 2026-10-16 실측)는 nvidia-smi 가 memory.used·total 을 `[N/A]` 로 주므로 그 GPU 는 시스템 메모리(MemTotal·MemAvailable)를
+MiB 로 대신 채우고 `unified: true` 를 붙인다. GPU 와 CPU 가 같은 풀을 쓰는 장치라 그 값이 곧 GPU 가 쓸 수 있는 메모리다.
 df 는 로컬 파일시스템(`-l`)만 본다. 루트 `/` 한 줄은 disk(접힌 띠용)이고, `/dev/` 장치 행마다 disks(장치 이름·SSD/HDD 종류·마운트·총량·여유, 개정 14)를 더 모은다. 세션 파일은 `숫자.json` 만 읽고 name·status·sessionId 만
 옮긴다(같은 폴더의 *.key 는 비밀값, 검수 security 6). 화면 문자열은 제어문자·양방향 제어를 지운다.
 캐시 폴더는 0700, 파일은 mkstemp(0600)+rename 이다(검수 security 2).
+정지 스위치·남은 자식 감지(2026-10-26, GPU 서버 실측): 11:20~11:50 KST 한 사용자 계정에 `pgrep` 약 63개와 `nvidia-smi` 1개가 D 상태로 쌓이고 부하 평균이
+65~70 까지 올라 CPU 측정이 흔들렸다. 원인은 멈춘 nvidia-smi 의 /proc 을 읽다 갇힌 `pgrep` 이다. mod 의 `timeout 8` 은 파이썬만 죽여 잠금이 풀리고, D 상태 자식은
+안 죽은 채 15초마다 하나씩 늘었다. 대책 3가지:
+1) `_cache/band/off` 파일이 있으면(`touch` 로 켜고 `rm` 으로 끈다) main 이 잠금·attempt·하위 프로세스 없이 곧바로 끝난다. 내용은 읽지 않는다.
+2) run() 이 자식을 Popen 으로 띄워 pid 와 실행 파일 이름을 `server.inflight` 에 적고, 끝나면 지운다(타임아웃 뒤 kill 이 안 먹으면 남긴다).
+   수집 시작에 그 pid 의 /proc/<pid>/comm 이 적힌 이름과 같으면 이번 회차는 하위 프로세스를 하나도 띄우지 않고 gpus·train 은 60초 이월, mem·disk·disks 는 None,
+   결과에 `"stuck": true` 를 더한다(mod 는 이름 붙은 키만 읽어 모르는 키는 무시한다). 갇힌 자식이 풀리면 다음 회차부터 정상이다.
+3) nvidia_smi_stuck() 은 pgrep 대신 /proc 숫자 폴더의 comm·소유 uid 로 찾는다(경과 시간 _elapsed 는 /proc/<pid>/stat 과 /proc/uptime 만 읽는다).
+   D 상태면 cmdline 을 읽지 않고 곧바로 멈춤(반복 감시여도 드라이버가 갇힌 신호, cmdline 읽기가 같이 갇힐 수 있다). D 가 아니고 10초 넘은 것만 cmdline 으로 반복 감시(-l·-lms·--loop·--loop-ms·dmon·pmon)를 가려 빼고, 아니면 멈춤(사용자 결정 2026-10-28, 실험 스크립트의 -lms 500 감시가 띠를 지웠다).
 호출: python3 -I band_server_collect.py   (mod 가 인자 배열로 부른다)
 """
 import collections
@@ -70,6 +82,16 @@ LAST_PTH = "last.pth"   # 개정 19: detectron2 DetectionCheckpointer 의 재개
 WATCHER_SCRIPT = "train-watcher.sh"
 MAX_PROCS = 4096
 MAX_CMDLINE = 1 << 16
+# launch-set 상태 파일(개정 20): 위치는 launch-set.sh 기본값 <git 뿌리>/.scratch/launch/launch-state-<이름>.json (band_work_collect 와 같은 두 꼴).
+MAX_STATE_FILES = 128
+MAX_STATE_BYTES = 1 << 16
+MAX_ROOT_HOPS = 12
+MAX_SCAN_ENTRIES = 8192
+MAX_STATE_DEPTH = 3   # .scratch/<잡>/launch/<판>/launch-state-*.json 까지(2026-11-12 qa 실측: project-C 판)
+# 와쳐를 본 러너 기억(개정 20): 캐시 폴더의 server.watched {"boot_id", "pids": {"<pid>": starttime}}. 띠가 읽는 server.json 에는 pid 를 넣지 않는다.
+WATCHED_FILE = "server.watched"
+MAX_WATCHED = 256
+MAX_WATCHED_BYTES = 1 << 16
 # 세션 작업(개정 11): jobs/<jobId>/state.json 에서 state·detail 두 키만 꺼낸다(나머지 키는 브리지 id·계정 uuid·intent 라 읽고 버린다).
 JOBS_DIR = pathlib.Path(os.environ.get("BAND_JOBS_DIR", os.path.expanduser("~/.claude/jobs")))
 JOB_ID = re.compile(r"[0-9a-f]{8}")
@@ -78,34 +100,124 @@ MAX_JOB_BYTES = 64 << 10
 MAX_DETAIL = 120
 
 
-def run(argv, timeout=3):
-    """Run argv and return stdout, or None on failure/timeout."""
+INFLIGHT_COMMS = frozenset({"nvidia-smi", "free", "df"})  # run() 이 띄우는 실행 파일 이름(comm 은 15자까지)
+
+
+def set_inflight(pid, comm):
+    """Record the running child (pid + executable name) in server.inflight; best effort."""
     try:
-        p = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired):
+        write_atomic(CACHE_DIR / "server.inflight", {"pid": pid, "comm": comm})
+    except OSError:
+        pass
+
+
+def clear_inflight():
+    """Forget the recorded child (it ended)."""
+    try:
+        os.unlink(CACHE_DIR / "server.inflight")
+    except OSError:
+        pass
+
+
+def inflight_stuck():
+    """True if the child recorded in server.inflight is still alive (/proc/<pid>/comm equals the recorded name).
+
+    comm 파일만 읽는다(태스크 이름뿐이라 D 상태 프로세스도 안 갇힌다). cmdline·status 는 읽지 않는다."""
+    try:
+        with open(CACHE_DIR / "server.inflight") as f:
+            rec = json.loads(f.read(4096))
+        pid, comm = rec["pid"], rec["comm"]
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):  # 깊은 중첩 JSON 도 수집기를 죽이지 않게(security 낮음)
+        return False
+    # comm 은 이 수집기가 띄우는 이름만 받는다: 다른 살아 있는 프로세스(예: systemd)를 가리키는 기록이 수집을 영구히 멈추지 않게(security 낮음)
+    if not isinstance(pid, int) or isinstance(pid, bool) or comm not in INFLIGHT_COMMS:
+        return False
+    return _read_proc(pid, "comm", 32).strip() == comm
+
+
+def run(argv, timeout=3, env=None):
+    """Run argv and return stdout, or None on failure/timeout; the child is listed in server.inflight while it runs.
+
+    타임아웃이면 kill 을 시도하고, 죽었으면 목록에서 지운다. 죽지 않으면(D 상태) 목록에 남겨 다음 회차가 «갇힌 자식 있음» 으로 본다."""
+    try:
+        p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env)
+    except OSError:
         return None
-    return p.stdout if p.returncode == 0 else None
+    set_inflight(p.pid, os.path.basename(argv[0])[:15])   # 커널 comm 은 15자까지
+    try:
+        try:
+            out, _ = p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            try:
+                p.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                return None
+            clear_inflight()
+            return None
+        clear_inflight()
+        return out if p.returncode == 0 else None
+    finally:
+        p.stdout.close()
 
 
-def parse_gpus(text):
-    """Parse nvidia-smi csv (index,util,used,total) into dicts, or None on garbage."""
+MIB = 1 << 20
+NA = "[N/A]"
+
+
+def parse_gpus(text, mem=None):
+    """Parse nvidia-smi csv (index,util,used,total) into dicts, or None on garbage.
+
+    A unified-memory device (GB10) reports used/total as [N/A]; with mem={"total","avail"} (bytes) such a GPU
+    takes the system memory in MiB and is marked unified=True. Without mem, [N/A] lines make the result None.
+    """
     out = []
     for line in (text or "").strip().splitlines():
         parts = [x.strip() for x in line.split(",")]
-        if len(parts) != 4 or not all(x.isdigit() for x in parts):
+        if len(parts) != 4 or not all(x.isdigit() for x in parts[:2]):
             return None
-        i, util, used, total = map(int, parts)
-        out.append({"i": i, "util": util, "used": used, "total": total})
+        i, util = int(parts[0]), int(parts[1])
+        if parts[2] == NA and parts[3] == NA:
+            if not mem:
+                return None
+            out.append({"i": i, "util": util, "used": (mem["total"] - mem["avail"]) // MIB, "total": mem["total"] // MIB,
+                        "unified": True})
+            continue
+        if not (parts[2].isdigit() and parts[3].isdigit()):
+            return None
+        out.append({"i": i, "util": util, "used": int(parts[2]), "total": int(parts[3])})
     return out or None
 
 
 def parse_mem(text):
-    """Parse `free -b` into total/avail bytes."""
+    """Parse `free -b` (C locale: first column `Mem:`) into total/avail bytes."""
     for line in (text or "").splitlines():
         f = line.split()
         if f and f[0] == "Mem:" and len(f) >= 7:
             return {"total": int(f[1]), "avail": int(f[6])}
     return None
+
+
+def parse_meminfo(text):
+    """Parse /proc/meminfo (MemTotal/MemAvailable in kB) into total/avail bytes, or None if either is missing."""
+    found = {}
+    for line in (text or "").splitlines():
+        f = line.split()
+        if len(f) >= 2 and f[0] in ("MemTotal:", "MemAvailable:") and f[1].isdigit():
+            found[f[0]] = int(f[1]) * 1024
+    if "MemTotal:" in found and "MemAvailable:" in found and found["MemTotal:"] > 0:
+        return {"total": found["MemTotal:"], "avail": found["MemAvailable:"]}
+    return None
+
+
+def read_mem():
+    """System memory from /proc/meminfo (locale-independent), else `free -b` run in the C locale."""
+    try:
+        with open("/proc/meminfo") as f:
+            mem = parse_meminfo(f.read(1 << 16))
+    except OSError:
+        mem = None
+    return mem or parse_mem(run(["free", "-b"], env={**os.environ, "LC_ALL": "C"}))
 
 
 def parse_disk(text):
@@ -220,7 +332,8 @@ def read_sessions(d, alive=_alive, jobs_dir=None):
         if not isinstance(obj, dict):
             continue
         sid, pid = str(obj.get("sessionId", "")), obj.get("pid")
-        if not SID.fullmatch(sid) or not isinstance(pid, int) or not alive(pid):
+        # spare=true(데몬 예비 세션, 입력 전)는 claude agents 화면처럼 숨긴다(2026-11-06 사용자 지적)
+        if obj.get("spare") is True or not SID.fullmatch(sid) or not isinstance(pid, int) or not alive(pid):
             continue
         job = obj.get("jobId")
         out.append({"sid": sid, "name": clean(obj.get("name", "")), "status": clean(obj.get("status", ""), 12),
@@ -240,10 +353,45 @@ def _elapsed(pid):
         return 0.0
 
 
+def nvidia_smi_pids():
+    """Pids of this user's nvidia-smi processes, found by scanning /proc (no pgrep child: it hangs on a stuck nvidia-smi)."""
+    uid = os.getuid()
+    try:
+        names = [n for n in os.listdir("/proc") if n.isdigit()]
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        try:
+            if os.stat(f"/proc/{n}").st_uid != uid:
+                continue
+        except OSError:
+            continue
+        if _read_proc(n, "comm", 32).strip() == "nvidia-smi":
+            out.append(int(n))
+    return out
+
+
+LOOP_FLAG = re.compile(r"(?:-l(?:ms)?|--loop(?:-ms)?)(?:=\d+)?|-l(?:ms)?\d+")   # nvidia-smi 반복 옵션 꼴만
+
+
+def _is_loop_mode(pid):
+    """True if nvidia-smi pid is a repeating monitor (-l/-lms/--loop/--loop-ms, or dmon/pmon); unreadable cmdline -> False."""
+    args = _read_proc(pid, "cmdline", MAX_CMDLINE).split("\0")[1:]
+    if any(LOOP_FLAG.fullmatch(a) for a in args):
+        return True
+    return next((a for a in args if a and not a.startswith("-")), "") in ("dmon", "pmon")
+
+
+def _is_d_state(pid):
+    """True if /proc/<pid>/stat state letter (after the last ')') is 'D'; unreadable -> False."""
+    fields = _read_proc(pid, "stat", 4096).rsplit(")", 1)
+    return len(fields) == 2 and fields[1].split()[:1] == ["D"]
+
+
 def nvidia_smi_stuck(limit=10):
-    """Return True if this user has an nvidia-smi running longer than limit seconds (hung driver)."""
-    out = run(["pgrep", "-u", str(os.getuid()), "-x", "nvidia-smi"])
-    return any(_elapsed(p) > limit for p in (out or "").split() if p.isdigit())
+    """True if any nvidia-smi of this user is in D state (cmdline not read: it can hang) or, being older than limit, is not a repeating monitor (user decision 2026-10-28)."""
+    return any(_is_d_state(p) or (_elapsed(p) > limit and not _is_loop_mode(p)) for p in nvidia_smi_pids())
 
 
 def previous_gpus(now, max_age=60):
@@ -639,6 +787,167 @@ def read_run(pid, mounts):
             "metric": metric, "ckpts": ckpts, "last": last, "runner_pid": runner_pid_from_cgroup(cgroup)}
 
 
+def project_dirs_of(pid, mounts):
+    """Return [cwd, ..., git root] of /proc/<pid>/cwd (root = nearest ancestor with a `.git` file or dir, <=12 hops).
+
+    No `.git` found -> [cwd] only (launch-set uses $PWD as the root outside a repository). Non-local or unreadable -> [].
+    A `.git` file (worktree) counts like a directory. Only lexists() is called, and only on local paths, so a dead network FS never blocks.
+    """
+    try:
+        cur = os.readlink(f"/proc/{pid}/cwd")
+    except OSError:
+        return []
+    if not os.path.isabs(cur) or not is_local_path(cur, mounts):
+        return []
+    dirs = [cur]
+    for _ in range(MAX_ROOT_HOPS):
+        if os.path.lexists(os.path.join(cur, ".git")):
+            return dirs
+        parent = os.path.dirname(cur)
+        if parent == cur or not is_local_path(parent, mounts):
+            break
+        cur = parent
+        dirs.append(cur)
+    return dirs[:1]
+
+
+def _state_candidates(scratch, mounts):
+    """Return [(mtime, path)] of regular launch-state-*.json files at depth 0..3 under scratch (symlinked dirs followed if local)."""
+    out, queue, seen, scanned = [], collections.deque([(scratch, 0)]), set(), 0
+    while queue:   # 너비 우선: 얕은 곳의 상태 파일을 먼저 모아 스캔 상한에 걸려도 깊은 곳만 잘리게 한다
+        d, depth = queue.popleft()
+        real = os.path.realpath(d)
+        if real in seen or not is_local_path(real, mounts):
+            continue   # 심볼릭 링크가 가리키는 실제 경로도 로컬이어야 한다(security 2026-11-12): 끊긴 NFS 에서 scandir 이 걸리지 않게
+        seen.add(real)
+        try:
+            with os.scandir(real) as it:
+                for e in it:
+                    scanned += 1
+                    if scanned > MAX_SCAN_ENTRIES:
+                        return out
+                    if e.name.startswith("launch-state-") and e.name.endswith(".json"):
+                        st = e.stat(follow_symlinks=False)
+                        if stat.S_ISREG(st.st_mode) and st.st_size <= MAX_STATE_BYTES:
+                            out.append((st.st_mtime, os.path.join(real, e.name)))
+                    elif depth < MAX_STATE_DEPTH and e.is_dir():
+                        queue.append((os.path.join(real, e.name), depth + 1))
+        except OSError:
+            continue
+    return out
+
+
+def read_json_file(path, limit=MAX_STATE_BYTES):
+    """Return the parsed JSON of a regular, size-capped file, or None for ANY failure (missing, huge, broken, too deeply nested).
+
+    The except is deliberately broad (security 2026-11-12): json.loads raises RecursionError on deeply nested input and
+    must only cost this one file, never the whole collector.
+    """
+    try:
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > limit:
+            return None
+        with open(path, "rb") as f:
+            return json.loads(f.read(limit + 1).decode("utf-8", "replace"))
+    except Exception:  # noqa: BLE001 - see docstring
+        return None
+
+
+def launch_state_runners(dirs, boot_id, mounts, boot_start=None):
+    """Return runner pids recorded by launch-set state files found under `<dir>/.scratch` for each dir (this boot only).
+
+    Why a set of runner pids: launch-set.sh writes `train_scope` = `memguard-<name>-<pid>.scope` (pid = `$$` of the
+    exec chain = the runner pid that runner_pid_from_cgroup returns) plus boot_id, so scope pid + same boot_id is the
+    narrowest key that proves "this runner was launched by launch-set".
+    Why dirs and depth 0..3: `--state` may point anywhere (2026-11-12 qa: 4 of 6 live runs did not use `.scratch/launch/`;
+    one repo keeps 58 states directly in `.scratch/launch-1024/`, another runs from a sub-folder of its repo with its own
+    `.scratch/<job>/launch/`). So every directory from the runner cwd up to the git root is tried with four shapes:
+    `.scratch/launch-state-*`, `.scratch/*/launch-state-*`, `.scratch/*/*/launch-state-*`, `.scratch/*/*/*/launch-state-*`
+    (the old two shapes are among them; the last is the live project-C layout `.scratch/<job>/launch/<run>/`).
+    Cost bounds: <=8192 scanned entries per `.scratch` (breadth first), candidates sorted newest first, files older than this boot skipped
+    without reading, at most 128 read (so stale states cannot push out a new one), each <=64 KiB.
+    """
+    cands = []
+    for d in dirs:
+        cands += _state_candidates(os.path.join(d, ".scratch"), mounts)
+    if boot_start is not None:
+        cands = [c for c in cands if c[0] >= boot_start]
+    runners = set()
+    for _, path in sorted(cands, reverse=True)[:MAX_STATE_FILES]:
+        obj = read_json_file(path)
+        if isinstance(obj, dict) and boot_id and obj.get("boot_id") == boot_id:
+            scope = obj.get("train_scope")
+            pid = runner_pid_from_cgroup(scope if isinstance(scope, str) else None)
+            if pid is not None:
+                runners.add(pid)
+    return runners
+
+
+def _starttime(pid):
+    """Return field 22 (starttime ticks) of /proc/<pid>/stat, or None if unreadable."""
+    try:
+        return int(_read_proc(pid, "stat", 4096).rsplit(")", 1)[1].split()[19])
+    except (ValueError, IndexError):
+        return None
+
+
+def load_watched(path, boot_id):
+    """Return {pid: starttime} remembered in `path`, keeping only entries of this boot whose process is still the same one.
+
+    Why remember (2026-11-12 qa): a run that launch-set watched but whose watcher died is exactly the case the band must warn about,
+    and no process-side marker identifies a launch-set run (the runner argv is the training command, the scope name is the same
+    as a plain memguard one, environ may hold secrets), nor can state files always be found. So every pid the collector ever saw
+    under a live train-watcher.sh is stored with its starttime; if the same process later has no watcher, it is a launch-set run
+    that lost its watcher. Any failure -> {} (display falls back to None).
+    """
+    obj = read_json_file(path, MAX_WATCHED_BYTES)
+    out = {}
+    if isinstance(obj, dict) and boot_id and obj.get("boot_id") == boot_id and isinstance(obj.get("pids"), dict):
+        for k, v in list(obj["pids"].items())[:MAX_WATCHED]:
+            if k.isdigit() and len(k) <= 10 and isinstance(v, int) and _starttime(int(k)) == v:
+                out[int(k)] = v
+    return out
+
+
+def save_watched(path, boot_id, entries):
+    """Write the remembered {pid: starttime} (0600, atomic replace); failures are swallowed."""
+    try:
+        write_atomic(pathlib.Path(path), {"boot_id": boot_id, "pids": {str(k): v for k, v in sorted(entries.items())[:MAX_WATCHED]}})
+    except (OSError, ValueError):
+        pass
+
+
+def read_boot_id():
+    """Return this boot's id from /proc/sys/kernel/random/boot_id, or None if unreadable."""
+    try:
+        with open("/proc/sys/kernel/random/boot_id", "rb") as f:
+            return f.read(128).decode("utf-8", "replace").strip() or None
+    except OSError:
+        return None
+
+
+def read_boot_start():
+    """Return the epoch seconds of this boot (minus 5 s slack) from /proc/uptime, or None if unreadable."""
+    try:
+        return time.time() - float(pathlib.Path("/proc/uptime").read_text().split()[0]) - 5
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def watcher_state(rp, watchers, launched):
+    """Return the band watcher value: None (no runner pid or not a launch-set run), True (watched), False (launch-set run without watcher).
+
+    Why False is narrowed to launch-set runs (2026-11-12 report from another session): memguard-wrapped runs that
+    were not started through launch-set.sh (e.g. eval jobs) have a runner pid but never get a watcher, so the old
+    "rp not in watchers -> False" showed a false warning. `launched(rp)` answers "did launch-set state files record this runner".
+    """
+    if rp is None:
+        return None
+    if rp in watchers:
+        return True
+    return False if launched(rp) else None
+
+
 def collect_train():
     """List running training runs per GPU (merged by gpu+name), or None if nvidia-smi could not be queried."""
     apps = run(["nvidia-smi", "--query-compute-apps=pid,gpu_uuid", "--format=csv,noheader"])
@@ -647,13 +956,35 @@ def collect_train():
         return None
     idx, runs, merged, mounts = parse_gpu_uuids(uuids), {}, {}, read_mounts()   # 마운트 표는 수집 1회당 한 번만 읽는다
     watchers = read_watcher_pids()                                              # /proc 훑기도 수집 1회당 한 번
+    boot_id, by_dirs = read_boot_id(), {}                                       # 상태 파일은 폴더 묶음마다 수집 1회당 한 번만 읽는다
+    wpath = CACHE_DIR / WATCHED_FILE
+    loaded = load_watched(wpath, boot_id)                                       # 와쳐가 붙어 있던 러너 기억(부팅 · starttime 이 같은 것만)
+    remembered = dict(loaded)
+    for w in watchers:
+        st = _starttime(w)
+        if st is not None:
+            remembered[w] = st
+    if boot_id and remembered != loaded:
+        save_watched(wpath, boot_id, remembered)
+
+    def launched(rp):
+        """True if launch-set is known to have started this runner: remembered under a watcher, or recorded in a state file."""
+        if rp in remembered:
+            return True
+        dirs = tuple(project_dirs_of(rp, mounts))
+        if not dirs:
+            return False
+        if dirs not in by_dirs:
+            by_dirs[dirs] = launch_state_runners(dirs, boot_id, mounts, read_boot_start())
+        return rp in by_dirs[dirs]
+
     for pid, uuid in parse_compute_apps(apps):
         if uuid not in idx:
             continue
         if pid not in runs:
             runs[pid] = read_run(pid, mounts)
             rp = runs[pid].pop("runner_pid", None)   # 캐시에는 러너 pid 를 쓰지 않고 와쳐 여부(true/false/null)만 쓴다
-            runs[pid]["watcher"] = None if rp is None else rp in watchers
+            runs[pid]["watcher"] = watcher_state(rp, watchers, launched)
         r = runs[pid]
         cur = merged.setdefault((idx[uuid], r["name"]), {"gpu": idx[uuid], **r})
         for k in ("max_epochs", "done", "metric", "watcher"):
@@ -682,9 +1013,15 @@ def previous_train(now, max_age=60):
 def collect():
     """Gather the server band data (None per field on failure; gpus and train carry over up to 60s)."""
     now = time.time()
+    if inflight_stuck():   # 앞 회차 자식이 아직 살아 있다(D 상태): 하위 프로세스를 하나도 띄우지 않아 쌓임을 1개로 묶는다
+        pg, pt = previous_gpus(now), previous_train(now)
+        return {"ts": now, "gpus": pg[0] if pg else None, "gpus_ts": pg[1] if pg else now,
+                "train": pt[0] if pt else None, "train_ts": pt[1] if pt else now,
+                "mem": None, "disk": None, "disks": None, "sessions": read_sessions(SESS_DIR), "stuck": True}
+    mem = read_mem()   # 메모리를 먼저 읽는다(통합 메모리 GPU 의 used/total 을 여기서 채운다)
     stuck = nvidia_smi_stuck()
     gpus = None if stuck else parse_gpus(run(
-        ["nvidia-smi", "--query-gpu=index,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"]))
+        ["nvidia-smi", "--query-gpu=index,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"]), mem)
     gpus_ts = now
     train = None if gpus is None else collect_train()   # GPU 조회가 실패·시간 초과면 학습 조회도 건너뛴다(멈춘 드라이버에 또 묻지 않는다)
     train_ts = now
@@ -700,7 +1037,7 @@ def collect():
         "gpus_ts": gpus_ts,
         "train": train,
         "train_ts": train_ts,
-        "mem": parse_mem(run(["free", "-b"])),
+        "mem": mem,
         "disk": parse_disk(run(["df", "-B1", "-l", "-P", "/"])),
         "disks": parse_disks(run(DF_ARGS)),
         "sessions": read_sessions(SESS_DIR),
@@ -723,7 +1060,9 @@ def write_atomic(path, obj):
 
 
 def main():
-    """Take the lock, stamp the attempt time first, then refresh the cache."""
+    """Take the lock, stamp the attempt time first, then refresh the cache (nothing at all if the `off` file exists)."""
+    if os.path.lexists(CACHE_DIR / "off"):
+        return
     CACHE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(CACHE_DIR, 0o700)
     lock = os.open(CACHE_DIR / "server.lock", os.O_RDWR | os.O_CREAT, 0o600)

@@ -4,8 +4,8 @@
 # 왜: decisions.md 는 «7일» 단기 기억(제목에 명시)인데 정리하는 주체가 없어 527줄까지 쌓였고, 세션마다 읽는 비용이 커졌다.
 #   삭제하지 않고 아카이브 파일에 **붙인다**(되돌릴 수 있게). 승격 대상은 memory-promotion.md 의 몫이며 여기서 판단하지 않는다.
 #
-# 사용: bash scripts/decisions-prune.sh <memory 폴더>        예: ~/.claude/projects/-home-user-workspace/memory
-#   harness-usage-check.sh 가 폴더마다 한 번씩 호출한다: short-term 고정 루트(memory-write.md, `-home-user-workspace`)와
+# 사용: bash scripts/decisions-prune.sh <memory 폴더>        예: <서버 등록부 paths.short_term_root>
+#   harness-usage-check.sh 가 폴더마다 한 번씩 호출한다: short-term 고정 루트(memory-write.md, 서버 등록부 paths.short_term_root)와
 #   cwd 기반 현재 프로젝트(둘이 같으면 1회). SessionStart 경로라 bash 만, 느린 도구·uv run 금지.
 # 항목 경계: 줄머리가 `- YYYY-MM-DD` 또는 굵은 꼴 `- **YYYY-MM-DD …**`(memory-write.md 작성 예시) 인 줄부터 다음 날짜 줄 직전까지(계속 행·빈 줄·`## ` 소제목 포함).
 #   첫 항목 앞 줄(제목·머리말)은 항상 남긴다. 항목 날짜 < 오늘-7일 이면 이동한다.
@@ -57,9 +57,10 @@ fi
 changed() { [ -n "$SIG0" ] && [ "$(stat -c '%s %y' "$DEC" 2>/dev/null)" = "$SIG0" ] && return 1; return 0; }
 if [ "$N" -gt 0 ]; then
     changed && { echo "decisions-prune: 읽는 동안 $DEC 가 바뀌어 중단함(다음 실행이 재시도)" >&2; rm -f "$KEEP" "$MOVED"; exit 0; }
-    { [ -f "$ARC" ] || printf '# 합의 결정 이력 아카이브 (decisions.md 에서 7일 초과분을 옮김, 삭제 없음)\n\n' > "$ARC"; } \
-        && cat "$MOVED" >> "$ARC" \
-        || { echo "decisions-prune: 이동 실패 ($DEC → $ARC)" >&2; rm -f "$KEEP" "$MOVED"; exit 0; }
+    if ! { { [ -f "$ARC" ] || printf '# 합의 결정 이력 아카이브 (decisions.md 에서 7일 초과분을 옮김, 삭제 없음)\n\n' > "$ARC"; } \
+        && cat "$MOVED" >> "$ARC"; }; then
+        echo "decisions-prune: 이동 실패 ($DEC → $ARC)" >&2; rm -f "$KEEP" "$MOVED"; exit 0
+    fi
     # 아카이브에 먼저 붙인 뒤 교체한다. 이 사이에 바뀌었으면 교체를 포기한다(아카이브에 중복만 남고 항목은 사라지지 않는다).
     changed && { echo "decisions-prune: 교체 직전 $DEC 가 바뀌어 중단함(다음 실행이 재시도, 아카이브에 중복이 남을 수 있음)" >&2; rm -f "$KEEP" "$MOVED"; exit 0; }
     mv "$KEEP" "$DEC" || { echo "decisions-prune: 교체 실패 ($KEEP → $DEC)" >&2; rm -f "$KEEP" "$MOVED"; exit 0; }

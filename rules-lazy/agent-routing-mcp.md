@@ -10,6 +10,18 @@
 - **"표 적용 전 탈출" 실측**: 14일 58건 중 12%가 `general-purpose` 등 표 밖 타입으로 소집되어 있었다 — 표의 에이전트 이름만 쓰도록 재확인한 근거.
 - **"소집"의 실행 주체 근거 (2026-07-10)**: subagent 컨텍스트엔 Agent 도구가 없어 spawn이 물리적으로 불가능하다 — 그래서 "소집"은 main에 대한 요청(BLOCKED/NEEDS_CONTEXT)으로만 성립한다.
 - **검증 액면 수용 금지의 실측 사례**: `skills/harness-audit/SKILL.md` Step 7에서 subagent 지적이 옳아 보였지만 원 설계 의도를 확인하니 과잉 교정이었다. 이 사례는 `rules/agent-routing.md` 「검증(verify)의 기준」 문단의 근거다.
+- **4.85 선행 규칙(«어느 행이든 비자명 작업은 `/intent` 가 먼저», 병렬 발사 0.5 포함)**: 2026-10-02 사용자 결정(2026-11-10 상시 표 머리에서 날짜 이관).
+- **1.9 행 위치 경위**: 2행(코드 리뷰/검증)보다 좁은 트리거라 위에 둔다(2026-11-10 상시 칸에서 이관).
+- **표 밖 타입 차단 훅 (2026-11-09 에이전트 정리 4단계 채택)**: 표 밖 타입 소집은 PreToolUse 훅 `scripts/agent-type-gate.py` 가 막는다. 훅 등록은 사용자가 한다. graphify 예외는 내용이 active 인 30분 안의 표지 파일과 `graphify extract` 설명이 함께 있을 때만 통과한다. 이 예외는 표 밖 타입 전반을 허용하지 않는다. 훅 허용 목록에는 표의 12종 외에 Codex 위임 경로, code-simplifier, claude-security 접두의 플러그인 에이전트가 더 있다(2026-11-10 상시 «라우팅 적용 방식» 에서 이관).
+
+## 새 세션 금지 실측·예외 범위 (agent-routing.md 이관)
+
+`rules/agent-routing.md` «새 세션에 일 맡기기 금지» 의 지시일·실측·예외 범위 원문이다(2026-11-10 상시 다이어트로 이관). main 이 `claude --bg` 로 측정 세션을 만들기 직전에 이 절을 열어 범위를 대조한다. 아래 두 예외는 모두 종료됐고 2026-11-12 현재 열린 예외는 없다(절은 이력으로 남긴다).
+
+- **지시**: 2026-11-02 사용자 지시. 의뢰서: `intent/2026-11-02-no-work-in-spare-sessions.md`.
+- **실측(11-02)**: 세션이 늘어 보인 원인은 데몬이 배정한 빈 세션이 하네스 변경 알림을 첫 지시로 받아 깨어난 것(18세션)이다. harness-mod 는 첫 지시 전 세션에 알림을 넣지 않는다.
+- **예외 범위(2026-11-06 사용자 결정 O1)**: 에이전트 정리(`intent/2026-11-05-agent-consolidation.md`) 6·7·9·10단계 «행동 확인»(8회와 되돌린 단계의 재측정, P1)과 4단계 후보 «name: Explore 덮어쓰기» 실제 동작 확인 1회(2026-11-07 E1, 테스트 폴더 프로젝트 레벨 정의) · 4단계 F7 측정(훅 없는 세 방식 × 3회, 2026-11-09 F4A)에 한해 main 이 `claude --bg` 로 측정 세션을 만든다. 측정이 끝나면 그 세션을 닫는다. **종료**: 측정 단계는 2026-11-10 에 전부 닫혔다.
+- **예외 범위 추가(2026-11-11 사용자 결정, 비용 상한 130달러 승인)**: 모델 · effort 사전 평가(`intent/2026-11-11-model-effort-evaluation.md`, 계획 `docs/superpowers/plans/2026-11-11-model-effort-evaluation.md`)의 측정에 한해 하네스 매니저 세션의 main 이 회차마다 측정 세션 1개를 sonnet 메인으로 만든다(띄우는 명령은 `fold-bench/effort-eval/config.json` 의 `session_command`). 범위는 본 측정 126회 · 낮은 모델 확인 회차 · 무효와 바깥 사정으로 인한 재측정 · 본 측정 전 시험(메인 모델 · haiku 의 effort · 계획 확정 훅 통과 · 설계 과제 구현자 보정)이다. 측정 세션은 대상 서브에이전트 소집만 한다. 누적 금액이 상한에 닿으면 멈추고 사용자에게 묻는다. 측정이 끝나면 만든 세션의 목록(id · 시각 · 용도)을 사용자에게 보고하고, 지울지는 사용자가 정한다. **종료**: 모델 · effort 사전 평가는 2026-11-12 에 끝났다.
 
 ## 오케스트레이션 전 2-렌즈 점검 (agent-routing.md 이관 — 복합·모호 작업 한정)
 
@@ -67,6 +79,7 @@ TeamCreate 호출 전 체크리스트:
 ## Spawn prompt 추가 지침 (Fable 5 공식 프롬프팅 가이드 이식, 2026-07-09 — 4요소에 더해)
 
 - **조기중단 방지**: spawn prompt에 "가역·저위험 단계는 중간 확인 질문("~할까요?")으로 블로킹하지 말고 완주하라" 포함 — 진짜 막힘·합의 필요 시에만 BLOCKED/NEEDS_CONTEXT로 main 반환 (기존 규약 유지).
+- **시각화 산출물은 소집 전에 그릴 주체부터 (2026-11-10 사용자 결정)**: 그림 · 그림 스크립트 · html · svg · Artifact 페이지를 만들게 될 서브에이전트를 부르기 **전에** main 이 그릴 주체를 결정 팝업으로 먼저 묻는다. 답이 없으면 decision-popup mod 가 서브에이전트의 그 쓰기 · 실행 · 게시를 막아 main 으로 되돌아오는 왕복이 생긴다(정본 `skills/figure/SKILL.md` § 그릴 주체 선택).
 - **추론 원문 요구 금지**: subagent에게 "사고과정을 그대로 보여줘" 류 지시 금지 — refusal(reasoning_extraction) 트리거 위험. 요구할 것은 **근거·결론·검증 가능한 요약**(판단 근거 이식 원칙과 동일 — 산출물에 남기는 건 rationale이지 raw CoT가 아님).
 - **병렬은 foreground 동시 발사가 기본**: 독립 subagent N개는 **한 응답에 복수 tool_use로 동시 발사**(동시 실행 + 알림 턴 0 — qa∥security 병행도 이 방식). `run_in_background`는 상위 정본(`notification-turn-reduction.md` § 알림 턴 물리적 감축 1항)의 예외 조건 — 사용자 병렬 명시 또는 수십 분급 장기 작업 — 에서만 사용한다 (Codex 2026-07-31 2차: 종전 "background 우선" 표현이 상위와 충돌 → 전면 정렬).
 
@@ -95,16 +108,31 @@ ToolSearch가 주입되지 않으므로, 종전의 "spawn 시 ToolSearch 프리�
 | searcher | tavily, scientific-papers, arxiv-latex-mcp, context7 | **미부착 + disallowedTools deny** — untrusted 격리, T22 payload 반환 → main 저장 |
 | citation-verifier | scientific-papers, arxiv-latex-mcp, pubmed, openreview, tavily | **미부착 + disallowedTools deny** — T21 payload 반환 → main 저장 |
 | coder / planner | context7, mem0 | 저장·검색 가능 (trusted 콘텐츠 대상) |
-| researcher | mem0 | 저장·검색·갱신 가능 |
-| qa / gitops / designer / scout / reviewer | mem0 | 저장·검색 위주 (reviewer 는 과거 QA 이력 검색 위주) |
-| docs | claude_ai_Atlassian, mem0 | 저장·검색 가능 (Confluence 쓰기는 사용자 승인 게이트) |
+| researcher | mem0 | 저장·검색·갱신 가능. 단 외부 원문을 읽은 흐름(paper-read 등)에서는 저장하지 않고 payload 반환, 저장은 main (`untrusted-quarantine.md` §2) |
+| qa / gitops / scout / reviewer | mem0 | 저장·검색 위주 (reviewer 는 과거 QA 이력 검색 위주) |
+| security | 없음 | 미부착 — Read·Grep·Glob·Bash 만 |
+| tutor | mem0 | 저장·검색 가능 (쓰기는 재료 폴더 파일만, `agents/tutor.md`) |
+| docs | 없음 (2026-11-10 글쓰기 전용) | 미부착 — 초안 파일만 쓰고 위키 조회·게시·Mem0 기록은 main (`skills/confluence/SKILL.md` §3-1) |
 
-> **update_memory 주체**: planner/researcher만 (3팀 Round 2 합의 + B4 중복 방지 — searcher는 2026-07-15 Mem0 제거로 대상 제외)
+> **update_memory 주체**: 서브에이전트 중에서는 planner/researcher만(main 은 제한 없음) (3팀 Round 2 합의 + B4 중복 방지 — searcher는 2026-07-15 Mem0 제거로 대상 제외)
 > **untrusted 격리 원칙**: 외부 공개 콘텐츠를 읽는 에이전트는 영속 메모리에 직접 쓰지 않는다 — `untrusted-quarantine.md` MCP 쓰기 금지 목록(Mem0 포함) 참조
 
 ### 미연결 처리
 에이전트가 부착된 서버의 도구를 목록에서 찾지 못하면(OAuth 미연결·버전 회귀 등) 해당 MCP를 unavailable로 간주하고 BLOCKED로 main 보고 → main이 spawn prompt에 `[MEM0: unavailable]` 등 표시 후 재시도 또는 `mcp-fallback.md` 규칙 적용
 
+## 전용 스킬 공유 조건 (H1b: MANDATORY, 2026-11-05 결정 · 2026-11-07 규칙화)
+
+에이전트 정의 frontmatter 의 `skills:` 로 전용 스킬을 둘 이상의 에이전트가 함께 실으려면 아래 다섯 가지를 모두 지킨다. Claude Code 는 스킬을 특정 에이전트에 묶는 설정이 없어(공식 기능은 `skills:` 미리 적재뿐) 이 규칙이 유일한 통제다.
+
+1. 판정 스킬(검수 · 채점 · 감사)은 그 산출물을 만든 에이전트와 공유하지 않는다. 자기 산출물을 자기 기준으로 채점하는 길을 막기 위해서다.
+2. 스킬을 받는 에이전트의 도구 · MCP 가 순증가하지 않는다(스킬이 요구하는 도구를 이유로 tools · mcpServers 를 늘리지 않는다).
+3. 외부 원문(웹 · 이슈 · 메일 · 외부 모델 답)을 읽는 스킬은 쓰기(Write · Edit) · Bash · 메모리 쓰기 권한이 있는 에이전트에 싣지 않는다(`untrusted-quarantine.md`).
+4. 모델 하한: 스킬 정본이 요구하는 모델보다 낮은 모델의 에이전트에 싣지 않는다.
+5. 편입할 때마다 쓰기 경계 검사와 주입 픽스처(fold-bench F2 꼴)로 «쓰기 · MCP 시도 0건» 을 확인한 뒤에 커밋한다.
+
+- 하지 않는 편입(검수팀 반대, H1b): security → qa, reviewer → coder, citation-verifier → researcher.
+- 기계 대조: fold-bench 정적 검사 S2 가 모든 agents frontmatter 의 `skills:` 를 이 다섯 조건과 대조한다(5번은 F2 결과로 판정).
+
 ## 에이전트 spawn prompt 반환 형식 가드레일 (MANDATORY)
 
-모든 spawn prompt 에 반환 형식 제약 3줄을 넣는다. 반환 길이·적재 기준(100자·1500자·Write 없는 에이전트 예외)과 3줄 본문은 `rules-lazy/token-efficiency.md` § Subagent 반환값 적재 최소화 · § Agent Spawn Prompt 가드레일이 단일 정본이다.
+모든 spawn prompt 에 반환 형식 제약 3줄을 넣는다. 반환 길이·적재 기준(100자·1500자·Write 없는 에이전트 예외)과 3줄 본문은 `rules-lazy/token-efficiency.md` § Subagent 반환값 적재 최소화 · § Agent Spawn Prompt 가드레일이 단일 정본이다. qa 의 검증 증거 보고는 이 상한의 예외이고 요약을 맨 앞에 둔다(같은 절).

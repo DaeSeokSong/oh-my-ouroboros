@@ -3,7 +3,7 @@
 ■ 왜 이 스크립트가 필요한가 (판단 근거 이식 — 2026-08-05)
 Confluence는 부분 수정 API가 없어 **본문 전체**를 되보내야 하고, 빈 body를 보내면 페이지가
 백지가 된다. 그런데 대화형 도구(MCP)로 고치려면 그 본문을 **모델이 다시 출력**해야 하므로
-본문 크기가 곧 출력 토큰이 된다. 실측: 저장 형식 56,363자 = 약 4.8만 토큰
+본문 크기가 곧 출력 토큰이 된다. 실측(한 프로젝트의 실험 페이지): 저장 형식 56,363자 = 약 4.8만 토큰
 → 1턴 전송 한도 초과. 중간에 잘리면 잘린 본문이 그대로 저장돼 페이지가 손상된다.
 그래서 **본문이 모델을 거치지 않는 경로**를 만든다 — 스크립트가 받아서, 고치고, 올린다.
 
@@ -39,6 +39,7 @@ Confluence는 부분 수정 API가 없어 **본문 전체**를 되보내야 하�
 
 import argparse
 import hashlib
+import itertools
 import json
 import os
 import pwd
@@ -70,11 +71,12 @@ def _skeleton_stamp_ok(body):
     if not os.path.exists(path):
         return False
     try:
-        rec = json.load(open(path))
+        with open(path) as f:
+            rec = json.load(f)
         t = datetime.fromisoformat(rec["time"]).timestamp()
-    except Exception:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return False
-    return time.time() - t <= 6 * 3600
+    return 0 <= time.time() - t <= 6 * 3600   # 미래 시각 스탬프는 무효(2026-11-10 검수)
 
 
 def auth():
@@ -82,7 +84,8 @@ def auth():
     email = os.environ.get("CONFLUENCE_EMAIL")
     token = os.environ.get("CONFLUENCE_API_TOKEN")
     if (not email or not token) and os.path.exists(TOKEN_FILE):
-        lines = [x.strip() for x in open(TOKEN_FILE) if x.strip()]
+        with open(TOKEN_FILE) as f:
+            lines = [x.strip() for x in f if x.strip()]
         if len(lines) >= 2:
             email, token = email or lines[0], token or lines[1]
     if not email or not token:
@@ -132,7 +135,7 @@ def replace_by_original_position(body, patches):
     위치를 원문에서 정하고 뒤에서부터 치환하면 new 는 다시 검색되지 않는다. 앵커끼리 겹치면 중단한다.
     """
     spans = sorted(((body.find(p["anchor"]), p) for p in patches), key=lambda x: x[0])
-    for (s1, p1), (s2, _) in zip(spans, spans[1:]):
+    for (s1, p1), (s2, _) in itertools.pairwise(spans):
         if s2 < s1 + len(p1["anchor"]):
             sys.exit(f"\n★앵커끼리 원문에서 겹칩니다(@{s1}·@{s2}) — 아무것도 고치지 않고 중단한다.")
     out = body
@@ -183,7 +186,8 @@ def main():
         print("치환 목록(--patches)이 없어 여기서 멈춘다 (읽기만 수행).")
         return
 
-    patches = json.load(open(a.patches))
+    with open(a.patches) as f:
+        patches = json.load(f)
     print(f"\n=== 앵커 검사 ({len(patches)}건, 전부 1회여야 적용) ===")
     bad = 0
     for p in patches:
@@ -201,7 +205,7 @@ def main():
     #   조각만 보면 태그가 없어 블록이 안 잡히고, 결과 전체를 보면 기존 본문의 과거
     #   위반까지 걸려 무관한 수정이 전부 멈춘다. 늘어난 위반만 막는 것이 정확하다.
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from korean_style_check import regression as _ks_regression  # noqa: PLC0415
+    from korean_style_check import regression as _ks_regression
     rc = _ks_regression(body, new_body, "치환 전후",
                         strict=not a.allow_style_violation)
     if rc:
@@ -218,6 +222,13 @@ def main():
     if not _home_is_real():
         sys.exit("\n★HOME 이 실제 사용자 홈과 다름 — 게시 중단. 환경변수 HOME 을 바꾸지 않은 셸에서 실행할 것.")
 
+    # ★검토 관문 (2026-11-10 에이전트 정리 8단계) — 스탬프만 믿지 않고 게시 본문에 자격증명 · 환자 식별자 꼴 검사를 한 번 더 돌린다.
+    from confluence_review_gate import scan
+    hits = scan(new_body)
+    if hits:
+        sys.exit("\n★검토 관문 차단 — 게시 본문에 자격증명 · 환자 식별자 꼴: " + ", ".join(hits)
+                 + "\n정본: ~/.claude/skills/confluence/SKILL.md § 검토 관문")
+
     # ★골격 대조 스탬프 게이트 (2026-09-02 신설) — MCP 경로는 skeleton-gate.sh, 이 경로는 여기서 막는다.
     if not _skeleton_stamp_ok(new_body):
         sys.exit("\n★골격 대조 스탬프 없음(또는 6시간 경과) — 게시 중단. 먼저 실행할 것:\n"
@@ -228,7 +239,7 @@ def main():
     # ★게시 승인 게이트 (2026-10-06 신설, 2026-10-07 AskUserQuestion 답 기록으로 개정) — 사용자가 대상·알림·버전 설명을 확인했다는 증거.
     #   MCP 경로는 skeleton-gate.sh 가 같은 검사를 한다. 검사 규칙 정본은 confluence_publish_approve.py.
     #   dry-run·probe 는 위에서 이미 끝나므로 소모하지 않는다. 소모는 put 직전 한 번뿐이다.
-    from confluence_publish_approve import check_and_consume  # noqa: PLC0415
+    from confluence_publish_approve import check_and_consume
     check_and_consume(page=a.page, notify="quiet" if a.minor else "notify", message=a.message)
 
     v = put_page(a.page, title, version, new_body, a.message, a.minor)

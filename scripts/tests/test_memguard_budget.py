@@ -322,8 +322,8 @@ def mw(tmp_path):
     return run
 
 
-SEVEN = [("exp-mtl-r68t", 44, 30, "1.00"), ("exp-mtl-r66t", 44, 40, "40.00"), ("eff-x", 44, 20, "22.50"), ("exp-mtl-r1t", 44, 35, "9.00"),
-         ("exp-mtl-r2t", 44, 10, "3.00"), ("exp-mtl-r3t", 44, 12, "2.00"), ("exp-mtl-r4t", 44, 8, "0.50")]
+SEVEN = [("exp-demo-x68t", 44, 30, "1.00"), ("exp-demo-x66t", 44, 40, "40.00"), ("x-ref", 44, 20, "22.50"), ("exp-demo-x1t", 44, 35, "9.00"),
+         ("exp-demo-x2t", 44, 10, "3.00"), ("exp-demo-x3t", 44, 12, "2.00"), ("exp-demo-x4t", 44, 8, "0.50")]
 
 
 def test_f_pressure_logged_every_minute_without_alert_below_threshold(mw, tmp_path):
@@ -343,7 +343,7 @@ def test_f_high_pressure_is_logged_only_never_alerted(mw, tmp_path):
     root = make_tree(tmp_path / "t", scopes=SEVEN, pressure=("30.00", "20.00"))
     mw(root)
     tops = [ln for ln in mw.log().splitlines() if "압력 상위" in ln]
-    assert len(tops) == 5 and "상위 1: exp-mtl-r66t full avg10=40.00% current=40GiB" in tops[0] and "memguard" not in " ".join(tops)
+    assert len(tops) == 5 and "상위 1: exp-demo-x66t full avg10=40.00% current=40GiB" in tops[0] and "memguard" not in " ".join(tops)
     mw(root, REALERT_SEC=0)                                        # 지속 + 재알림 시간 경과여도 알림 없음
     (root / "cgroup" / "memory.pressure").write_text(psi("1.00", "2.00"))
     mw(root)                                                       # 해제여도 알림 없음

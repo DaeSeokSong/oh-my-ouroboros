@@ -42,7 +42,7 @@ Mem0 불가 시 아래 원칙을 적용한다:
 | `paper` | `long-term/experiments.md` § 논문 참조 | `- [날짜] {논문제목}: {요약}` |
 | `experiment` | `long-term/experiments.md` | 기존 형식 |
 | `code_pattern` | `long-term/feedback.md` § 코드 패턴 | `- [날짜] {모듈}: {패턴 요약}` (코딩 컨벤션 포함 — source=coding-conventions) |
-| `context` | `short-term/handover.md` | 기존 형식 |
+| `context` | `short-term/handover.md` (compact 직전 전용·덮어쓰기. 합의 즉시 기록은 decisions.md) | 기존 형식 |
 | `feedback` | `long-term/feedback.md` | 기존 형식 |
 
 #### 검색 (search_memories → Grep)

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """ckpt-cleanup — 학습 사이클 종료 후 체크포인트 3계층 분류 + 삭제 계획 산출.
 
 설계 근거 (판단근거 이식 — 세션이 바뀌어도 이 파일만으로 재현):
@@ -67,7 +66,7 @@ def discover(root: Path, exts: set):
 def fetch_wandb_runs(entity: str, project: str):
     """wandb run 목록 조회 (read-only). 실패 시 None — 전량 HOLD로 강등."""
     try:
-        import wandb  # noqa: 지연 import — 미설치 환경에서도 인벤토리 모드는 동작
+        import wandb  # 지연 import — 미설치 환경에서도 인벤토리 모드는 동작
 
         api = wandb.Api(timeout=60)
         runs = api.runs(f"{entity}/{project}", per_page=500)
@@ -75,7 +74,7 @@ def fetch_wandb_runs(entity: str, project: str):
             {"id": r.id, "name": r.name, "state": r.state, "tags": list(r.tags or [])}
             for r in runs
         ]
-    except Exception as e:  # 네트워크/인증/미설치 — 이유 불문 인벤토리 모드
+    except Exception as e:  # noqa: BLE001 네트워크/인증/미설치 — 이유 불문 인벤토리 모드
         print(f"[warn] wandb 조회 실패 → 전량 HOLD(인벤토리 모드): {e}", file=sys.stderr)
         return None
 
@@ -97,12 +96,12 @@ def classify(run, assume_cleaned: bool):
     tags = {t.lower() for t in run["tags"]}
     if "keep" in tags:
         return "KEEP", "tag:keep"
+    if "ambiguous" in tags:
+        return "HOLD", "tag:ambiguous"
     if run["state"] in FAILED_STATES:
         return "DELETE", f"state:{run['state']}"
     if "aborted" in tags:
         return "DELETE", "tag:ABORTED"
-    if "ambiguous" in tags:
-        return "HOLD", "tag:ambiguous"
     if assume_cleaned:
         return "DELETE", "untagged(assume-cleaned)"
     return "HOLD", "untagged"

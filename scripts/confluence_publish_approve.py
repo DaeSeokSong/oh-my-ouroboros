@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+# ruff: noqa: EXE001
 """Confluence 게시 직전 «사용자 승인» 검사 도구 (2026-10-06 사용자 결정 «결정3. 2)», 2026-10-07 개정 1: 증거를 AskUserQuestion 답으로).
 
 ■ 왜 필요한가
 `skills/confluence/SKILL.md` §3 은 기존 페이지를 고치기 전에 세 가지(업데이트 여부 · 관찰자 알림 · 버전 설명)를
-사용자에게 묻게 하지만 강제하는 장치가 없었다. 2026-10-05 페이지 두 개가 사용자의 «바꿔» 한 마디로
+사용자에게 묻게 하지만 강제하는 장치가 없었다. 2026-10-05 한 프로젝트 페이지 두 개가 사용자의 «바꿔» 한 마디로
 세 가지 확인 없이 게시됐다. 그래서 게시 경로 두 곳이 이 검사를 요구한다:
   · MCP `updateConfluencePage`·`createConfluencePage` → `scripts/skeleton-gate.sh` 가 `check` 를 부른다
   · `scripts/confluence_patch_page.py --apply` → 이 모듈의 `check_and_consume()` 을 부른다
@@ -256,7 +257,7 @@ def _is_human_message(d):
         return False
     t = t.strip()
     if t.startswith("<command-name>"):   # a slash command is recorded as <command-name>…<command-args>what the user typed</command-args>
-        a = re.search(r"<command-args>(.*?)</command-args>", t, re.S)
+        a = re.search(r"<command-args>(.*?)</command-args>", t, re.DOTALL)
         t = a.group(1).strip() if a else ""
     if not t or (t.startswith("<") and not t.startswith(PASTE_PREFIX)):   # system-reminder and local-command injections are not user text
         return False
@@ -332,6 +333,22 @@ def _session_files(now):
     return [p for _, p in sorted(files, reverse=True)]
 
 
+def is_approval_question(tool_input):
+    """True when an AskUserQuestion input holds a publish-approval question (the same condition find_approval applies, minus the answer).
+
+    A question counts when its text has exactly one valid approval line and its options include the «게시 승인» label.
+    scripts/handoff_check.py uses this to spot a review turn (2026-11-12); find_approval keeps its own inline copy of the condition.
+    """
+    qs = tool_input.get("questions") if isinstance(tool_input, dict) else None
+    for q in qs if isinstance(qs, list) else []:
+        text = q.get("question") if isinstance(q, dict) else None
+        opts = q.get("options") if isinstance(q, dict) else None
+        if (isinstance(text, str) and isinstance(opts, list) and parse_approval_line(text)
+                and any(isinstance(o, dict) and o.get("label") == APPROVE_LABEL for o in opts)):
+            return True
+    return False
+
+
 def find_approval(key, notify, message, now=None):
     """Return approvals for a target as [(answered_epoch, tool_use_id)] newest first (empty when none match)."""
     now = time.time() if now is None else now
@@ -379,7 +396,7 @@ def _consume(tuid, key):
         if any(ln.rstrip("\n").split("\t")[:2] == [tuid, key] for ln in f):
             return False
         f.seek(0, 2)
-        f.write(f"{tuid}\t{key}\t{datetime.now(timezone.utc).astimezone().isoformat()}\n")
+        f.write(f"{tuid}\t{key}\t{datetime.now(timezone.utc).astimezone().isoformat()}\n")  # noqa: UP017 — system python3 3.10 has no datetime.UTC
     return True
 
 

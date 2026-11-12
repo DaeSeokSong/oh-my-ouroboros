@@ -25,7 +25,7 @@ B) 직접 설치 — 실행 명령서를 드리니 터미널에서 직접 실행
 C) 사용 안 함 — 대체 수단({대체})으로 진행 (기능 제약: {제약 1줄})
 ```
 
-- subagent가 감지한 경우: 직접 질의 불가 → BLOCKED로 main 반환 → main이 AskUserQuestion (code-graph §3과 동일).
+- subagent가 감지한 경우: 직접 질의 불가 → BLOCKED로 main 반환 → main이 결정 팝업으로 질문(고르게 하는 것이므로 팝업이 우선, AskUserQuestion 은 팝업 도구가 없을 때만. code-graph §3과 동일).
 - C의 대체 수단·제약을 반드시 명시 — "안 하면 어떻게 되는지" 없이 묻지 않는다.
 
 ## §3 재질문 방지 (mem0 연동)

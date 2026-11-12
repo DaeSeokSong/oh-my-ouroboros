@@ -12,6 +12,7 @@
 import fcntl
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -52,8 +53,13 @@ def make_env(tmp, rows=(), stub_crosscheck=True, projname="proj"):
     claude = home / ".claude"
     for sub in ("_evolve", "_usage", "_audit", "agents", "scripts", "projects"):
         (claude / sub).mkdir(parents=True)
-    for n in ("harness-usage-check.sh", "candidates-append.sh", "decisions-prune.sh", "agent-crosscheck.sh", "role-alias.sh"):
+    for n in ("harness-usage-check.sh", "candidates-append.sh", "decisions-prune.sh", "agent-crosscheck.sh", "role-alias.sh",
+              "harness_registry.py"):
         shutil.copy(SCRIPTS / n, claude / "scripts" / n)
+    # The fixed short-term root now comes from the host registry (config/hosts/<hostname>.json, 2026-11-10).
+    (claude / "config/hosts").mkdir(parents=True)
+    (claude / "config/hosts" / f"{socket.gethostname()}.json").write_text(
+        '{"paths": {"short_term_root": "~/.claude/projects/-home-user-workspace/memory/"}}', encoding="utf-8")
     shutil.copy(SCRIPTS / "agent-crosscheck.sh", claude / "scripts/agent-crosscheck-real.sh")
     if stub_crosscheck:
         (claude / "scripts/agent-crosscheck.sh").write_text(STUB, encoding="utf-8")

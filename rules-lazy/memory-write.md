@@ -5,21 +5,23 @@
 
 ## 메모리 구조 (short-term / long-term 분리)
 
-| 경로 (short-term root = `~/.claude/projects/-home-user-workspace/memory/`. SessionStart 정리(prune)는 이 고정 루트와 cwd 기반 현재 프로젝트 폴더 둘 다 대상) | 용도 | 만료 |
+| 경로 (short-term root = 서버 등록부 `paths.short_term_root`. `<long_term_root>` = 환경변수 `LONG_TERM_ROOT`, 없으면 서버 등록부 `paths.long_term_root`. SessionStart 정리(prune)는 이 고정 루트와 cwd 기반 현재 프로젝트 폴더 둘 다 대상) | 용도 | 만료 |
 |------|------|------|
 | `short-term/decisions.md` | 합의 결정 이력 | 7일 |
 | `short-term/handover.md` | 세션 인수인계 | compact 시 덮어쓰기 |
-| `${LONG_TERM_ROOT:-~/workspace/_data/workspaces/user/.claude/long-term}/<프로젝트>/` | 프로젝트별 영구 노트. 주제 파일(`architecture.md`·`experiments.md`·`hyperparams.md`·`feedback.md` 등)은 그 프로젝트에 실제로 있는 것만 쓰고, 없으면 새로 만든다. 파일 수·이름은 프로젝트마다 다르다 | 영구 |
-| `${LONG_TERM_ROOT:-~/workspace/_data/workspaces/user/.claude/long-term}/<프로젝트>/meetings/` | discuss 회의록 + _workspace | 영구 |
-| `${LONG_TERM_ROOT:-~/workspace/_data/workspaces/user/.claude/long-term}/papers/` · `research/` | 논문 리뷰 · 리서치 리포트(프로젝트와 무관한 공용 폴더) | 영구 |
+| `<long_term_root>/<프로젝트>/` | 프로젝트별 영구 노트. 주제 파일(`architecture.md`·`experiments.md`·`hyperparams.md`·`feedback.md` 등)은 그 프로젝트에 실제로 있는 것만 쓰고, 없으면 새로 만든다. 파일 수·이름은 프로젝트마다 다르다(2026-10-17 실측: 한 벌이 다 있는 곳은 한 프로젝트뿐, `datasets.md` 는 어디에도 없음) | 영구 |
+| `<long_term_root>/<프로젝트>/meetings/` | discuss 회의록 + _workspace | 영구 |
+| `<long_term_root>/papers/` · `research/` | 논문 리뷰 · 리서치 리포트(프로젝트와 무관한 공용 폴더) | 영구 |
 
 > 이 표가 long-term 목적지의 단일 정본이다. `mcp-fallback-mem0.md`·`memory-promotion.md` 의 «long-term/xxx.md» 는 이 표의 `<프로젝트>/` 아래 주제 파일을 가리킨다.
+
+> **상세 문서는 기억에 넣지 않는다 (2026-11-09 에이전트 정리 3단계)**: searcher · scout 상세 문서(`scripts/searcher_detail.py` · `scripts/scout_detail.py` 출력의 발췌 · 경로 목록)는 short-term · long-term · Mem0 · `knowledge/` 어디에도 옮기지 않는다. 상세 문서는 세션 임시 폴더에만 두는 일회성 자료(신뢰 불가 원문 또는 모델이 고른 문자열)다. 남기는 것은 main 이 원문 대조나 검수로 확인한 결론뿐이고, 결론은 일반화한 문장으로 쓴다.
 
 ---
 
 ## 자동 메모리 색인 MEMORY.md 상한 160줄 (2026-09-08 사용자 결정, 2026-10-17 60줄에서 160줄로)
 
-경로는 `~/.claude/projects/-home-user-workspace/memory/MEMORY.md` 이고 **상한은 160줄**이다. 넘으면 종료된 항목을 목차 노트 한 줄로 묶는다. 현재 프로젝트 MEMORY.md 가 160줄을 넘으면 SessionStart 점검(`harness-usage-check.sh`)이 `MEMORY_INDEX_LONG` 경보를 낸다. 이 색인은 세션마다 통째로 컨텍스트에 올라가므로 줄 수가 곧 상시 비용이며, 종료된 실험의 수치까지 남으면 살아 있는 제약이 그 사이에 묻힌다.
+경로는 서버 등록부 `paths.short_term_root` 아래 `MEMORY.md` 이고 **상한은 160줄**이다. 넘으면 종료된 항목을 목차 노트 한 줄로 묶는다. 현재 프로젝트 MEMORY.md 가 160줄을 넘으면 SessionStart 점검(`harness-usage-check.sh`)이 `MEMORY_INDEX_LONG` 경보를 낸다. 이 색인은 세션마다 통째로 컨텍스트에 올라가므로 줄 수가 곧 상시 비용이며, 종료된 실험의 수치까지 남으면 살아 있는 제약이 그 사이에 묻힌다.
 
 | 항목 | 처리 |
 |------|------|
@@ -34,16 +36,19 @@
 
 | 트리거 상황 | 기록 대상 | 기록 위치 |
 |------------|-----------|-----------|
-| 사용자가 실험 설계/순서에 합의 | 실험 명칭, config, dataset, 실행 순서 | `short-term/handover.md` |
+| 사용자가 실험 설계/순서에 합의 | 실험 명칭, config, dataset, 실행 순서 | `short-term/decisions.md` (+ Mem0) |
 | 사용자가 데이터셋 추가/변경/제거 확정 | 변경 전후 dataset 목록 + 사유 | `short-term/decisions.md` → 승격 제안 |
 | 사용자가 아키텍처/하이퍼파라미터 결정 | 파라미터 값, 결정 근거 | `short-term/decisions.md` → 승격 제안 |
-| 사용자가 실험 전 사전 검증(precheck) 방식 합의 | 실험 명칭, config, 목적 | `short-term/handover.md` |
-| 사용자가 향후 작업 계획 확정 | 작업명, 조건, 순서 | `short-term/handover.md` |
+| 사용자가 실험 전 사전 검증(precheck) 방식 합의 | 실험 명칭, config, 목적 | `short-term/decisions.md` (+ Mem0) |
+| 사용자가 향후 작업 계획 확정 | 작업명, 조건, 순서 | `short-term/decisions.md` (+ Mem0) |
+
+> 즉시 기록 대상은 decisions.md 와 Mem0 이다. `handover.md` 는 compact 직전에만 쓰고 덮어쓰는 파일이라 합의 즉시 기록 위치가 아니다(§ 메모리 구조 표 · § handover.md 규칙).
 | 분기 조건(Go/NoGo) 합의 | 조건 수치, 판단 기준 | `short-term/decisions.md` |
 
 ### § Mem0 병렬 저장 (MANDATORY)
 
 즉시 기록 트리거 발생 시, 파일 기록과 **동시에** Mem0에도 저장한다.
+- 예외: Confluence 게시 검토 턴에는 쓰지 않고 다음 턴에 기록한다(`skills/confluence/SKILL.md` § 검토 턴의 분리).
 → `~/.claude/rules/mem0-auto.md` T01 참조
 
 실행 절차:
@@ -76,7 +81,7 @@
 
 1. **사용자 합의 감지**: "~하기로 했잖아", "~로 결정", "~로 가자", "알겠어" 등 확정 발언 탐지
 2. **즉시 Write 실행**: 다음 도구 호출이나 긴 응답 생성 전에 먼저 해당 단기 파일 업데이트
-3. **기록 확인 멘트**: "short-term/decisions.md에 기록했습니다." — 사용자에게 기록 완료 알림 (짧게)
+3. **기록 확인 멘트**: "short-term/decisions.md에 기록했습니다." — 기록 완료 알림은 중간 발화가 아니라 그 턴의 최종 보고에 짧게 포함한다(프롬프트 1회 = 보고 1회, `rules/agent-routing.md`)
 
 ---
 

@@ -8,7 +8,7 @@ ow = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ow)
 
 G = ow.GIB_KB
-UNIT = "memguard-exp-mtl-14j-r58t-123.scope"
+UNIT = "memguard-exp-demo-1c-x58t-123.scope"
 SWAP_FULL = (32 * G, 32 * G)
 SWAP_HALF = (16 * G, 32 * G)
 
@@ -30,7 +30,7 @@ def test_individual_limit_kill_names_vanished_worker():
     cur = {UNIT: scope(oom=1, kill=1, smax=1, swap=5 * G, procs={"10": prev[UNIT]["procs"]["10"]})}
     (a,) = run(prev, cur)
     assert a.startswith("💀")
-    assert "exp-mtl-14j-r58t" in a and "개별 한도 초과" in a
+    assert "exp-demo-1c-x58t" in a and "개별 한도 초과" in a
     assert "pid 11 python (" in a and "worker" not in a  # 명령줄 인자는 알림에 싣지 않는다(2026-10-01 감사 D5)
     assert "판 5.0/5.0GiB 상한 도달" in a and "전체 50%" in a
 
@@ -68,8 +68,8 @@ def test_vanished_scope_with_user_journal_line():
 
 def test_kernel_log_overrides_counters_and_names_victim():
     lines = [
-        "1727600000.1 host1 kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=/,mems_allowed=0-1,"
-        f"oom_memcg=/,task_memcg=/user.slice/user-1002.slice/user@1002.service/app.slice/{UNIT},task=python,pid=10,uid=1002",
+        ("1727600000.1 host1 kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=/,mems_allowed=0-1,"
+         f"oom_memcg=/,task_memcg=/user.slice/user-1002.slice/user@1002.service/app.slice/{UNIT},task=python,pid=10,uid=1002"),
         "1727600000.1 host1 kernel: Out of memory: Killed process 10 (python) total-vm:1kB, anon-rss:20971520kB, file-rss:0kB",
     ]
     kev = ow.parse_kernel(lines)
@@ -83,15 +83,15 @@ def test_kernel_log_overrides_counters_and_names_victim():
 
 
 def test_oomd_pressure_kill():
-    lines = ["1727600000.2 host1 systemd-oomd[900]: Killed "
-             f"/user.slice/user-1002.slice/user@1002.service/app.slice/{UNIT} due to memory pressure for x being 61% > 50%"]
+    lines = [("1727600000.2 host1 systemd-oomd[900]: Killed "
+              f"/user.slice/user-1002.slice/user@1002.service/app.slice/{UNIT} due to memory pressure for x being 61% > 50%")]
     (a,) = run({}, {}, oomd=ow.parse_oomd(lines))
-    assert a.startswith("💀") and "systemd-oomd 압력 종료: exp-mtl-14j-r58t" in a
+    assert a.startswith("💀") and "systemd-oomd 압력 종료: exp-demo-1c-x58t" in a
 
 
 def test_scope_born_and_killed_between_runs():
     (a,) = run({}, {}, user_oom={UNIT: ["u2.0:" + UNIT]})
-    assert "exp-mtl-14j-r58t" in a and "구분 불가" in a
+    assert "exp-demo-1c-x58t" in a and "구분 불가" in a
 
 
 def test_user_journal_line_not_realerted_after_vanish():
@@ -105,4 +105,4 @@ def test_user_journal_line_not_realerted_after_vanish():
 def test_parse_user_oom_and_label():
     got = ow.parse_user_oom([f"1727600001.0 host1 systemd[6435]: {UNIT}: A process of this unit has been killed by the OOM killer."])
     assert got == {UNIT: [f"u1727600001.0:{UNIT}"]}
-    assert ow.scope_label(UNIT) == "exp-mtl-14j-r58t"
+    assert ow.scope_label(UNIT) == "exp-demo-1c-x58t"

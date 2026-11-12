@@ -1,7 +1,7 @@
 # LLM-as-judge 베스트 프랙티스 (judge 역할 공통)
 
 > **로드 시점**: judge 역할(PASS/FAIL·채점·디베이트 판정)을 **수행하기 직전에만** lazy 로드.
->   대상: `qa`(6-Gate 검증), `citation-verifier`(옹호/회의/종합), `goal`·`ralph-loop` evaluator, `workflow` Phase Gate, `harness-bench` 채점.
+>   대상: `qa`(6-Gate 검증), `citation-verifier`(대조 · 디베이트 시 옹호/회의/종합), `goal`·`ralph-loop` evaluator, `workflow` Phase Gate, `harness-bench` 채점.
 > **출처**: awesome-evals(benchflow-ai) §8 LLM-as-Judge Best Practices + 인용 논문.
 > **핵심 원칙(토큰)**: §1 "상시 적용"은 판정을 **짧고 안정적**으로 만들어 토큰을 **절감**한다.
 >   §2 "opt-in 전용"은 추가 호출·라운드를 유발하므로 **사용자 명시 요청 시에만** 활성화.
@@ -25,14 +25,14 @@
 - **한 기준 전문가(benevolent-dictator) 대조 보정** — 추가 라운드 필요
 - **100+ 추적/샘플 검토 → first-failure 탐색** — 대량 토큰
 - **Krippendorff α ≥ 0.6 신뢰도 측정** — 반복 평가 필요
-- **judge 다중 spawn(앙상블)** — 신규 judge 추가는 금지. `citation-verifier`는 **기존 옹호/회의/종합 구조 내에서만**.
+- **judge 다중 spawn(앙상블)** — 신규 judge 추가는 금지. `citation-verifier`는 **기본 대조 1회, 논쟁적 인용만 기존 옹호/회의/종합 구조 내에서**.
 
 ## §3 에이전트별 적용 메모
 
 | 에이전트/스킬 | 핵심 |
 |------|------|
 | **qa** | 6-Gate **검증 체크리스트**(qa-process.md — ralph 진입 판단용 5-Gate와 별개)는 이미 이진 → §1 그대로. 각 Gate 근거에 **파일:라인 필수**. |
-| **citation-verifier** | 디베이트 = 다중 judge. **추가 검색·Tavily 호출 늘리지 말 것** — 판정 품질(편향 회피·근거 명시)만 개선. 옹호 조건부 게이트(supporting<3)·회의 advanced 현행 유지. |
+| **citation-verifier** | 기본 대조 모드는 결정적 대조(철회 조회 · 원문 표·수치 일치)라 judge 편향 여지가 작다. 디베이트(선택) = 다중 judge. **추가 검색·Tavily 호출 늘리지 말 것** — 판정 품질(편향 회피·근거 명시)만 개선. 옹호 조건부 게이트(supporting<3)·회의 advanced 현행 유지. |
 | **goal / ralph-loop evaluator** | 게이밍 방어가 핵심 — "끝났다"는 선언이 아니라 **end-state 증거**로 PASS. |
 | **workflow Phase Gate** | rubric 항목을 **이진 체크(O/X)**로, 평가 중 기준 drift 금지. |
 | **harness-bench** | 측정도 judge — infra noise(±6pp)로 **단발 측정 금지·3사이클 유지**, process-first(과정 채점) 권장. |

@@ -7,7 +7,7 @@ model: sonnet
 
 > **스킬 경계**: 연구 활동 기록 전용 (서사 형식 강제). 일반 Confluence 페이지는 `/confluence`, 워크플로우 설계는 `/workflow` 사용.
 
-> **프로젝트 양식 우선 (2026-07-20)**: 작성 전 `rules-lazy/doc-format-registry.md` 조회 — 프로젝트 등록 양식이 있으면 그 골격·escaping이 우선하고, 본 스킬의 4단계 계층·7답 서사 원칙은 그 위에 겹쳐 적용한다.
+> **프로젝트 양식 우선 (2026-07-20)**: 작성 전 `rules-lazy/doc-format-registry.md` 조회 — 프로젝트 등록 양식(예: `doc-formats/<프로젝트>/research-note.md`)이 있으면 그 골격·escaping이 우선하고, 본 스킬의 4단계 계층·7답 서사 원칙은 그 위에 겹쳐 적용한다.
 
 ---
 
@@ -236,9 +236,9 @@ Level 4 페이지 생성 시 해당 날짜 활동을 Mem0에서 자동 수집:
 
 | 에이전트 | 역할 | Confluence MCP |
 |----------|------|----------------|
-| **docs** | 페이지 생성·수정 실행 | O |
+| **docs** | 페이지 초안 파일 작성(글쓰기 전용, 조회·게시·기록은 main) | X |
 | **researcher** | 초안 작성 → docs 위임 | X → docs 위임 필수 |
-| **main** | 직접 작성 또는 docs 소집 | O |
+| **main** | 조회·게시(`skills/confluence/SKILL.md` §3-1 검토 관문), 직접 작성 또는 docs 소집 | O |
 
 ---
 
@@ -292,7 +292,7 @@ Level 4 페이지 생성 시 해당 날짜 활동을 Mem0에서 자동 수집:
 ```yaml
 ---
 title: "{YYYY-MM-DD} 연구 기록"
-format: confluence
+format: confluence-html
 ---
 ```
 + 실험 동기 본문 + python 청크(결과 자동 호출) + 해석 + 후속 계획
@@ -302,4 +302,4 @@ format: confluence
 - `.qmd` 제공 시에만 docs 에이전트 quarto 흐름 진입
 
 ### 의존성
-quarto CLI — docs 에이전트가 사전 점검
+quarto CLI — main 이 `which quarto` 로 사전 점검하고 결과를 spawn prompt 로 docs 에 전달 (docs 는 Bash 없음)

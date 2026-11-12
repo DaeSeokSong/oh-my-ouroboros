@@ -14,8 +14,8 @@
 set -uo pipefail
 
 # systemd 최소 PATH에는 ~/.local/bin(uv tool 설치 위치)이 없어 pipeline detect의
-# resolve_python 폴백(command -v graphify)이 실패한다 (2026-08-12 첫 타이머 실사고 —
-# 기존 서버는 대화형 실행이 남긴 .graphify_python 캐시로 우연히 통과했을 뿐, 캐시 없는 새 서버는
+# resolve_python 폴백(command -v graphify)이 실패한다 (2026-08-12 주력 서버 첫 타이머 실사고 —
+# 다른 서버는 대화형 실행이 남긴 .graphify_python 캐시로 우연히 통과했을 뿐, 캐시 없는 새 서버는
 # 전부 재현된다). 기존 PATH 보강(claude/node)은 추출 분기(N>0)에만 있어 detect엔 못 미침 —
 # 여기 초입에서 선치해 detect부터 적용.
 export PATH="$HOME/.local/bin:$PATH"
@@ -102,10 +102,10 @@ if [ "$N" -gt 0 ]; then
     # systemd 최소 PATH에선 `node`가 /usr/bin/node(v12)로 풀려 플러그인 훅이 신 문법(??)에서
     # SyntaxError로 죽는다 (2026-07-13 실측). claude가 ~/.local/bin 네이티브 설치면 그 옆에 node가
     # 없어 dirname 선치만으론 부족 — node가 신 문법을 못 돌리면 nvm 최신 node를 추가 선치.
-    export PATH="$(dirname "$CLAUDE_BIN"):$PATH"
+    PATH="$(dirname "$CLAUDE_BIN"):$PATH"; export PATH
     if ! node -e 'null ?? 0' >/dev/null 2>&1; then
         NEW_NODE=$(find "$HOME/.nvm/versions/node" -maxdepth 3 -name node -type f 2>/dev/null | sort -V | tail -1)
-        [ -n "$NEW_NODE" ] && export PATH="$(dirname "$NEW_NODE"):$PATH"
+        [ -n "$NEW_NODE" ] && PATH="$(dirname "$NEW_NODE"):$PATH" && export PATH
     fi
     # 추출 프롬프트가 동기 dispatch(run_in_background:false)를 강제하지만, 모델이 그래도 백그라운드를
     # 쓰면 -p 모드의 기본 600s 대기 상한이 에이전트를 죽여 청크 0개가 된다(2026-07-13 첫 타이머 실사고).
@@ -135,7 +135,9 @@ if [ "$N" -gt 0 ]; then
     # 재병합돼 손상 그래프가 커밋될 수 있음 → find -delete(ARG_MAX 안전) + 실패 시 중단.
     find "$STAGING" -maxdepth 1 -type f \( -name 'chunk_*.json' -o -name 'wtest.json' \) -delete \
         || { log "staging 청크 청소 실패 — stale 재병합 방지 위해 중단"; notify_fail "staging 청소 실패"; exit 1; }
-    if ! (cd "$STAGING" && "$CLAUDE_BIN" -p "$(cat "$PROMPT_FILE")" --model sonnet --tools "Read,Glob,Grep,Write,Agent" --permission-mode acceptEdits --add-dir "$CLAUDE_DIR") >> "$LOG" 2>&1; then
+    # The prompt names the harness as {CLAUDE_DIR} (no machine path in the file); fill it in here.
+    PROMPT_TEXT=$(cat "$PROMPT_FILE"); PROMPT_TEXT=${PROMPT_TEXT//\{CLAUDE_DIR\}/$CLAUDE_DIR}
+    if ! (cd "$STAGING" && "$CLAUDE_BIN" -p "$PROMPT_TEXT" --model sonnet --tools "Read,Glob,Grep,Write,Agent" --permission-mode acceptEdits --add-dir "$CLAUDE_DIR") >> "$LOG" 2>&1; then
         # 실패 원인 1줄을 알림에 포함 (2026-07-21 사용자 지시): 로그를 안 열어도 원인·조치를
         # 알게 한다. claude CLI의 stderr는 위 리다이렉션으로 이 LOG에 append되므로 tail에서
         # 대표 에러 라인을 패턴 매칭 — auth 만료는 무인 복구 불가(대화형 /login 필요)라 조치를 명시.

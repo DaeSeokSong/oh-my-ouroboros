@@ -101,9 +101,9 @@ prior 결과 있으면: "이전 실험에서 {config}로 {metric}={값} 달성" 
 | **C** | Auto/고급 모드 구현 | Auto mode dry-run PASS |
 | **D** | 전체 통합 dry-run | 모든 조합 PASS |
 
-### Stage 0~B 설계 점검 항목 (2026-10-17 사용자 지시)
+### Stage 0~B 설계 점검 항목 (2026-10-17 사용자 지시 · 한 프로젝트 설계 기록에서)
 
-> 근거: 한 설계 사이클에서 관찰된 반복 실패만 항목으로 만들었다. Stage 진입 때 main 이 항목마다 «확인 / 해당 없음» 을 보고에 적는다.
+> 근거: 한 프로젝트의 재설계(의뢰서 교정 64라운드·Grok 5회·qa 검수·발사 verify PASS 5건, 2026-10-12~17)에서 관찰된 반복 실패만 항목으로 만들었다. Stage 진입 때 main 이 항목마다 «확인 / 해당 없음» 을 보고에 적는다. 정본 기록 위치: `knowledge/harness/rules-project-server-history-2026-11-10.md` § experiment, intent: `intent/2026-10-17-experiment-design-process.md`.
 
 **Stage 0(의뢰서) 진입·교정 중**
 - 새 실험은 의뢰서 커밋 전에 브랜치·폴더·실험 이름·문서 트리를 이전 실험과 분리한다(종료된 실험의 트리를 상속하지 않는다).
@@ -129,14 +129,14 @@ prior 결과 있으면: "이전 실험에서 {config}로 {metric}={값} 달성" 
 Stage B(Ablation용 변형 구현) 시작 시 아래 선택지를 사용자에게 제시한다. **선택 없이 자동 진행 금지**.
 
 ```
-🔀 Stage B 구현 방식 선택:
+🔀 Stage B 구현 방식 선택 (결정 팝업 `mcp__decision-popup__ask`, 원칙 7.5, 선택지마다 장단점, 추천 표시 없음):
 
-1. **일반 구현** (기본) — 코드 작성 후 qa 검증. 빠른 프로토타입에 적합.
+1. **일반 구현** — 코드 작성 후 qa 검증.
+   → 장점: 빠른 프로토타입 · 단점: 구현 결함과 가설 실패의 구분이 흐려질 수 있음
 2. **TDD 구현** — 테스트 먼저 작성(RED) → 구현(GREEN) → qa 검증(REFACTOR).
-   → 권장 시점: Stage A에서 인터페이스가 완전히 확정된 경우
-   → 효과: T38(음성 결과) 분석 시 "구현 결함 vs 가설 실패" 구분이 명확해짐
+   → 장점: T38(음성 결과) 분석 시 "구현 결함 vs 가설 실패" 구분이 명확해짐 · 단점: Stage A 에서 인터페이스가 확정되지 않았으면 테스트를 다시 써야 함
 
-어느 방식으로 진행할까요? (1/2, 기본값: 1)
+어느 방식으로 진행할까요? (1/2)
 ```
 
 **TDD(2번) 선택 시 Stage B 흐름**:
@@ -147,7 +147,7 @@ Stage B(Ablation용 변형 구현) 시작 시 아래 선택지를 사용자에�
 
 > ⚠️ **제약**: 실험 중 리팩토링 금지 원칙(CLAUDE.md 규칙 8) 준수 — REFACTOR 단계는 인터페이스 변경 없는 내부 정리만 허용. 구조 변경 필요 시 Stage A로 복귀.
 
-**일반(1번) 선택 또는 응답 없음**: 기존 흐름 그대로 진행.
+**일반(1번) 선택**: 기존 흐름 그대로 진행. 응답 없음은 대기(자동 진행 금지).
 
 **Stage D 완료 시 필수**:
 1. dry-run 폴더 전체 삭제: `rm -rf {save_path}/*/train_run_*` (사용자 직접 또는 승인 후)
@@ -235,10 +235,10 @@ discuss를 먼저 진행할까요? (Y/N)
 
 ### 분석 절차
 
-**Step 1: 결과 추출 스크립트** — `<프로젝트>/.scratch/<세션 id>/analyze_{phase}_{MMDD}.py`
+**Step 1: 결과 추출 스크립트** — `<임시 폴더>/analyze_{phase}_{MMDD}.py` (임시 폴더 = `rules/code-execution.md` § 코드 저장 규칙: 지정 파일이 있으면 `<지정>/<프로젝트>/<세션 id>/`, 없으면 `<프로젝트>/.scratch/<세션 id>/`)
 
 추출: `run.history(keys=[...], pandas=True)` / `run.summary` / `run.config` / best checkpoint 최고 수치
-기준: 독립 실행 가능 / run name 파싱: `re.match(r'^(p\d+)-(.+?)-{dataset}-s(\d+)', name)` / `wandb.Api(timeout=60)` 재사용
+기준: 독립 실행 가능 / dataset · seed 는 `run.config` 에서 읽는다(run 이름 파싱 금지) / `wandb.Api(timeout=60)` 재사용
 
 **Step 2: 체크포인트 교차 검증** — 파일명에서 epoch/top1_acc 추출 → wandb best 수치 비교 → 불일치 시 사용자 보고
 
@@ -249,13 +249,14 @@ discuss를 먼저 진행할까요? (Y/N)
 LoRA              0.XXXX     0.XXXX    0.XXXX±0.XXXX
 ```
 
+> **보고 양식 (MANDATORY, 2026-11-10)**: 결과 보고와 학습 현황 보고는 `rules-lazy/answer-detail.md` § 결과·분석 보고 필수 구조 하나를 따른다. 판마다 네 항목(무엇을 하는 판 · 관련 판 대비 차이 · 기대 · 이뤄졌는가)을 적고 넷째 항목은 의뢰서에 미리 정한 판정 규칙(paired bootstrap · 문턱 등)을 보고 전에 계산해 PASS/FAIL 로 적는다.
 > **설명 형식 (MANDATORY)**: 비교축이 있는 결과 보고·문서화는 `rules-lazy/experiment-result-explanation.md` 순서(전체표 → 축별 분해(이상값 row) → 열/행 해석 → 종합)를 따른다.
 > arm 간 차이의 검정·효과 크기·필요 시드 수는 researcher가 `/statistical-analysis`·`/statistical-power`로 낸다(설치 시). 시드 3개 미만 비교는 눈금(val 분해능) 안이라 결론 금지.
 > **이해도 확인 (선택 제안, 2026-08-25)**: 결과 집계 보고 말미에 "이 결과 해석을 tutor 퀴즈로 확인할까요?"를 1줄 제안한다(직접 실행 금지). 수락 시 **tutor**(`agents/tutor.md`)가 결과 보고·분석 스크립트 출력을 재료로 3~5문항 루프를 돈다(`skills/paper-read/SKILL.md` Step 7 절차, 저장은 실험 폴더(해당 실험의 기록 폴더 = `docs/experiments/{실험명}/` 또는 config·README가 가리키는 실험 디렉터리, 5라운드 경로 정의) `quiz.md`(문항·라운드 상태) + `quiz-key.md`(정답, main은 채점 직전에만) + `quiz-search.log`(main만 append)). 쓰기 경계 사후 검증은 이 실험 폴더를 재료 폴더로 `agents/tutor.md` § 파일 쓰기 경계(`spawn-tree.sh snapshot`/`check`, `RESULT: PASS` 원문 인용)를 그대로 적용하고, "이해도 확인 완료" 선언은 `agents/tutor.md` § 상호작용 모델 "종료" 항목의 `evidence-ls.sh` 원문 인용 규약을 따른다(9·13라운드: research·discuss와 동일).
 
 **스크립트 실행** (사용자 직접):
 ```bash
-uv run python <프로젝트>/.scratch/<세션 id>/analyze_{phase}_{MMDD}.py
+uv run python <임시 폴더>/analyze_{phase}_{MMDD}.py
 ```
 
 **결과 활용**:
@@ -294,10 +295,10 @@ uv run python <프로젝트>/.scratch/<세션 id>/analyze_{phase}_{MMDD}.py
 ```yaml
 ---
 title: "Phase N 결과"
-format: confluence
+format: confluence-html
 ---
 ```
 + python 청크(wandb 결과) + matplotlib figure + 해석 본문
 
 ### 의존성
-quarto CLI 미설치 시 docs 에이전트가 안내 (uv tool install quarto-cli)
+quarto CLI 미설치 시 main 이 `which quarto` 로 확인해 안내 (uv tool install quarto-cli), 결과는 spawn prompt 로 docs 에 전달

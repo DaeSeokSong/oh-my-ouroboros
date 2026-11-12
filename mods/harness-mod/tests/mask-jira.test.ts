@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { maskOutput, maskText } from '../hooks/band/mask.js'
-import { BTN_RESERVE, DETAIL_BTN_RESERVE, JIRA_KEY, buildBand, cleanJira } from '../hooks/band/model.js'
+import { BTN_RESERVE, DETAIL_BTN_RESERVE, MASK_RESERVE, MOBILE_RESERVE, NEWS_RESERVE, JIRA_KEY, buildBand, cleanJira } from '../hooks/band/model.js'
 import { lineWidth } from '../hooks/band/width.js'
 
 // 개정 27(intent/2026-10-23-mods-jira-mermaid-mask-typo.md): 화면 가림 · 가림 버튼 배치 · AssistantMessage 훅(mermaid + 가림) · Jira 이슈 묶음.
@@ -107,40 +107,60 @@ test('maskText: 가림 대상 길이 상한(200KB) 을 넘으면 앞부분만 �
 })
 
 // ---- 첫 줄 버튼 배치 ----
-const SERVER = { gpus: [{ i: 0, util: 0, used: 14, total: 46068 }], mem: { total: 503 * 2 ** 30, avail: 212 * 2 ** 30 }, disk: { total: 879 * 2 ** 30, avail: 121 * 2 ** 30 }, sessions: [] }
+const SERVER = { gpus: [{ i: 0, util: 0, used: 14, total: 46080 }], mem: { total: 503 * 2 ** 30, avail: 212 * 2 ** 30 }, disk: { total: 931 * 2 ** 30, avail: 121 * 2 ** 30 }, sessions: [] }
 const IDLE = { codex: [], grok: [], train: { running: [], ended: [] } }
 const band = (columns: number, extra: object = {}) => buildBand({ work: IDLE, server: SERVER, selfSid: 'self', columns, expanded: false, ...extra })
 
-test('버튼 배치(접힘): [가림] 이 [상세] 바로 왼쪽이고 사이에 여백 한 칸 이상, 오른쪽 끝은 [상세]', () => {
+test('버튼 배치(접힘): 오른쪽 무리 순서는 [📰 on/off] · [📱 모바일] · [🔒 마스킹] · [상세], 버튼마다 앞뒤 한 칸 여백 칩, 오른쪽 끝은 [상세]', () => {
   const b = band(200)[0].filter(s => s.button)
-  expect(b.map(s => s.key ?? 'gap')).toEqual(['band-mask', 'gap', 'band-toggle'])
-  expect(b[0].text).toBe('가림 켬')
-  expect(b[1].spacer && b[1].text.length >= 1).toBe(true)
-  expect(b[2].text).toBe('상세 ▸')
+  expect(band(200)[0][0].key).toBeUndefined()   // 줄 첫 칸은 뉴스 버튼이 아니라 작업 배지(왼쪽은 종전 그대로)
+  expect(b.map(s => s.key ?? 'gap')).toEqual(['band-news-toggle', 'gap', 'band-mobile', 'gap', 'band-mask', 'gap', 'band-toggle'])
+  expect(lineWidth(b.slice(0, 2))).toBe(NEWS_RESERVE)
+  expect(lineWidth(b.slice(2, 4))).toBe(MOBILE_RESERVE)
+  expect(lineWidth(b.slice(4, 6))).toBe(MASK_RESERVE)
+  expect(b[0].text).toBe(' 📰 on ')           // 칩: 글자 앞뒤 한 칸
+  expect(b[2].text).toBe(' 📱 모바일 off ')    // 기본은 모바일 꺼짐(팝업)
+  expect(b[4].text).toBe(' 🔒 마스킹 on ')
+  for (const i of [1, 3, 5]) expect(b[i].spacer && b[i].text.length >= 1).toBe(true)   // 칩 사이 한 칸 이상
+  expect(b[6].text).toBe(' 상세 ▸ ')
   expect(lineWidth(b) + 1).toBe(BTN_RESERVE)
-  expect(band(200, { maskOn: false })[0].find(s => s.key === 'band-mask').text).toBe('가림 끔')
+  // 펼친 띠: 뉴스 · 모바일 · 마스킹 · 크게 · 접기 (접힌 띠와 같은 상대 순서, 접힌 띠에는 크게가 없다).
+  const ex = band(200, { expanded: true, news: '📰 뉴스 크게' })[0].filter(s => s.button && !s.spacer).map(s => s.key)
+  expect(ex).toEqual(['band-news', 'band-mobile', 'band-mask', 'band-big', 'band-toggle'])
+  const co = b.filter(s => !s.spacer).map(s => s.key)
+  expect(co.filter(k => ex.includes(k === 'band-news-toggle' ? 'band-news' : k)).map(k => (k === 'band-news-toggle' ? 'band-news' : k)))
+    .toEqual(ex.filter(k => k !== 'band-big'))
+  expect(band(200, { maskOn: false })[0].find(s => s.key === 'band-mask').text).toBe(' 🔒 마스킹 off ')
+  expect(band(200, { mobileOn: true })[0].find(s => s.key === 'band-mobile').text).toBe(' 📱 모바일 on ')
 })
 
-test('버튼 배치(펼침): [크게] · [가림] · [접기] 순서, 사이 여백, 오른쪽 끝은 [접기]', () => {
+test('버튼 배치(펼침): [모바일] · [마스킹] · [크게] · [접기] 순서, 사이 여백, 오른쪽 끝은 [접기]', () => {
   const b = band(200, { expanded: true })[0].filter(s => s.button)
-  expect(b.map(s => s.key ?? 'gap')).toEqual(['band-big', 'gap', 'band-mask', 'gap', 'band-toggle'])
-  expect(b[1].text.length).toBeGreaterThanOrEqual(1)
-  expect(b[3].text.length).toBeGreaterThanOrEqual(1)
-  expect(b[4].text).toBe('접기 ▾')
+  expect(b.map(s => s.key ?? 'gap')).toEqual(['band-mobile', 'gap', 'band-mask', 'gap', 'band-big', 'gap', 'band-toggle'])
+  for (const i of [1, 3, 5]) expect(b[i].text.length).toBeGreaterThanOrEqual(1)
+  expect(b[6].text).toBe(' 접기 ▾ ')
   expect(lineWidth(b) + 1).toBe(DETAIL_BTN_RESERVE)
-  expect(band(200, { expanded: true, maskOn: false })[0].find(s => s.key === 'band-mask').text).toBe('가림 끔')
+  expect(band(200, { expanded: true, maskOn: false })[0].find(s => s.key === 'band-mask').text).toBe(' 🔒 마스킹 off ')
+  expect(band(200, { expanded: true, mobileOn: true })[0].find(s => s.key === 'band-mobile').text).toBe(' 📱 모바일 on ')
 })
 
-test('버튼 배치: 좁은 폭에서도 줄이 한도를 넘지 않고 [상세]/[접기] 는 항상 마지막에 남으며 남은 버튼 순서는 유지된다', () => {
-  for (const expanded of [false, true]) {
-    for (const columns of [200, 120, 80, 60, 50, 46, 44, 40, 36, 30]) {
-      const rows = band(columns, { expanded })
+test('버튼 배치: 좁은 폭에서도 줄이 한도를 넘지 않고 [상세]/[접기] 는 항상 마지막에 남으며, 접힘은 마스킹 → 모바일 → 뉴스 순으로 빠진다', () => {
+  for (const [expanded, maskOn, mobileOn] of [[false, true, false], [false, false, true], [true, true, false], [true, false, true]]) {
+    for (const columns of [200, 120, 94, 80, 70, 64, 60, 50, 47, 46, 44, 40, 37, 36, 30]) {
+      const rows = band(columns, { expanded, maskOn, mobileOn })
       for (const r of rows) expect(lineWidth(r)).toBeLessThanOrEqual(columns - 4)
       const btns = rows[0].filter(s => s.button && !s.spacer)
       expect(btns[btns.length - 1].key).toBe('band-toggle')
       const keys = btns.map(s => s.key)
-      const order = ['band-big', 'band-mask', 'band-toggle'].filter(k => keys.includes(k))
+      const order = ['band-news-toggle', 'band-mobile', 'band-mask', 'band-big', 'band-toggle'].filter(k => keys.includes(k))
       expect(keys).toEqual(order)
+      if (!expanded) {   // 빠지는 순서: 마스킹 → 모바일 → 뉴스 (마스킹이 남아 있으면 모바일도, 모바일이 남아 있으면 뉴스도)
+        if (keys.includes('band-mask')) expect(keys).toContain('band-mobile')
+        if (keys.includes('band-mobile')) expect(keys).toContain('band-news-toggle')
+        if (columns >= 80) expect(keys).toEqual(['band-news-toggle', 'band-mobile', 'band-mask', 'band-toggle'])
+        if (columns === 37 || columns === 36) expect(keys).toEqual(['band-news-toggle', 'band-toggle'])
+        if (columns === 30) expect(keys).toEqual(['band-toggle'])   // 30칸에서도 상세는 남는다
+      }
       if (columns >= 80) expect(keys).toContain('band-mask')
     }
   }
@@ -226,33 +246,33 @@ const settle = async (clock) => { for (let i = 0; i < 20; i++) { await clock.set
 const start = async ($, clock) => { await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' }); await settle(clock) }
 const label = async (ui, key: string) => (await ui.find({ key })).props.label
 
-test('가림 버튼: 접힘·펼침 둘 다 같은 key, 누르면 켬↔끔이 뒤집히고 $.store 에 남는다', async ($, on) => {
+test('마스킹 버튼: 접힘·펼침 둘 다 같은 key, 누르면 켬↔끔이 뒤집히고 $.store 에 남는다', async ($, on) => {
   const kv = new Map<string, unknown>()
   const clock = stubs(on, { kv })
   await start($, clock)
   const ui = await $.ui.mount({ ...SITE, surface: 'terminal' })
-  expect(await label(ui, 'band-mask')).toBe('가림 켬')
+  expect(await label(ui, 'band-mask')).toBe('🔒 마스킹 on')
   await ui.press({ key: 'band-mask' })
   await settle(clock)
-  expect(await label(ui, 'band-mask')).toBe('가림 끔')
+  expect(await label(ui, 'band-mask')).toBe('🔒 마스킹 off')
   expect(kv.get('band-mask')).toBe(false)
   if ((await label(ui, 'band-toggle')) === '상세 ▸') await ui.press({ key: 'band-toggle' })   // 펼침에도 같은 버튼
   await settle(clock)
   expect(await label(ui, 'band-toggle')).toBe('접기 ▾')
-  expect(await label(ui, 'band-mask')).toBe('가림 끔')
+  expect(await label(ui, 'band-mask')).toBe('🔒 마스킹 off')
   await ui.press({ key: 'band-mask' })
   await settle(clock)
-  expect(await label(ui, 'band-mask')).toBe('가림 켬')
+  expect(await label(ui, 'band-mask')).toBe('🔒 마스킹 on')
   expect(kv.get('band-mask')).toBe(true)
   await ui.press({ key: 'band-toggle' })
   await ui.unmount()
 })
 
-test('가림 버튼: 저장값이 끔이면 세션을 띄울 때 읽어 끔으로 시작한다(다시 띄워도 유지)', async ($, on) => {
+test('마스킹 버튼: 저장값이 끔이면 세션을 띄울 때 읽어 끔으로 시작한다(다시 띄워도 유지)', async ($, on) => {
   const clock = stubs(on, { kv: new Map<string, unknown>([['band-mask', false]]) })
   await start($, clock)
   const ui = await $.ui.mount({ ...SITE, surface: 'terminal' })
-  expect(await label(ui, 'band-mask')).toBe('가림 끔')
+  expect(await label(ui, 'band-mask')).toBe('🔒 마스킹 off')
   await ui.press({ key: 'band-mask' })                         // 정리: 켬으로
   await settle(clock)
   await ui.unmount()
@@ -263,7 +283,7 @@ test('AssistantMessage: mermaid 블록이 도해로 바뀌고 가림이 켜져 �
   const clock = stubs(on, { seen })
   await start($, clock)
   const band = await $.ui.mount({ ...SITE, surface: 'terminal' })
-  if ((await label(band, 'band-mask')) === '가림 끔') await band.press({ key: 'band-mask' })
+  if ((await label(band, 'band-mask')) === '🔒 마스킹 off') await band.press({ key: 'band-mask' })
   await settle(clock)
   const text = '메일 a@example.com 과 토큰 sk-abcdefgh12345678\n```mermaid\nflowchart TD\n  A --> B\n```\n끝'
   const m = await $.ui.mount(MSG(text))
@@ -298,7 +318,7 @@ test('ToolResult: 가림이 켜져 있으면 Bash stdout·stderr 와 파일 내�
   const clock = stubs(on, { outputs })
   await start($, clock)
   const band = await $.ui.mount({ ...SITE, surface: 'terminal' })
-  if ((await label(band, 'band-mask')) === '가림 끔') await band.press({ key: 'band-mask' })
+  if ((await label(band, 'band-mask')) === '🔒 마스킹 off') await band.press({ key: 'band-mask' })
   await settle(clock)
   const r = await $.ui.mount(RESULT({ stdout: 'TOKEN=' + FAKE_SK, stderr: '', interrupted: false }))
   expect(outputs[outputs.length - 1]).toEqual({ stdout: 'TOKEN=«토큰 가림»', stderr: '', interrupted: false })

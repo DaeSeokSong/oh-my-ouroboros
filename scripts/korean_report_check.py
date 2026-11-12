@@ -6,6 +6,7 @@ Contract: stdin = Stop-hook JSON. Prints {"decision":"block","reason":...} when 
 message has a Hangul-free sentence of >= 6 Latin words or a whole-message Hangul ratio < 0.4;
 otherwise prints nothing. Always exits 0 (fail-open). Skips non-Stop events and stop_hook_active.
 Rationale: intent/2026-10-16-korean-report-guard.md (corpus: 9 of 843 turn-end messages were English).
+Also blocks on small number letters (circled digits/letters; korean_style_check.find_circled; intent/2026-10-27-no-circled-numbers.md).
 Also blocks on Korean typos (korean_style_check.find_typos: dictionary + doubled particles; 2026-10-23 user order).
 Text source: last_assistant_message, else the last assistant message of the transcript tail.
 """
@@ -47,7 +48,7 @@ def prose_latin(line):
     """Latin letters in prose-like tokens only, for the ratio rule.
 
     Identifier-like tokens (with a digit or one of _ . = : , or all caps such as PASS, OK, RESULT)
-    are not counted: a short Korean report naming gpt-6.1-sol, val_gated_tri_mean or «RESULT: PASS»
+    are not counted: a short Korean report naming gpt-6.1-sol, val_score or «RESULT: PASS»
     must not fall under the ratio floor (2026-10-16 qa false positives). The sentence rule is unaffected.
     """
     n = 0
@@ -97,6 +98,10 @@ def last_message_from_transcript(path):
 QUOTE_LINE = re.compile(r"^\s*>")
 TYPO_REASON = "직전 보고에 오탈자가 있습니다. 고쳐서 같은 내용을 다시 보고하십시오. {pairs}"
 MAX_TYPOS = 8
+CIRCLED_REASON = (
+    "직전 보고에 작은 번호 글자(①·ⓐ 등)가 있습니다. 사용자 화면에서 너무 작아 읽히지 않습니다. "
+    "1) 2) 3) 처럼 일반 글자로 바꿔 같은 내용을 다시 보고하십시오."
+)
 
 
 def find_typo_pairs(text):
@@ -133,6 +138,14 @@ def main():
         pairs = []  # fail-open: a typo-check failure must not hide or replace the English check
     if pairs:
         reasons.append(TYPO_REASON.format(pairs="; ".join(pairs)))
+    try:
+        from korean_style_check import find_circled
+        # 인용 줄(>)은 오탈자 검사처럼 건너뛴다: 사용자·외부 글을 원문 그대로 옮긴 자리다(2026-10-27 security 낮음).
+        unquoted = "\n".join("" if ln.lstrip().startswith(">") else ln for ln in text.split("\n"))
+        if find_circled(unquoted, html=False):
+            reasons.append(CIRCLED_REASON)
+    except Exception:  # noqa: BLE001, S110  # fail-open: a circled-check failure must not hide the other reasons
+        pass
     if reasons:
         print(json.dumps({"decision": "block", "reason": " ".join(reasons)}, ensure_ascii=False))
 

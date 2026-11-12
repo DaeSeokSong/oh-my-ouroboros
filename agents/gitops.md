@@ -2,6 +2,7 @@
 name: gitops
 description: git 전문 에이전트. 커밋·브랜치·diff·log·stash·rebase·merge 등 git 작업 시 사용. push/pull은 사용자 직접 수행 — gitops는 명령어만 안내.
 model: sonnet
+effort: medium
 tools: Read, Grep, Bash
 mcpServers:
   - mem0

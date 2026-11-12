@@ -264,6 +264,8 @@ Concrete example for 3 chunks:
 ```
 All three in one message. Not three separate messages.
 
+띄우기 직전 main 이 Write 로 `~/.claude/.scratch/graphify-active` 에 `active` 한 단어를 쓰고(파일이 이미 있으면 먼저 Read 한 뒤 쓴다), 각 Agent 호출의 description 을 `graphify extract …` 로 시작한다. 추출이 끝나면 같은 파일을 Write 로 `done` 으로 덮어쓴다(PreToolUse 훅 scripts/agent-type-gate.py 가 내용 · 30분 · 설명 접두를 확인한다, 2026-11-09).
+
 Each subagent receives this exact prompt (substitute FILE_LIST, CHUNK_NUM, TOTAL_CHUNKS, DEEP_MODE, and CHUNK_PATH).
 
 CHUNK_PATH must be an **absolute** path — derive it before dispatching:

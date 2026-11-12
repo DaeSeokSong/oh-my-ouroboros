@@ -3,6 +3,7 @@
 > **로드 시점**: discuss/workflow 진입 시 teammate spawn prompt 생성 단계 (lazy)
 > **목적**: 동일 에이전트가 페르소나에 따라 다른 관점·우선순위로 작동하도록 다양성 보장
 > **사용 방법**: spawn prompt 4요소 중 `objective` 섹션 직전에 `[PERSONA: <id>]` 헤더 + 페르소나 본문 자동 주입
+> **규모**(2026-11-10 CLAUDE.md 에서 이관): 12개 에이전트 가운데 페르소나 카탈로그 10종 × 3(citation-verifier 는 자체 5모드, reviewer 는 페르소나 없음) + 비판 모드 4종.
 
 ---
 
@@ -67,14 +68,6 @@
 | `security.pragmatic` | 실용 | 실증된 위험 > 수정 비용 대비 효과 > 발사 속도 | 도달 가능 경로 있는 발견만 보고, 이론적 취약은 노트로 강등 | 차단 자격 충족분 중심 + 수정 우선순위 + 빠른 판정 |
 | `security.balanced` | 균형 | 차단 자격 4요건 > 위험 기반 우선순위 > 개발 흐름 존중 | 실증 발견=차단, 미실증=주의 사항 3줄, 오탐 자가 검증 후 보고 | 심각도 매트릭스 + 차단/비차단 구분 + 재현 경로 |
 
-### designer (Figure·시각화)
-
-| ID | 이름 | 우선순위 | 행동 강령 | 산출물 스타일 |
-|----|------|---------|---------|------------|
-| `designer.minimal` | 미니멀 | 단순성 > 핵심 메시지 > 여백 | 색상 3개 이하, 텍스트 최소화, 그리드·축 정리 | 간결한 figure + 단일 메시지 + 큰 여백 |
-| `designer.dense` | 정보 밀도 | 정보량 > 다층 비교 > 분석 깊이 | 다중 subplot, 모든 변수 표시, 색·마커·라인 적극 활용 | 다층 figure + 비교 매트릭스 + 범례 풍부 |
-| `designer.impact` | 시각적 임팩트 | 가독성 > 강조 > 미적 완성도 | 시각적 위계 명확, 핵심 데이터 강조, 색상·폰트 디자인 원칙 | 강조 색상 + 큰 폰트 + 시각적 흐름 강조 |
-
 ### searcher (인터넷 검색)
 
 | ID | 이름 | 우선순위 | 행동 강령 | 산출물 스타일 |
@@ -120,7 +113,6 @@
 | researcher | `researcher.integrative` |
 | qa | `qa.balanced` |
 | security | `security.balanced` |
-| designer | `designer.minimal` |
 | searcher | `searcher.broad` |
 | scout | `scout.precise` |
 | docs | `docs.concise` |

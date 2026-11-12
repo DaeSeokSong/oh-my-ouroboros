@@ -13,10 +13,11 @@ else
   echo "[launch-tavily] $SECRETS_FILE 없음 — TAVILY_API_KEY 미설정" >&2
 fi
 
-# npx 경로는 머신마다 다름 → 동적 해석: nvm(최신) → PATH → 절대경로 폴백
+# npx 경로는 머신마다 다름(서버마다 nvm 또는 system) → 동적 해석: nvm(최신) → PATH → 절대경로 폴백
 _resolve() {
   local b="$1" c
-  c="$(ls -1 $HOME/.nvm/versions/node/*/bin/"$b" 2>/dev/null | sort -V | tail -1 || true)"
+  # The glob lists only existing files (like ls did); with no match it stays literal and fails the -x test below.
+  c="$(printf '%s\n' "$HOME"/.nvm/versions/node/*/bin/"$b" | sort -V | tail -1 || true)"
   [[ -n "$c" && -x "$c" ]] && { printf '%s\n' "$c"; return 0; }
   c="$(command -v "$b" 2>/dev/null || true)"
   [[ -n "$c" ]] && { printf '%s\n' "$c"; return 0; }

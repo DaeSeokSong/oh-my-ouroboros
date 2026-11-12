@@ -1,13 +1,17 @@
 import { expect, test } from 'claude-code/testing'
 import { cellWidth, clip, lineWidth, splitAt } from '../hooks/band/width.js'
-import { BIG_HEIGHT, BTN_RESERVE, DETAIL_BTN_RESERVE, buildBand, effectiveSplit, sanitize, shortName, windowBand } from '../hooks/band/model.js'
+import { BIG_HEIGHT, BTN_RESERVE, DETAIL_BTN_RESERVE, MIN_RESERVE, buildBand, effectiveSplit, sanitize, shortName, windowBand } from '../hooks/band/model.js'
 import { needsCollect, validCache, wantsBand } from '../hooks/band/poll.js'
 import { themeKind } from '../hooks/band/theme.js'
 import { PALETTES, toTree, treeRows, treeTexts } from '../hooks/band/view.js'
 import { ackText, ackedSet, noticeText, parsePending, plan } from '../hooks/band/propagate.js'
 
-// 개정 27: 접힌 띠 첫 줄 오른쪽에 «가림 켬» 버튼이 늘어 작업 줄이 쓰는 폭이 BTN_RESERVE - 7(옛 예약) 칸 줄었다. 사다리 시험은 그만큼 열 수를 옮겨 같은 작업 줄 폭에서 본다.
+// 개정 27: 접힌 띠 첫 줄 오른쪽에 마스킹 버튼(옛 «가림 켬», 지금 «🔒 마스킹 on»)이 늘어 작업 줄이 쓰는 폭이 BTN_RESERVE - 7(옛 예약) 칸 줄었다. 사다리 시험은 그만큼 열 수를 옮겨 같은 작업 줄 폭에서 본다.
 const EXTRA = BTN_RESERVE - 7
+// 2026-11-03: 버튼 칩(여백 포함)과 모바일 버튼으로 접힌 띠 오른쪽 예약이 29 → BTN_RESERVE 로 늘었다. SHIFT 는 옛 80열과 같은 작업 줄 폭을 얻는 열 수 보정,
+// NARROW 는 가장 좁은 단계(상세 버튼만)에서 옛 «columns - 4 - 7» 과 같은 작업 줄 폭을 얻는 열 수 보정이다.
+const SHIFT = BTN_RESERVE - 29
+const NARROW = MIN_RESERVE - 7
 
 // ---- 하네스 변경 전파의 받는 쪽(intent/2026-10-21-harness-change-propagation-gate.md 개정 1) ----
 const SELF_SID = '11111111-1111-4111-8111-111111111111'
@@ -58,10 +62,10 @@ test('cellWidth counts Hangul as 2', async () => {
 })
 
 const server = {
-  gpus: [0, 1, 2, 5].map(i => ({ i, util: 0, used: 14, total: 46068 }))
-    .concat([{ i: 3, util: 96, used: 26419, total: 81559 }, { i: 4, util: 100, used: 26417, total: 81559 }]),
+  gpus: [0, 1, 2, 5].map(i => ({ i, util: 0, used: 14, total: 46080 }))
+    .concat([{ i: 3, util: 96, used: 26419, total: 81920 }, { i: 4, util: 100, used: 26417, total: 81920 }]),
   mem: { total: 503 * 2 ** 30, avail: 212 * 2 ** 30 },
-  disk: { total: 879 * 2 ** 30, avail: 121 * 2 ** 30 },
+  disk: { total: 931 * 2 ** 30, avail: 121 * 2 ** 30 },
   sessions: [
     { sid: 'self', name: '[Harness] Manager', status: 'busy' },
     { sid: 'b', name: '[PRJ] Manager', status: 'busy' },
@@ -85,7 +89,8 @@ const RIGHT = (rows, columns: number) => rows.map(r => halves(r, columns)[1])
 test('평소 80열: 시안 카드 1과 같은 글자', async () => {
   const rows = buildBand({ work: idle, server, selfSid: 'self', columns: 80, expanded: false })
   expect(rows.length).toBe(2)
-  expect(txt(rows[0])).toBe(' 작업  이상 없음 │ 세션 ●2 ○1') // 세션 칸은 작업 줄 끝(개정 11)
+  expect(txt(buildBand({ work: idle, server, selfSid: 'self', columns: 80 + SHIFT, expanded: false })[0])).toBe(' 작업  이상 없음 │ 세션 ●2 ○1') // 세션 칸은 작업 줄 끝(개정 11). 버튼 칩(2026-11-03)이 늘어 옛 80열과 같은 작업 줄 폭은 80 + SHIFT 열
+  expect(txt(rows[0])).toBe(' 작업  이상 없음')   // 80열 그대로는 작업 줄이 26칸이라 세션 칸이 사다리에서 먼저 빠진다
   expect(txt(rows[1])).toBe(' 서버  GPU 대기4  3 96% 26G  4 100% 26G │ 여유 메모리 212G · 디스크 121G') // 서버 줄에는 세션이 없고, 남는 폭에 GPU 메모리 «26G» 가 다시 보인다
   for (const r of rows) expect(lineWidth(r)).toBeLessThanOrEqual(76) // 띠 Box 의 좌우 여백 1칸씩 → columns - 4
   expect(rows[0][0]).toEqual({ text: ' 작업 ', tone: 'workBadge' })
@@ -177,7 +182,7 @@ test('정화: 문자열은 셀 폭 40칸으로 자른다, 이상한 모양 입�
   const long = { ...server, sessions: [{ sid: 'b', name: '가'.repeat(60), status: 'busy' }] }
   expect(cellWidth(sanitize(long, idle).server.sessions[0].name)).toBe(40)
   const out = buildBand({ work: idle, server: long, selfSid: 'self', columns: 200, expanded: true })
-  const seg = out.flat().find(s => !s.button && s.text.startsWith('가'))   // «가림 켬» 버튼(개정 27)도 «가» 로 시작해 버튼은 뺀다
+  const seg = out.flat().find(s => !s.button && s.text.startsWith('가'))   // 마스킹 버튼(개정 27)은 글자가 «가» 로 시작하지 않아도 버튼은 뺀다
   expect(cellWidth(seg.text)).toBe(20)   // 세션 표의 이름 열은 20칸까지(개정 21, 넘치면 …)
   expect(seg.text.trimEnd().endsWith('…')).toBe(true)
   const s = sanitize(null, 'x')
@@ -186,7 +191,7 @@ test('정화: 문자열은 셀 폭 40칸으로 자른다, 이상한 모양 입�
   buildBand({ work: 5, server: [], selfSid: 'self', columns: 80, expanded: false })
 })
 
-const hotDisk = { ...server, disk: { total: 879 * GB, avail: 40 * GB } }
+const hotDisk = { ...server, disk: { total: 931 * GB, avail: 40 * GB } }
 
 test('빨강 디스크는 줄여도 숨기지 않는다', async () => {
   for (const columns of [52, 56, 60]) {
@@ -198,7 +203,7 @@ test('빨강 디스크는 줄여도 숨기지 않는다', async () => {
 })
 
 // GPU 가 많이 사용 중이면 GPU 칸이 길어 줄 끝 자르기가 빨강 디스크를 잘라냈다(재검수). 12단계가 GPU 칸을 접는다.
-const busyGpus = (n: number, used = 20000) => Array.from({ length: n }, (_, i) => ({ i, util: 50, used, total: 46068 }))
+const busyGpus = (n: number, used = 20000) => Array.from({ length: n }, (_, i) => ({ i, util: 50, used, total: 46080 }))
 
 test('빨강 디스크: GPU 8장 사용 중 80열·6장 사용 중 60열에서도 서버 줄에 남는다', async () => {
   for (const [n, columns] of [[8, 80], [6, 60]]) {
@@ -213,10 +218,10 @@ test('빨강 디스크: GPU 8장 사용 중 80열·6장 사용 중 60열에서�
 
 test('12단계 GPU 접기: 사용 GPU 중 hot 이 있으면 사용N 빨강·warn 이면 노랑·대기는 M 만큼', async () => {
   const at = (gpus, columns = 44) => buildBand({ work: idle, server: { ...hotDisk, gpus }, selfSid: 'self', columns, expanded: false })[1]
-  const hot = at([...busyGpus(2), { i: 2, util: 50, used: 44000, total: 46068 }, { i: 3, util: 0, used: 14, total: 46068 }])
+  const hot = at([...busyGpus(2), { i: 2, util: 50, used: 44000, total: 46080 }, { i: 3, util: 0, used: 14, total: 46080 }])
   expect(hot.find(s => s.text === '사용3').tone).toBe('hot')
   expect(txt(hot)).toContain('GPU 사용3 대기1')
-  const warn = at([...busyGpus(2), { i: 2, util: 50, used: 36000, total: 46068 }])
+  const warn = at([...busyGpus(2), { i: 2, util: 50, used: 36000, total: 46080 }])
   expect(warn.find(s => s.text === '사용3').tone).toBe('warn')
   expect(txt(warn)).toContain('GPU 사용3 │')   // 대기 0 이면 대기 칸 없음
   expect(at(busyGpus(2)).find(s => s.text === '사용2').tone).toBe('base')
@@ -288,26 +293,26 @@ test('작업 줄 사다리: 작업N 은 폭이 줄어도 그대로, 학습 칸�
 })
 
 // ---- GPU 별 학습 판(개정 8, 2026-10-15) ----
-const RUN_A = { gpu: 3, name: 'exp-mtl-14t-r72-1t', max_epochs: 60, metric: 'val_gated_tri_mean', last: true,
-  ckpts: [{ epoch: 4, value: -0.2779 }, { epoch: 9, value: -0.2345 }, { epoch: 14, value: -0.2247 }] }
-const RUN_B = { gpu: 4, name: 'exp-mtl-14q-r72t', max_epochs: 60, metric: '', ckpts: [], last: false }
+const RUN_A = { gpu: 3, name: 'exp-demo-1a-x72-1t', max_epochs: 60, metric: 'val_score', last: true,
+  ckpts: [{ epoch: 5, value: -0.3136 }, { epoch: 10, value: -0.2688 }, { epoch: 15, value: -0.2571 }] }
+const RUN_B = { gpu: 4, name: 'exp-demo-1b-x72t', max_epochs: 60, metric: '', ckpts: [], last: false }
 const withTrain = { ...noSess, train: [RUN_A, RUN_B] }
 
 test('shortName: 영문자+숫자 조각부터 끝까지, 없으면 전체', async () => {
-  expect(shortName('exp-mtl-14t-r72-1t')).toBe('r72-1t')
-  expect(shortName('exp-mtl-14q-r72t')).toBe('r72t')
+  expect(shortName('exp-demo-1a-x72-1t')).toBe('x72-1t')
+  expect(shortName('exp-demo-1b-x72t')).toBe('x72t')
   expect(shortName('plain-name')).toBe('plain-name')
   expect(shortName('?')).toBe('?')
 })
 
 test('학습 판: 80열 접힌 띠는 76칸 이내이고 판 이름·에폭 없이 GPU 별 판 수만 보인다(개정 15)', async () => {
-  const rows = buildBand({ work: idle, server: withTrain, selfSid: 'self', columns: 80, expanded: false })
+  const rows = buildBand({ work: idle, server: withTrain, selfSid: 'self', columns: 80 + SHIFT, expanded: false })
   expect(txt(rows[0])).toBe(' 작업  학습 GPU3 1  GPU4 1')
-  for (const r of rows) expect(lineWidth(r)).toBeLessThanOrEqual(76)
+  for (const r of rows) expect(lineWidth(r)).toBeLessThanOrEqual(76 + SHIFT)
   expect(txt(rows[0])).not.toContain('a72')
   expect(txt(rows[0])).not.toContain('/60')
   const ended = { codex: [], grok: [], train: { running: [], ended: ['c'] } }
-  expect(txt(buildBand({ work: ended, server: withTrain, selfSid: 'self', columns: 80, expanded: false })[0]))
+  expect(txt(buildBand({ work: ended, server: withTrain, selfSid: 'self', columns: 80 + SHIFT, expanded: false })[0]))
     .toBe(' 작업  학습 GPU3 1  GPU4 1 · 1판 종료')
 })
 
@@ -345,7 +350,7 @@ test('학습 판 done: 접힌 띠에는 끝낸 에폭이 없고 판 수만, 폭�
 test('학습 판 done: done·max_epochs 를 몰라도 접힌 띠는 GPU 별 판 수 그대로', async () => {
   const at = (train, columns = 80) => txt(buildBand({ work: idle, server: { ...noSess, train }, selfSid: 'self', columns, expanded: false })[0])
   expect(at([{ ...RUN_A, done: null }])).toBe(' 작업  학습 GPU3 1')
-  expect(at([{ ...RUN_A, done: null }], 30)).toBe(' 작업  학습 GPU3 1')
+  expect(at([{ ...RUN_A, done: null }], 30 + NARROW)).toBe(' 작업  학습 GPU3 1')
   expect(at([{ ...RUN_B, max_epochs: null, done: 9 }])).toBe(' 작업  학습 GPU4 1')
   expect(at([{ ...RUN_A, done: 17 }, RUN_B])).toBe(' 작업  학습 GPU3 1  GPU4 1')
   expect(at([{ ...RUN_B, max_epochs: null, done: null }])).toBe(' 작업  학습 GPU4 1')
@@ -354,16 +359,16 @@ test('학습 판 done: done·max_epochs 를 몰라도 접힌 띠는 GPU 별 판 
 test('학습 판 done: 펼친 보기는 짧은 이름 + 17/60(접미 없음), 모르면 ?/60, 판마다 한 줄이고 지표·체크포인트는 없다', async () => {
   const lines = LEFT(buildBand({ work: idle, server: withDone, selfSid: 'self', columns: 240, expanded: true }), 240)   // 반 폭 116: 줄이 잘리지 않는다
   expect(lines[0]).toBe(' 작업')   // 개정 26: 첫 줄은 배지뿐이고 내용은 둘째 줄부터, 들여쓰기 없음
-  expect(lines[1]).toBe('학습 GPU3 r72-1t  17/60  last')
-  expect(lines[2]).toBe('     GPU4 r72t  9/60  last 없음')   // «학습 » 폭 5칸
-  expect(lines.join('\n')).not.toMatch(/지표|체크포인트|val_gated|e14/)
+  expect(lines[1]).toBe('학습 GPU3 x72-1t  17/60  last')
+  expect(lines[2]).toBe('     GPU4 x72t  9/60  last 없음')   // «학습 » 폭 5칸
+  expect(lines.join('\n')).not.toMatch(/지표|체크포인트|val_score|e15/)
   const nodone = LEFT(buildBand({ work: idle, server: withTrain, selfSid: 'self', columns: 240, expanded: true }), 240)
-  expect(nodone[1]).toContain('r72-1t  ?/60  last')
+  expect(nodone[1]).toContain('x72-1t  ?/60  last')
   expect(nodone[1]).not.toContain('17/60')
   const only = LEFT(buildBand({ work: idle, server: { ...noSess, train: [{ ...RUN_B, max_epochs: null, done: 9 }] }, selfSid: 'self', columns: 240, expanded: true }), 240)
-  expect(only[1]).toBe('학습 GPU4 r72t  9  last 없음')
+  expect(only[1]).toBe('학습 GPU4 x72t  9  last 없음')
   const none = LEFT(buildBand({ work: idle, server: { ...noSess, train: [{ ...RUN_B, max_epochs: null, done: null }] }, selfSid: 'self', columns: 240, expanded: true }), 240)
-  expect(none[1]).toBe('학습 GPU4 r72t  last 없음')
+  expect(none[1]).toBe('학습 GPU4 x72t  last 없음')
 })
 
 test('학습 정화 done: 0 이상 정수만, 아니면 null', async () => {
@@ -398,9 +403,9 @@ test('학습 판: 펼친 보기에 짧은 이름·?/60·last/없음만, 지표·
   const rows = buildBand({ work: idle, server: withTrain, selfSid: 'self', columns: 240, expanded: true })
   const lines = LEFT(rows, 240)
   expect(lines[0]).toBe(' 작업')
-  expect(lines[1]).toBe('학습 GPU3 r72-1t  ?/60  last')
-  expect(lines[2]).toBe('     GPU4 r72t  ?/60  last 없음')   // 판마다 한 줄
-  expect(allText(rows)).not.toMatch(/지표|체크포인트|val_gated|e14/)
+  expect(lines[1]).toBe('학습 GPU3 x72-1t  ?/60  last')
+  expect(lines[2]).toBe('     GPU4 x72t  ?/60  last 없음')   // 판마다 한 줄
+  expect(allText(rows)).not.toMatch(/지표|체크포인트|val_score|e15/)
   expect(rows[1].find(s => s.text === 'last').tone).toBe('ok')   // 개정 26: 판 줄은 둘째 줄부터
   expect(rows[2].find(s => s.text === 'last 없음').tone).toBe('dim')
   expect(RIGHT(rows, 240)[0].startsWith(' 서버')).toBe(true)   // 첫 줄 오른쪽은 배지뿐이고 GPU 는 둘째 줄부터
@@ -442,7 +447,7 @@ test('학습 판: 체크포인트 값은 정화돼 담기지만 펼친 보기에
   const run = { ...RUN_A, ckpts: vals.map((value, i) => ({ epoch: i + 1, value })) }
   expect(sanitize({ train: [run] }, idle).server.train[0].ckpts.map(c => c.value)).toEqual(vals)
   const text = LEFT(buildBand({ work: idle, server: { ...noSess, train: [run] }, selfSid: 'self', columns: 300, expanded: true }), 300).join('\n')
-  expect(text).not.toMatch(/지표|체크포인트|val_gated|e1 |1\.00e-5|최근/)
+  expect(text).not.toMatch(/지표|체크포인트|val_score|e1 |1\.00e-5|최근/)
 })
 
 // view.js 시험용 가짜 el: 노드를 그대로 객체로 만든다.
@@ -514,10 +519,10 @@ test('poll: 마지막 시도가 15초 안이면 다시 부르지 않는다', asy
 test('접힌 띠 80열: 배지 · │ · 학습 칸은 GPU 별 판 수, 권한 칸 없음', async () => {
   const sv = { ...noSess, train: [{ ...RUN_A, done: 17 }, { ...RUN_B, done: 9 }] }
   const work = { ...idle, blocks: 2 }
-  const rows = buildBand({ work, server: sv, selfSid: 'self', columns: 80, expanded: false })
+  const rows = buildBand({ work, server: sv, selfSid: 'self', columns: 80 + SHIFT, expanded: false })
   expect(txt(rows[0])).toBe(' 작업  학습 GPU3 1  GPU4 1 │ 차단 2')
   expect(rows[0].find(s => s.text === ' │ ').tone).toBe('sep')
-  for (const r of rows) expect(lineWidth(r)).toBeLessThanOrEqual(76)
+  for (const r of rows) expect(lineWidth(r)).toBeLessThanOrEqual(76 + SHIFT)
   expect(txt(buildBand({ work: idle, server: sv, selfSid: 'self', columns: 80, expanded: false })[0])).not.toContain('권한')
   expect(buildBand({ work: idle, server: sv, selfSid: 'self', columns: 120, expanded: true }).map(txt).join('\n')).not.toContain('권한')
 })
@@ -547,17 +552,46 @@ test('view: 띠 Box 는 팔레트 바탕과 좌우 여백 1칸, 배지는 제 �
   expect(toTree(el, rows, 'constructor').backgroundColor).toBe(PALETTES.dark.bg) // 모르는 테마는 어두운 팔레트
 })
 
+// 버튼 칩(2026-11-03): 접힘 · 펼침의 모든 띠 버튼은 글자 앞뒤 한 칸 여백과 테마별 배경색을 갖고, 버튼 사이 빈 칸은 띠 바탕이다. 눌림 라벨은 여백을 뗀 글자다.
+test('view: 버튼은 칩(앞뒤 한 칸 여백 + 테마별 배경색), 사이 빈 칸은 띠 바탕, 라벨은 여백 없음', async () => {
+  const chips = { dark: '#3a3a3a', light: '#dcdcdc' }
+  for (const expanded of [false, true]) {
+    const rows = buildBand({ work: idle, server, selfSid: 'self', columns: 200, expanded, news: '📰 뉴스 크게' })
+    for (const theme of ['dark', 'light'] as const) {
+      expect(PALETTES[theme].chip).toBe(chips[theme])
+      const tree = toTree(el, rows, theme)
+      const buttons: any[] = []
+      walk(tree, n => { if (n.t === 'Button' && !String(n.key).startsWith('band-act-')) buttons.push(n) })   // 세션 줄의 [숨김] 류는 칩 여백 없이 배경색만(아래)
+      const keys = expanded ? ['band-news', 'band-mobile', 'band-mask', 'band-big', 'band-toggle'] : ['band-news-toggle', 'band-mobile', 'band-mask', 'band-toggle']
+      expect(buttons.map(b => b.key)).toEqual(keys)
+      for (const b of buttons) {
+        const t = b.children[0]
+        expect(t.children[0]).toBe(` ${b.label} `)                     // 글자 앞뒤 한 칸
+        expect(t.backgroundColor).toBe(chips[theme])
+        expect(t.backgroundColor).not.toBe(PALETTES[theme].bg)
+        expect(b.label).toBe(b.label.trim())
+      }
+      const gaps: any[] = []
+      walk(tree, n => { if (n.t === 'Text' && /^ +$/.test(n.children[0]) && String(n.backgroundColor) === PALETTES[theme].bg) gaps.push(n) })
+      expect(gaps.length).toBeGreaterThanOrEqual(keys.length - 1)     // 칩 사이 빈 칸은 바탕색
+      const acts: any[] = []
+      walk(tree, n => { if (n.t === 'Button' && String(n.key).startsWith('band-act-')) acts.push(n) })
+      for (const a of acts) expect(a.children[0].backgroundColor).toBe(chips[theme])   // [숨김] [제거] 도 같은 칩 배경(표 폭 때문에 여백은 없다)
+    }
+  }
+})
+
 // ---- 와쳐 · 세션별 작업(개정 11, 2026-10-16) ----
 const watched = { ...noSess, train: [{ ...RUN_A, done: 17, watcher: true }, { ...RUN_B, done: 9, watcher: false }] }
 
 test('와쳐: 접힌 띠는 살아 있으면 ◉(민트) · 없으면 와쳐✗(분홍) · launch-set 판이 아니면 표시 없음', async () => {
-  const rows = buildBand({ work: idle, server: watched, selfSid: 'self', columns: 80, expanded: false })
+  const rows = buildBand({ work: idle, server: watched, selfSid: 'self', columns: 80 + SHIFT, expanded: false })
   expect(txt(rows[0])).toBe(' 작업  학습 GPU3 1 ◉  GPU4 1 와쳐✗')
   expect(rows[0].find(s => s.text === ' ◉').tone).toBe('ok')
   expect(rows[0].find(s => s.text === ' 와쳐✗').tone).toBe('hot')
-  expect(txt(buildBand({ work: idle, server: withDone, selfSid: 'self', columns: 80, expanded: false })[0]))
+  expect(txt(buildBand({ work: idle, server: withDone, selfSid: 'self', columns: 80 + SHIFT, expanded: false })[0]))
     .toBe(' 작업  학습 GPU3 1  GPU4 1')   // watcher null 은 표시 없음
-  for (const r of rows) expect(lineWidth(r)).toBeLessThanOrEqual(76)
+  for (const r of rows) expect(lineWidth(r)).toBeLessThanOrEqual(76 + SHIFT)
 })
 
 test('와쳐: 사다리에서 ◉ 는 빠져도 와쳐 없음 경보(✗)는 끝까지 남는다', async () => {
@@ -578,8 +612,8 @@ test('와쳐: 사다리에서 ◉ 는 빠져도 와쳐 없음 경보(✗)는 끝
 test('와쳐: 펼친 보기는 판 줄(에폭 뒤, last 앞)에 와쳐/없음, null 이면 와쳐 표시만 없다', async () => {
   const rows = buildBand({ work: idle, server: watched, selfSid: 'self', columns: 240, expanded: true })
   const lines = LEFT(rows, 240)
-  expect(lines[1]).toBe('학습 GPU3 r72-1t  17/60  와쳐  last')   // 개정 26: 판 줄은 둘째 줄부터
-  expect(lines[2]).toBe('     GPU4 r72t  9/60  와쳐 없음  last 없음')
+  expect(lines[1]).toBe('학습 GPU3 x72-1t  17/60  와쳐  last')   // 개정 26: 판 줄은 둘째 줄부터
+  expect(lines[2]).toBe('     GPU4 x72t  9/60  와쳐 없음  last 없음')
   expect(rows[1].find(s => s.text === '와쳐').tone).toBe('ok')
   expect(rows[2].find(s => s.text === '와쳐 없음').tone).toBe('hot')
   const nul = LEFT(buildBand({ work: idle, server: withDone, selfSid: 'self', columns: 240, expanded: true }), 240).join('\n')
@@ -594,8 +628,8 @@ test('와쳐 정화: true/false 만 받고 그 밖은 null', async () => {
 })
 
 // ---- 같은 GPU 묶음(개정 13, 2026-10-17): 접힌 띠는 판 이름 없이 GPU 별 `GPU3 (17/9)/60`, 펼친 보기는 판마다 GPU 라벨 반복 ----
-const RUN_A2 = { ...RUN_B, gpu: 3, name: 'exp-mtl-14q-r72t-2', done: 9 }
-const RUN_A3 = { ...RUN_B, gpu: 3, name: 'exp-mtl-14q-r72t-3', done: 5 }
+const RUN_A2 = { ...RUN_B, gpu: 3, name: 'exp-demo-1b-x72t-2', done: 9 }
+const RUN_A3 = { ...RUN_B, gpu: 3, name: 'exp-demo-1b-x72t-3', done: 5 }
 const grouped = { ...noSess, train: [{ ...RUN_A, done: 17 }, RUN_A2, { ...RUN_B, done: 9 }] }
 const col = (sv, columns: number, expanded = false) => buildBand({ work: idle, server: sv, selfSid: 'self', columns, expanded })
 
@@ -604,18 +638,18 @@ test('같은 GPU 묶음: 접힌 띠는 GPU 별 판 수만(두 판 GPU3 2 · 세 
   const three = { ...noSess, train: [{ ...RUN_A, done: 1 }, { ...RUN_A2, done: 3 }, { ...RUN_A3, done: 5 }, { ...RUN_B, done: 9 }] }
   expect(txt(col(three, 80)[0])).toBe(' 작업  학습 GPU3 3  GPU4 1')
   const at = (columns: number) => txt(col(grouped, columns)[0])
-  expect(at(58)).toBe(' 작업  학습 GPU3 2  GPU4 1')   // 한 판뿐인 GPU4 도 GPU 접두를 떼지 않는다
-  expect(at(30)).toBe(' 작업  학습 실행3')
+  expect(at(64)).toBe(' 작업  학습 GPU3 2  GPU4 1')   // 한 판뿐인 GPU4 도 GPU 접두를 떼지 않는다
+  expect(at(30 + NARROW)).toBe(' 작업  학습 실행3')
   const unknown = { ...noSess, train: [{ ...RUN_A, gpu: null, done: 17 }, { ...RUN_A2, gpu: null }] } // gpu 를 모르는 판은 각각 따로
   expect(txt(col(unknown, 80)[0])).toBe(' 작업  학습 GPU? 1  GPU? 1')
 })
 
 test('접힌 띠: 한 GPU 에 세 판이면 GPU5 3, 판 이름·에폭은 없다', async () => {
   const on5 = (name: string, done: number) => ({ ...RUN_B, gpu: 5, name, done })
-  const sv = { ...noSess, train: [on5('exp-mtl-14q-r1t', 3), on5('exp-mtl-14q-r2t', 4), on5('exp-mtl-14q-r3t', 5)] }
+  const sv = { ...noSess, train: [on5('exp-demo-1b-x1t', 3), on5('exp-demo-1b-x2t', 4), on5('exp-demo-1b-x3t', 5)] }
   const row = col(sv, 80)[0]
   expect(txt(row)).toBe(' 작업  학습 GPU5 3')
-  expect(txt(row)).not.toMatch(/r1t|\/60/)
+  expect(txt(row)).not.toMatch(/x1t|\/60/)
   expect(txt(col({ ...sv, train: [...sv.train, { ...RUN_A, done: 1 }] }, 80)[0])).toBe(' 작업  학습 GPU5 3  GPU3 1')   // 묶음은 GPU 별, 순서는 입력 순서
 })
 
@@ -624,17 +658,17 @@ test('같은 GPU 묶음 와쳐: 한 판만 false 면 와쳐✗, 전부 true 면 
   const t = (a, b, columns = 80) => col(w(a, b), columns)[0]
   expect(txt(t(true, false))).toBe(' 작업  학습 GPU3 2 와쳐✗')
   expect(t(true, false).find(s => s.text === ' 와쳐✗').tone).toBe('hot')
-  expect(txt(t(true, false, 32))).toBe(' 작업  학습 GPU3 2 ✗')   // 좁은 열
+  expect(txt(t(true, false, 32 + NARROW))).toBe(' 작업  학습 GPU3 2 ✗')   // 좁은 열
   expect(txt(t(true, true))).toBe(' 작업  학습 GPU3 2 ◉')
   expect(t(true, true).find(s => s.text === ' ◉').tone).toBe('ok')
   expect(txt(t(null, true))).toContain(' ◉')
   expect(txt(t(null, null))).not.toMatch(/◉|✗/)
-  expect(txt(t(false, true, 30))).toBe(' 작업  학습 실행2 ✗')   // 가장 좁은 단계: 실행N 에 ✗ 경보만 남는다
-  expect(txt(t(true, true, 30))).toBe(' 작업  학습 실행2')
+  expect(txt(t(false, true, 30 + NARROW))).toBe(' 작업  학습 실행2 ✗')   // 가장 좁은 단계: 실행N 에 ✗ 경보만 남는다
+  expect(txt(t(true, true, 30 + NARROW))).toBe(' 작업  학습 실행2')
 })
 
-// 실제 이름(shortName 으로 r72-1t 꼴)을 쓴다. 판 줄은 120열 왼쪽 반(56칸)에 «와쳐 …  last …» 까지 한 줄에 들어간다.
-const SHORT_A = { ...RUN_A, metric: '', done: 17, watcher: false, last: false, ckpts: [{ epoch: 4, value: -0.2779 }] }
+// 실제 이름(shortName 으로 x72-1t 꼴)을 쓴다. 판 줄은 120열 왼쪽 반(56칸)에 «와쳐 …  last …» 까지 한 줄에 들어간다.
+const SHORT_A = { ...RUN_A, metric: '', done: 17, watcher: false, last: false, ckpts: [{ epoch: 5, value: -0.3136 }] }
 const SHORT_B = { ...RUN_A2, watcher: true, last: true }
 const SHORT_C = { ...RUN_B, done: 2, watcher: false, last: true }
 
@@ -643,19 +677,19 @@ test('같은 GPU 묶음: 펼친 보기는 트리 없이 판마다 한 줄 «GPU3
   for (const columns of [60, 80, 120]) for (const r of col(sv, columns, true)) expect(lineWidth(r)).toBeLessThanOrEqual(columns - 4)
   const rows = col(sv, 120, true)
   const lines = LEFT(rows, 120)
-  expect(lines[1]).toBe('학습 GPU3 r72-1t  17/60  와쳐 없음  last 없음')   // 개정 26: 판 줄은 둘째 줄부터
-  expect(lines[2]).toBe('     GPU3 r72t-2  9/60  와쳐  last')
-  expect(lines[3]).toBe('     GPU4 r72t  2/60  와쳐 없음  last')
+  expect(lines[1]).toBe('학습 GPU3 x72-1t  17/60  와쳐 없음  last 없음')   // 개정 26: 판 줄은 둘째 줄부터
+  expect(lines[2]).toBe('     GPU3 x72t-2  9/60  와쳐  last')
+  expect(lines[3]).toBe('     GPU4 x72t  2/60  와쳐 없음  last')
   expect(lines.join('\n')).not.toMatch(/ㄴ|체크포인트|지표/)
   expect(rows[1].find(s => s.text === '와쳐 없음').tone).toBe('hot')
   expect(rows[1].find(s => s.text === 'last 없음').tone).toBe('dim')
   expect(rows[2].find(s => s.text === 'last').tone).toBe('ok')
   // 지표가 있는 판도 지표는 나오지 않고 판 줄은 그대로다
   const withMetric = LEFT(col({ ...noSess, train: [{ ...RUN_A, done: 17, watcher: false, last: false }] }, 120, true), 120)[1]
-  expect(withMetric).toBe('학습 GPU3 r72-1t  17/60  와쳐 없음  last 없음')
+  expect(withMetric).toBe('학습 GPU3 x72-1t  17/60  와쳐 없음  last 없음')
   // 와쳐가 null(launch-set 판 아님)이어도 last 유무는 둔다
   const nul = LEFT(col({ ...noSess, train: [{ ...SHORT_A, watcher: null }] }, 120, true), 120)[1]
-  expect(nul).toBe('학습 GPU3 r72-1t  17/60  last 없음')
+  expect(nul).toBe('학습 GPU3 x72-1t  17/60  last 없음')
 })
 
 test('같은 GPU 묶음: 좁은 열에서도 «GPU3» 을 유지하고 모든 열이 줄 폭 한도 안', async () => {
@@ -673,12 +707,14 @@ test('펼친 보기 좌우 분할: 80열·120열 모두 왼쪽 작업 · 오른�
     const rows = buildBand({ work, server: { ...server, train: [SHORT_A] }, selfSid: 'self', columns, expanded: true })
     const limit = columns - 4
     for (const r of rows) expect(lineWidth(r)).toBeLessThanOrEqual(limit)
-    expect(lineWidth(rows[0].filter(s => !s.button))).toBeLessThanOrEqual(limit - DETAIL_BTN_RESERVE)   // 버튼 자리(크게 · 가림 · 접기, 개정 27)
-    expect(rows[0].filter(s => s.button && !s.spacer).map(s => s.key)).toEqual(['band-big', 'band-mask', 'band-toggle'])
+    expect(lineWidth(rows[0].filter(s => !s.button))).toBeLessThanOrEqual(limit - lineWidth(rows[0].filter(s => s.button)))   // 버튼 자리를 뺀 폭
+    // 80열은 오른쪽 반(36칸)이 모자라 모바일이 빠지고, 120열은 4개 모두(DETAIL_BTN_RESERVE = 뉴스 없는 전체 폭)
+    expect(rows[0].filter(s => s.button && !s.spacer).map(s => s.key)).toEqual(columns === 80 ? ['band-mask', 'band-big', 'band-toggle'] : ['band-mobile', 'band-mask', 'band-big', 'band-toggle'])
+    expect(lineWidth(rows[0].filter(s => s.button))).toBeLessThanOrEqual(DETAIL_BTN_RESERVE)
     const [l, r] = halves(rows[0], columns)
     expect(l).toBe(' 작업')   // 개정 26: 첫 줄 왼쪽은 배지뿐(halves 가 뒤 공백을 지운다)
     expect(rows[0][0]).toEqual({ text: ' 작업 ', tone: 'workBadge' })   // 배지 글자는 앞뒤 공백 그대로(qa 2026-10-23)
-    expect(r.startsWith(' 서버 ')).toBe(true)
+    expect(r.startsWith(' 서버 ')).toBe(columns !== 80)   // 80열은 칩 버튼 3개가 오른쪽 반(36칸)을 채워 배지가 빠진다(버튼이 먼저)
     expect(l).not.toContain(' 서버 ')
     expect(rows[0].filter(s => s.text === ' │ ' && s.tone === 'sep').length).toBeGreaterThanOrEqual(1)
     // 줄 수가 달라도 모든 줄에 구분선이 있고, 구분선 앞은 같은 칸 수(colW)다
@@ -756,7 +792,7 @@ test('펼친 세션 줄: 표(머리 줄 · 버튼 · 이름 · 상태 · 활동 
 
 // ---- 개정 20(2026-10-23 사용자 결정): 세션 숨김·제거 버튼, 높이 창, 접기 고정 ----
 const RM = [
-  { sid: 'self', name: '[Harness] Manager', status: 'busy', job: '9d9904f7', job_state: 'working', job_detail: null },
+  { sid: 'self', name: '[Harness] Manager', status: 'busy', job: '0a1b2c3d', job_state: 'working', job_detail: null },
   { sid: 's-idle', name: '9e0b4934', status: 'idle', job: '9e0b4934', job_state: null, job_detail: null },
   { sid: 's-busy', name: '[PRJ] 2.0.0', status: 'busy', job: 'dfcc02d6', job_state: 'working', job_detail: null },
   { sid: 's-nojob', name: 'nojob', status: 'idle', job: 'NOT-HEX', job_state: null, job_detail: null }]
@@ -870,8 +906,8 @@ test('view toTree: 높이 창이 있으면 맨 위에 height.js 조절 줄, Clie
 test('크게(개정 21): 창이 아니라 띠 높이를 이 세션 최대로, 버튼 글자는 크게 ⇱ ↔ 작게 ⇲', async () => {
   const btn = (big: boolean) => buildBand({ work: idle, server: { ...noSess, sessions: RM }, selfSid: 'self', columns: 140, expanded: true, big })[0]
     .find(s => s.button && s.key === 'band-big')
-  expect(btn(false).text).toBe('크게 ⇱')
-  expect(btn(true).text).toBe('작게 ⇲')
+  expect(btn(false).text).toBe(' 크게 ⇱ ')   // 칩: 글자 앞뒤 한 칸 여백
+  expect(btn(true).text).toBe(' 작게 ⇲ ')
   const rows = Array.from({ length: 40 }, (_, i) => [{ text: 'r' + i, tone: 'base' }, { text: ' │ ', tone: 'sep', divider: true }])
   const w = windowBand(rows, { height: BIG_HEIGHT, maxRows: 17 })
   expect(w.height).toBe(17)                  // 상한(이 세션 지금 최대 높이)까지
@@ -993,13 +1029,13 @@ test('펼친 보기 높이: 판 줄은 70열에서 두 줄로 나뉘어 …가 �
   const rows = buildBand({ work: idle, server: { ...noSess, train: [run] }, selfSid: 'self', columns: 70, expanded: true })
   for (const r of rows) expect(lineWidth(r)).toBeLessThanOrEqual(66)
   const lines = LEFT(rows, 70)
-  expect(lines[1]).toBe('학습 GPU3 r72-1t  17/60  와쳐')   // 판 줄은 반 폭(31칸)에서 갈라지고 last 는 둘째 줄에 이어진다
+  expect(lines[1]).toBe('학습 GPU3 x72-1t  17/60  와쳐')   // 판 줄은 반 폭(31칸)에서 갈라지고 last 는 둘째 줄에 이어진다
   expect(lines[2]).toBe('  last')   // 이어 쓰는 줄은 2칸 들여쓰기
   expect(lines.join('\n')).not.toMatch(/…|체크포인트/)
   // 한쪽만 두 줄이면 다른 쪽은 빈 줄: 오른쪽 반이 비어도 구분선은 모든 줄에 있다
   for (const row of rows) expect(row.some(s => s.text === ' │ ')).toBe(true)
   // 체크포인트 20개·지표가 있어도 줄 수는 같다(판 줄만 남는다)
-  const huge = { ...run, metric: 'val_gated_tri_mean', ckpts: Array.from({ length: 20 }, (_, i) => ({ epoch: i, value: -0.123456 })) }
+  const huge = { ...run, metric: 'val_score', ckpts: Array.from({ length: 20 }, (_, i) => ({ epoch: i, value: -0.123456 })) }
   const hl = buildBand({ work: idle, server: { ...noSess, train: [huge] }, selfSid: 'self', columns: 70, expanded: true })
   expect(hl.length).toBe(rows.length)
   expect(LEFT(hl, 70)).toEqual(lines)
@@ -1037,10 +1073,10 @@ test('세션 칸 조회 실패: sessions 가 null 이면 작업 줄에 «세션 
 
 // ---- 개정 14(2026-10-17): 펼친 보기 서버 반의 디스크 장치별 줄 ----
 const DISKS = [
-  { dev: 'sdd', kind: 'SSD', mount: '/mnt/ssd', total: 3520 * GB, avail: 903 * GB },
-  { dev: 'sda2', kind: 'SSD', mount: '/', total: 879 * GB, avail: 40 * GB },
-  { dev: 'sdb', kind: 'HDD', mount: '/mnt/Data0', total: 3700 * GB, avail: 1200 * GB },
-  { dev: 'sdc', kind: 'HDD', mount: '/mnt/Data1', total: 3700 * GB, avail: 3000 * GB }]
+  { dev: 'sdd', kind: 'SSD', mount: '/mnt/ssd', total: 2000 * GB, avail: 500 * GB },
+  { dev: 'sda2', kind: 'SSD', mount: '/', total: 900 * GB, avail: 40 * GB },
+  { dev: 'sdb', kind: 'HDD', mount: '/mnt/hdd0', total: 2000 * GB, avail: 600 * GB },
+  { dev: 'sdc', kind: 'HDD', mount: '/mnt/hdd1', total: 2000 * GB, avail: 1500 * GB }]
 const withDisks = { ...noSess, disks: DISKS }
 const devRows = (sv, columns: number) => buildBand({ work: idle, server: sv, selfSid: 'self', columns, expanded: true })
 
@@ -1050,7 +1086,7 @@ test('디스크 장치 줄: 메모리 줄 + 장치마다 한 줄(SSD → HDD 순
   expect(mem).toBeGreaterThanOrEqual(0)
   expect(right[mem]).not.toContain('디스크')                            // 접힌 띠와 달리 메모리 줄에 디스크가 붙지 않는다
   const lines = right.filter(l => /SSD|HDD/.test(l))
-  const want = ['디스크 SSD sdd /mnt/ssd 903/3520G', 'SSD sda2 / 40/879G', 'HDD sdb /mnt/Data0 1200/3700G', 'HDD sdc /mnt/Data1 3000/3700G']
+  const want = ['디스크 SSD sdd /mnt/ssd 500/2000G', 'SSD sda2 / 40/900G', 'HDD sdb /mnt/hdd0 600/2000G', 'HDD sdc /mnt/hdd1 1500/2000G']
   expect(lines.length).toBe(4)
   want.forEach((w, i) => expect(lines[i].trim()).toBe(w))
   expect(right.join('\n').split('디스크').length - 1).toBe(1)           // 라벨 한 번
@@ -1099,7 +1135,7 @@ test('디스크 목록 정화: 숫자 아님·Infinity·음수 항목만 버리�
 
 test('disks 가 없거나 비거나 전부 비정상이면 종전처럼 루트 디스크 한 줄(호환)', async () => {
   const old = RIGHT(devRows(noSess, 120), 120).join('\n')
-  expect(old).toContain('여유 메모리 212/503G · 디스크 121/879G')
+  expect(old).toContain('여유 메모리 212/503G · 디스크 121/931G')
   for (const disks of [undefined, null, [], [{ dev: 'x', kind: 'SSD', mount: '/', total: Infinity, avail: 1 }], 'sda']) {
     expect(RIGHT(devRows({ ...noSess, disks }, 120), 120).join('\n')).toBe(old)
   }
@@ -1159,7 +1195,7 @@ test('split: 왼쪽 폭이 그만큼 바뀌고 오른쪽이 나머지를 받으�
 })
 
 test('view toTree: el.Client 가 있으면 왼쪽 열 · band-divider Client · 오른쪽 열, 없으면 줄마다 ` │ ` 글자', async () => {
-  const rows = buildBand({ work: idle, server, selfSid: 'self', columns: 120, expanded: true, split: 6 })
+  const rows = buildBand({ work: idle, server, selfSid: 'self', columns: 140, expanded: true, split: 6 })   // 칩 버튼 4개(폭 50)를 두고도 « 서버 » 배지가 들어가는 폭
   const withClient = { ...el, Client: p => ({ t: 'Client', ...p }) }
   const tree = toTree(withClient, rows, 'dark', 6)
   expect(tree.flexDirection).toBe('row')
@@ -1179,7 +1215,8 @@ test('view toTree: el.Client 가 있으면 왼쪽 열 · band-divider Client · 
   expect(texts(r)[0]).toBe(' 서버 ')
   const buttons: any[] = []
   walk(r.children[0], x => { if (x.t === 'Button') buttons.push(x) })   // 버튼은 오른쪽 열 첫 줄 끝
-  expect(buttons.map(b => b.key)).toEqual(['band-big', 'band-mask', 'band-toggle'])   // 개정 27: 크게 · 가림 · 접기
+  expect(buttons.map(b => b.key)).toEqual(['band-mobile', 'band-mask', 'band-big', 'band-toggle'])   // 2026-11-03: 모바일 · 마스킹 · 크게 · 접기
+  expect(buttons.map(b => b.label)).toEqual(['📱 모바일 off', '🔒 마스킹 on', '크게 ⇱', '접기 ▾'])   // 라벨은 칩 여백을 뗀 글자
   walk(l.children[0], x => expect(x.t).not.toBe('Button'))   // 왼쪽 첫 줄(작업 배지 줄)에는 버튼이 없다(세션 줄의 [숨김] 은 아래 줄)
   // Client 가 없는 화면은 종전처럼 한 열 Box 안에서 줄마다 ` │ ` 글자
   const plain = toTree(el, rows, 'dark', 6)

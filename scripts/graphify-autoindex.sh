@@ -65,7 +65,7 @@ ROOT=$(cd "$ROOT" 2>/dev/null && pwd -P) || exit 0
 # 편집이 들어오면 논리 pwd는 심링크 문자열을 유지해 아래 하네스 격리 비교가 불일치 →
 # AST 빌드가 하네스 온톨로지 그래프를 오염(1480→3134노드, .sh/.py 348노드 침입) 실사고.
 
-# 하네스 격리 (2026-08-07 수정: $HOME/.claude 자체가 심링크인 서버(예: →
+# 하네스 격리 (2026-08-07 수정: $HOME/.claude 자체가 심링크인 서버(예: 주력 빌더 서버, →
 # ~/workspace/.claude)에서는 위 pwd -P로 물리화된 ROOT가 심링크 문자열과 절대 일치하지
 # 않아 이 가드가 무력화됐다 — $HOME/.claude도 동일하게 물리화한 뒤 비교해 심링크 방향
 # 무관하게 항상 일치시킨다.)
@@ -145,7 +145,7 @@ mkdir "$LOCK" 2>/dev/null || exit 0  # 원자적 획득 — 경쟁 패배 시 �
 ( MYTOKEN="$BASHPID-$(date +%s 2>/dev/null || echo 0)"
   echo "$MYTOKEN" > "$LOCK/owner" 2>/dev/null
   # `graphify update .`(코드 전용) — `graphify .`는 pending 문서 존재 시 LLM API 키를 요구하며
-  # exit 1 전체 중단 (2026-07-31 8일 정체 실증 — commit-refresh와 동일 교정)
+  # exit 1 전체 중단 (2026-07-31 한 프로젝트의 8일 정체 실증 — commit-refresh와 동일 교정)
   cd "$ROOT" 2>/dev/null && graphify update . >/dev/null 2>&1 \
     && printf '%s %s' "$(date '+%m-%d %H:%M')" "$(basename "$ROOT")" > "$GRAPH_DIR/.autoindex-updated" 2>/dev/null \
     || printf '%s %s FAIL' "$(date '+%m-%d %H:%M')" "$(basename "$ROOT")" > "$GRAPH_DIR/.autoindex-failed" 2>/dev/null
