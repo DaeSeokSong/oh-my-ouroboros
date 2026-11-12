@@ -149,6 +149,17 @@ def test_pattern_detect():
         check("pattern-detect: ㅎ 계열 글자도 온전히 절단",
               len(rows) == 1 and rows[0].split("\t")[5].startswith("학습 로그 확인"), str(rows))
 
+    with tempfile.TemporaryDirectory() as tmp:
+        # 기계 프롬프트(예약 점검 · 측정 회차 · 훅 알림)는 반복 요청으로 세지 않는다 (2026-11-12 T40 미판정 3건)
+        home = make_home(tmp)
+        write_prompts(home, ["[예약 점검 · 0a1b2c3d] 대기 목록 안전망 확인"] * 4
+                      + ["[측정 회차 run-238] 아래 task 블록의 과제를 수행하십시오"] * 4
+                      + ["effort-eval 측정 회차 check-I1 입니다. 바로 진행해 주십시오"] * 4
+                      + ["[하네스 변경 알림 · 회신 불요] 새 커밋이 생겼습니다"] * 4)
+        r = run(["bash", str(SCRIPTS / "pattern-detect.sh"), "3"], home)
+        check("pattern-detect: 기계 프롬프트는 세지 않음", cand_rows(home) == [] and r.stdout.strip() == "",
+              f"{cand_rows(home)} / {r.stdout[:120]}")
+
 
 # ── 2) correction-detect.sh : 교정 정규식 6종 + 중복 방지
 CORRECTION_CASES = [

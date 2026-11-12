@@ -109,6 +109,8 @@ verify FAIL → 원인 분석 → qa 자체 Edit로 경미 수정(FAIL 한정) �
 ```
 > **실행 주체 경계**: 이 자율 루프는 qa **자신의 Edit 권한(FAIL 수정 한정 — 유일한 예외는 `/paper-read` Step 4·Phase 1.5 검수 보고서 `papers/{논문명}/qa-report.md` 채우기(Step 7은 tutor 전담, qa 미개입 — 15라운드 렌즈1), main이 미리 만든 파일만, 14라운드 Grok)** 으로만 성립한다 — qa는 Agent 도구가 없어 coder를 직접 spawn할 수 없다. 구조·수식·다지점 수정처럼 coder가 필요한 FAIL은 자율 루프에서 빠져 **main 에스컬레이션**(coder 위임은 main 경유)으로 전환한다(`agent-routing.md` § "소집"의 실행 주체).
 
+> **자체 수정 표시**: qa 가 자체 Edit 로 고친 것이 있으면 보고에 고친 `파일:줄` 을 적고 판정을 «PASS(자체 수정 포함)» 로 표시한다. 그 수정분은 main 이 수정에 관여하지 않은 다른 qa 에게 재확인시킨 뒤에 PASS 로 채택한다(qa 는 Agent 도구가 없으므로 소집은 main).
+
 > N회 초과 시 Ralph Wiggum 루프 트리거 (mem0-templates.md T33)
 
 ## QA 체크리스트 (순서대로)

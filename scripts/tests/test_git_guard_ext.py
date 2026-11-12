@@ -825,6 +825,20 @@ class ChainTest(unittest.TestCase):
         """The first-line # APPROVED marker is handled before the extension."""
         self.assertFalse(chain("# APPROVED test approval\ngit rebase main"))
 
+    def test_approved_marker_never_lifts_push(self):
+        """2026-11-12 decision F1/G1: the marker lifts fixed non-push verdicts, never push/pull or forms that could hide one."""
+        aq = "# APPROVED test approval\n"
+        for cmd in ("git restore a.txt", "git update-ref -d refs/heads/x", "git tag -d v1", "git stash; git restore c.txt",
+                    "git maintenance start", "git rebase main"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(chain(cmd))
+                self.assertFalse(chain(aq + cmd))
+        for cmd in ("git push origin main", "git-pull", "git lfs push origin", "git svn dcommit", "git rebase -x make main",
+                    "git -c core.pager=less push", "git restore a.txt && git $SUB", "GIT_DIR=/x git status", "git lfs pull", "gi\\\nt push"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(chain(aq + cmd))
+        self.assertFalse(chain(aq + "ls -la"))
+
 
 class ExtAloneTest(unittest.TestCase):
     """Cases judged by git_guard_ext.py without the shell wrapper."""

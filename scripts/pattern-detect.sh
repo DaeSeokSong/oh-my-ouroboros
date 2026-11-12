@@ -26,18 +26,22 @@ CUTOFF=$(date -u -d "-${DAYS} days" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
 # 1) 기간 필터 → prompt 추출
 #    2) 정규화: 소문자화, 구두점·숫자 제거, 한글 기능어(조사·군말) 약화, 공백 정리
 #    3) 너무 짧은 줄 제외 → 빈도 카운트 → 최소횟수 이상만
+# 기계 프롬프트 제외 (2026-11-12): 자동 예약(`[예약 점검 · …]`)·측정 러너 회차(`[측정 회차 run-N]`·`effort-eval 측정|시험 회차`)·
+#   훅 알림(`[하네스 변경 알림`)은 사람의 반복 요청이 아니다(T40 미판정 3건이 전부 이것). 로그 자체는 APPROVED 인용 대조에
+#   쓰여 prompt-log.sh 는 고치지 않고 세는 쪽에서만 뺀다.
+MACHINE_RX='^\s*(\[예약 점검|\[측정 회차|effort-eval (측정|시험) 회차|\[하네스 변경 알림)'
 if [ -n "$CUTOFF" ]; then
   # 관용 파싱 (2026-07-18 Codex): 손상된 JSONL 한 줄이 jq 전체를 중단시켜 부분 결과를 성공
   # 처리하던 것 방지 — -R로 줄 단위, fromjson?로 불량 줄만 건너뜀.
-  FILTER=$(jq -rR --arg c "$CUTOFF" 'fromjson? | select(.ts >= $c) | (.prompt // empty)[0:200]' "$LOG" 2>/dev/null)
+  FILTER=$(jq -rR --arg c "$CUTOFF" --arg m "$MACHINE_RX" 'fromjson? | select(.ts >= $c) | (.prompt // empty) | select(test($m) | not) | .[0:200]' "$LOG" 2>/dev/null)
 else
-  FILTER=$(jq -rR 'fromjson? | (.prompt // empty)[0:200]' "$LOG" 2>/dev/null)
+  FILTER=$(jq -rR --arg m "$MACHINE_RX" 'fromjson? | (.prompt // empty) | select(test($m) | not) | .[0:200]' "$LOG" 2>/dev/null)
 fi
 # [0:200] — prompt-log 보관 길이가 200→2000 자로 늘었어도(APPROVED 인용 검사·T12 탐지가 뒤 문장을
 # 봐야 해서) **빈도 키는 앞 200자 그대로** 둔다. 키가 길어지면 같은 요청의 꼬리 차이로 묶음이 쪼개진다.
 
 OUT=$(printf '%s\n' "$FILTER" \
-  | tr 'A-Z' 'a-z' \
+  | tr '[:upper:]' '[:lower:]' \
   | sed -E 's/[[:punct:]]+/ /g; s/[0-9]+/ /g' \
   | awk '{ # 기능어는 낱말(공백 토큰) 끝의 어미이거나 토큰 전체일 때만 지운다 — 낱말 속 «해결»의 «해» 까지 지우던 결함(2026-10-01 감사 P6)
         n = split($0, w, " "); o = ""

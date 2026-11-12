@@ -199,6 +199,7 @@ add_memory(
 )
 search_memories(query="[교정 내용]", filters={"metadata": {"category": "feedback"}}, limit=5)
 # 결과 3회+ → learner.md 규칙 업데이트 제안 트리거 (문턱 정본: rules/mem0-auto.md §2 T12)
+# 3회+ 횟수는 Mem0 검색 건수가 아니라 후보 대장(_evolve/candidates.tsv) 기준이며 이미 rejected·accepted 로 닫힌 것은 세지 않는다
 # 3회 판정의 입력은 로컬 빈도(pattern-detect.sh)와 Mem0 검색 이력 둘이고 같은 event_id 는 1건으로 합친다 (skills/learn-from-feedback/SKILL.md § 실행 순서 1·3)
 # 선례: T04의 multi-field metadata(pattern/trigger_signature/avoidance_rubric) 구조 차용 — preference-gated 자가진화의 regression suite 전방계측용
 ```

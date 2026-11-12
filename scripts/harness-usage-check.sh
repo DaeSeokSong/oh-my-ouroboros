@@ -19,7 +19,7 @@
 
 # 2026-10-17 G2·G5-1 추가분 (모두 bash, SessionStart 경로라 `uv run`·python3 금지, 추가 비용 목표 +0.3초):
 #   · 후보 대장 7일 pending 자동 만료(candidates-append.sh expire) · crosscheck 7일 초과 시 백그라운드 자동 실행
-#   · CANDIDATES_PENDING 아래 하루 1회 오래된 후보 3건 요약(digest) · 미결 T41 후보가 있으면 하루 1회 후보 note 에 효과 기록(effect, T41_REPEAT 와 무관)
+#   · CANDIDATES_PENDING 아래 하루 1회 후보 5건 요약(digest, 2026-11-12 3→5) · 미결 T41 후보가 있으면 하루 1회 후보 note 에 효과 기록(effect, T41_REPEAT 와 무관)
 #   · MEMORY.md 160줄 경보 · decisions.md 7일 초과분 아카이브(decisions-prune.sh)
 #   원칙: 판정(accepted/rejected)을 새로 내리지는 않는다(learner 불변식 «자동 적용 없음»). 상태는 두 경우에만 바뀐다: 만료(pending→expired)와
 #   재시도 큐 배수(post-commit 이 못 한 `set accepted` 를 다시 시도, 커밋 trailer 가 이미 준 판정의 재현)이고, 효과 기록은 note 만 쓴다.
@@ -657,11 +657,13 @@ if [ -f "$T41_HIST" ]; then
     fi
 fi
 
-# 8c-3) 후보 판정 digest (2026-10-17 G2·결정 B1) — CANDIDATES_PENDING 이 떠 있으면 하루 1회, 가장 오래된 3건을 요약해 보여
-#     main 이 턴 끝 1줄로 판정을 묻게 한다(사람이 후보를 보는 경로가 /learn-from-feedback 수동 호출뿐이라 pending 이 55건까지 쌓였다).
-#     정렬은 오래된 순, 같은 날짜면 T41 축 > T12 > T40, 날짜 기준 회전(미결이 3건을 넘으면 `--skip` 을 날짜의 연중 일수로 돌려 날마다 다른 3건을 보인다 —
-#     고정 «가장 오래된 3건» 이면 판정하지 않는 한 같은 3건만 반복된다). T41_REPEAT 축을 알아야 해서 8c 뒤에 둔다.
-#     Grok 의 토큰 반대(CANDIDATES_PENDING 과 일부 겹침)는 선택지 표에 기록된 사실이며, 하루 1회·3건·60자 상한으로 상수 비용을 지킨다.
+# 8c-3) 후보 판정 digest (2026-10-17 G2·결정 B1) — CANDIDATES_PENDING 이 떠 있으면 하루 1회, 5건을 요약해 보여
+#     main 이 판정을 묻게 한다(사람이 후보를 보는 경로가 /learn-from-feedback 수동 호출뿐이라 pending 이 55건까지 쌓였다).
+#     묻는 형식의 정본은 skills/learn-from-feedback/SKILL.md 트리거 표 «세션 시작(T03)» 행이다.
+#     정렬은 candidates-append.sh oldest-pending(내용 있는 T41 > T12 > 그 밖, 같은 급은 오래된 순), 날짜 기준 회전(미결이 5건을 넘으면 `--skip` 을 날짜의 연중 일수로 돌려
+#     날마다 다른 5건을 보인다 — 고정이면 판정하지 않는 한 같은 건만 반복된다). T41_REPEAT 축을 알아야 해서 8c 뒤에 둔다.
+#     건수 3→5(2026-11-12): 하루 약 13건 유입에 3건/일로는 7일 만료 안에 21건밖에 못 봤다(원인 분석 2절).
+#     Grok 의 토큰 반대(CANDIDATES_PENDING 과 일부 겹침)는 선택지 표에 기록된 사실이며, 하루 1회·5건·60자 상한으로 상수 비용을 지킨다.
 #     하루 1회는 `_usage/candidates-digest-<날짜>.d` 를 mkdir 로 선점한 세션만 출력한다(원자적 — 병렬 세션이 같은 날 같은 digest 를 중복 출력하지 않는다).
 #     보여 줄 후보가 없으면 선점을 풀어 둔다.
 if [ "${CP_N:-0}" -ge 1 ] 2>/dev/null && claim_daily candidates-digest; then
@@ -670,11 +672,11 @@ if [ "${CP_N:-0}" -ge 1 ] 2>/dev/null && claim_daily candidates-digest; then
     IFS=',' read -ra AX_ARR <<< "$T41_AXES_RAW"
     for AX1 in ${AX_ARR[@]+"${AX_ARR[@]}"}; do T41_AXES+="${T41_AXES:+,}$(norm_axis "$AX1")"; done
     DIGEST_SKIP=0
-    [ "$CP_N" -gt 3 ] 2>/dev/null && DIGEST_SKIP=$(( (10#$(date +%j) % ((CP_N + 2) / 3)) * 3 ))
-    DIGEST=$(bash "$CLAUDE_DIR/scripts/candidates-append.sh" oldest-pending --limit 3 --skip "$DIGEST_SKIP" --t41-axes "$T41_AXES" 2>/dev/null)
+    [ "$CP_N" -gt 5 ] 2>/dev/null && DIGEST_SKIP=$(( (10#$(date +%j) % ((CP_N + 4) / 5)) * 5 ))
+    DIGEST=$(bash "$CLAUDE_DIR/scripts/candidates-append.sh" oldest-pending --limit 5 --skip "$DIGEST_SKIP" --t41-axes "$T41_AXES" 2>/dev/null)
     if [ -n "$DIGEST" ]; then
         printf '%s\n' "$DIGEST" | while IFS=$'\t' read -r DID DTYPE DSUM; do echo "  · ${DID} [${DTYPE}] ${DSUM}"; done
-        echo "  → 턴 끝에 1줄로 판정을 묻는다(accepted/rejected/보류)"
+        echo "  → 첫 작업성 응답 끝에 결정 팝업 하나로 판정을 묻는다(후보마다 accepted/rejected/보류, 모바일 모드면 AskUserQuestion) — learn-from-feedback T03 행"
     else
         release_daily candidates-digest
     fi

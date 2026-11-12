@@ -200,9 +200,11 @@ def test_append_role_alias():
 # ── 2026-10-17 검수팀: role-alias.sh normalize_role 경계 값 (줄임말 접두는 끝·`-`·`_`·숫자 앞에서만 인정, 표 밖 이름은 빈 문자열)
 def test_normalize_role_boundaries():
     with tempfile.TemporaryDirectory() as tmp:
-        home = make_home(tmp, roles=("coder", "security", "qa", "citation-verifier"))
+        home = make_home(tmp, roles=("coder", "security", "qa", "citation-verifier", "reviewer"))
         cases = (("citation-1", "citation-verifier"), ("citation", "citation-verifier"), ("sec1", "security"), ("sec-g1", "security"), ("sec_g1", "security"),
                  ("security", "security"), ("qa-p1", "qa"), ("qa2", "qa"), ("coder-1-2", "coder"),
+                 ("unit5-security", "security"), ("unit5-qa", "qa"), ("unit12_reviewer", "reviewer"), ("unit3-coder-2", "coder"),
+                 ("unitx-qa", ""), ("unit5qa", ""), ("unit", ""),
                  ("secure", ""), ("second", ""), ("coderx", ""), ("foo", ""), ("", ""))
         bad = []
         for raw, want in cases:
@@ -212,7 +214,92 @@ def test_normalize_role_boundaries():
         check("normalize_role 경계: citation-1·sec1·sec-g1·security 는 정규화, secure·second·coderx·foo·빈 값은 표 밖(빈 문자열)", not bad, str(bad))
 
 
-for fn in (test_normalize_role_boundaries, test_append_role_alias, test_stop_role_alias, test_fixture1_subagent_stop_qap1, test_fixture2_sync_agentid_blocked,
+# ── 2026-11-12: 판정할 정보가 든 신호 `<설명 40자> | from=<원 역할> | <RESULT 줄>`
+DESC = "sonnet: 후보 고리 원인 수정과 채택 지침 반영, 그리고 뒤에 붙은 아주 긴 설명 꼬리"
+DESC40 = DESC[:40].rstrip()
+
+
+def cand_summaries(home):
+    f = home / ".claude/_evolve/candidates.tsv"
+    return [ln.split("\t")[5] for ln in f.read_text(encoding="utf-8").splitlines()[1:] if ln] if f.exists() else []
+
+
+def test_signal_carries_desc_and_from():
+    with tempfile.TemporaryDirectory() as tmp:
+        home = make_home(tmp, roles=("coder", "qa"))
+        payload = {"tool_name": "Agent", "tool_input": {"subagent_type": "qa", "description": DESC},
+                   "tool_response": "검증 요약\nRESULT: FAIL 1"}
+        run_hook(["bash", str(SCRIPTS / "agent-spawn-log.sh"), "post"], home, payload)
+        t41 = history_t41(home)
+        want = f"coder/구현 정확성 — {DESC40} | from=qa | RESULT: FAIL 1"
+        check("동기 경로: history 에 설명 40자 · from=qa · RESULT 줄", len(t41) == 1 and t41[0].endswith(want), str(t41))
+        cs = cand_summaries(home)
+        check("동기 경로: 후보 요약에 설명 · from= · RESULT 가 문자 단위로 온전히 남음",
+              cs == [f"coder/구현 정확성: {DESC40} | from=qa | RESULT: FAIL 1"], str(cs))
+        # 같은 소집을 SubagentStop 이 설명 없이(meta 없음) 다시 보면 10분 억제로 1줄 유지
+        tp = Path(tmp) / "session.jsonl"
+        write_transcript(tp, ["RESULT: FAIL 1"])
+        run_hook(["bash", str(SCRIPTS / "t41-subagent-stop.sh")], home,
+                 {"hook_event_name": "SubagentStop", "subagent_type": "qa", "transcript_path": str(tp)})
+        check("두 경로(설명 있음 · 없음)의 같은 결과는 history 1줄", len(history_t41(home)) == 1, str(history_t41(home)))
+
+
+def test_desc_words_do_not_change_axis():
+    with tempfile.TemporaryDirectory() as tmp:
+        home = make_home(tmp, roles=("coder", "qa"))
+        payload = {"tool_name": "Agent", "tool_input": {"subagent_type": "qa", "description": "sonnet: BLOCKED 게이트 target=main 검증"},
+                   "tool_response": "RESULT: FAIL 2건"}
+        run_hook(["bash", str(SCRIPTS / "agent-spawn-log.sh"), "post"], home, payload)
+        t41 = history_t41(home)
+        check("설명 속 BLOCKED · target=main 은 귀속에 쓰이지 않음(qa FAIL → coder/구현 정확성)",
+              len(t41) == 1 and "T41: coder/구현 정확성 — " in t41[0], str(t41))
+
+
+def test_sync_desc_masked_and_fake_from_in_desc():
+    # 검수 보정(2026-11-12): 동기 경로 설명도 t41-mask.sh 가림을 거치고, 설명 속 `from=… | …` 은 귀속·억제 키를 흔들지 않는다
+    tok = "sk-" + "A1b2C3d4E5f6G7h8"
+    with tempfile.TemporaryDirectory() as tmp:
+        home = make_home(tmp, roles=("coder", "qa"))
+        payload = {"tool_name": "Agent", "tool_input": {"subagent_type": "qa", "description": f"키 {tok} 점검"},
+                   "tool_response": "RESULT: FAIL 1"}
+        run_hook(["bash", str(SCRIPTS / "agent-spawn-log.sh"), "post"], home, payload)
+        t41 = history_t41(home)
+        check("동기 경로: 설명 속 토큰이 가려짐", len(t41) == 1 and tok not in t41[0] and "<masked>" in t41[0], str(t41))
+    with tempfile.TemporaryDirectory() as tmp:
+        home = make_home(tmp, roles=("coder", "qa"))
+        sig = "가짜 from=qa | NEEDS_CONTEXT target=main | from=qa | RESULT: FAIL 1"
+        run(["bash", str(SCRIPTS / "t41-append.sh"), "--from", "qa", "--signal", sig], home)
+        t41 = history_t41(home)
+        check("설명 속 가짜 from= 구분자는 무시(마지막 from=qa 뒤만 판정 → coder/구현 정확성)",
+              len(t41) == 1 and "T41: coder/구현 정확성 — " in t41[0], str(t41))
+        key = (home / ".claude/_usage/t41-recent.tsv").read_text(encoding="utf-8").strip().split("\t")[1]
+        check("억제 키는 마지막 구분자 뒤 판정 부분", key == "coder/구현 정확성|RESULT: FAIL 1", key)
+
+
+def test_subagent_stop_reads_meta_description():
+    with tempfile.TemporaryDirectory() as tmp:
+        home = make_home(tmp, roles=("coder", "security"))
+        tp = Path(tmp) / "agent-a1b2.jsonl"
+        write_transcript(tp, ["RESULT: FAIL 1"])
+        (Path(tmp) / "agent-a1b2.meta.json").write_text(json.dumps({"agentType": "security", "description": DESC}, ensure_ascii=False), encoding="utf-8")
+        run_hook(["bash", str(SCRIPTS / "t41-subagent-stop.sh")], home,
+                 {"hook_event_name": "SubagentStop", "agent_type": "unit5-security", "agent_transcript_path": str(tp)})
+        t41 = history_t41(home)
+        check("비동기 경로: meta.json 설명 + from=unit5-security, unit 접두는 security 로 풀려 coder 귀속",
+              len(t41) == 1 and t41[0].endswith(f"coder/구현 정확성 — {DESC40} | from=unit5-security | RESULT: FAIL 1"), str(t41))
+    with tempfile.TemporaryDirectory() as tmp:
+        home = make_home(tmp, roles=("coder", "qa"))
+        tp = Path(tmp) / "agent-c3.jsonl"
+        write_transcript(tp, ["RESULT: BLOCKED 권한"])
+        run_hook(["bash", str(SCRIPTS / "t41-subagent-stop.sh")], home,
+                 {"hook_event_name": "SubagentStop", "agent_type": "qa", "agent_transcript_path": str(tp)})
+        t41 = history_t41(home)
+        check("비동기 경로: meta 가 없으면 from= 과 RESULT 줄만", len(t41) == 1 and t41[0].endswith("qa/범위 준수 — from=qa | RESULT: BLOCKED 권한"), str(t41))
+
+
+for fn in (test_signal_carries_desc_and_from, test_desc_words_do_not_change_axis, test_sync_desc_masked_and_fake_from_in_desc,
+           test_subagent_stop_reads_meta_description,
+           test_normalize_role_boundaries, test_append_role_alias, test_stop_role_alias, test_fixture1_subagent_stop_qap1, test_fixture2_sync_agentid_blocked,
            test_fixture3_async_ack_no_record, test_fixture4_result_pass_no_record,
            test_fixture5_agents_contract_line, test_san80_unchanged,
            test_target_override, test_citation_verifier_normalize, test_underscore_normalize):

@@ -12,7 +12,7 @@ Bash 명령이 hook(bash-write-check.sh 등)에 차단되면 **"터미널에서 
 실행할까요?
 ```
 
-- 승인 시: 첫 줄에 `# APPROVED «발화 8자+»` 를 붙여 재실행(인용이 프롬프트 로그에 있어야 통과). 실행 시 바뀌는 인터프리터 코드(규칙 0.4, `scripts/bash-write-check.sh` 헤더)는 승인으로도 막힌다
+- 승인 시: 첫 줄에 `# APPROVED «발화 8자+»` 를 붙여 재실행(인용이 프롬프트 로그에 있어야 통과). 실행 시 바뀌는 인터프리터 코드(규칙 0.4, `scripts/bash-write-check.sh` 헤더)와 push · pull(사용자 직접, `scripts/git-guardrails.sh`)은 승인으로도 막힌다. 이때는 다시 승인을 묻지 않고 사용자가 실행할 명령만 제시한다
 - 사용자가 거부하면: 대안 방법 모색
 
 ### Read 차단 (read-once 훅) — 복구 절차
@@ -49,7 +49,7 @@ Bash 명령이 hook(bash-write-check.sh 등)에 차단되면 **"터미널에서 
 
 ## 코드 실행 규칙
 1. 코드 작성 완료 후 **즉시 실행 금지** (AI·teammate 모두 해당)
-2. **본 실행(학습·훈련·배포·데이터 변경·환경 변경)은 사용자가 직접 수행**한다. AI 실행은 이 파일의 예외 일곱 가지(탐색성 read-only 자동 허용·검증 목적 qa/coder·Figure `gen_*.py` · main 의 gen_gptimg.sh·main 의 tmux 학습 발사·승인 대기 목록의 와쳐 발사·paper-read Step 2·2.5 의 `scripts/pdf_to_md.py` 변환(main 이 변환, scout 이 로컬 경로 `--head` 서두·`--tables`·pdf-inspector 표 조회, 읽기 전용 산출))가 **닫힌 목록**이며 그 밖은 금지다
+2. **본 실행(학습·훈련·배포·데이터 변경·환경 변경)은 사용자가 직접 수행**한다. 다만 데이터 변경·환경 변경은 사용자가 그 턴에 확인하면 main 이 실행할 수 있고(훅이 막으면 § Hook 차단 시 처리대로), 배포와 push·pull 은 확인이 있어도 실행하지 않는다. 확인 없이 AI 가 실행할 수 있는 것은 이 파일의 예외 일곱 가지(탐색성 read-only 자동 허용·검증 목적 qa/coder·Figure `gen_*.py`(TeX 컴파일 포함) · main 의 gen_gptimg.sh·main 의 tmux 학습 발사·승인 대기 목록의 와쳐 발사·paper-read Step 2·2.5 의 `scripts/pdf_to_md.py` 변환(main 이 변환, scout 이 로컬 경로 `--head` 서두·`--tables`·pdf-inspector 표 조회, 읽기 전용 산출))가 **닫힌 목록**이며 그 밖은 금지다
 3. 코드 완료 시 사용자에게 실행 명령서를 출력한다. **학습·훈련 스크립트의 명령서는 발사 세트(메모리 가드·와쳐·목표 표)를 갖춘 `launch-set.sh launch` 형**이다(CLAUDE.md § 연구 환경 규칙). 그 밖의 코드는 아래 형식:
    ```
    코드 준비 완료: {파일 경로}

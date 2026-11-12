@@ -81,7 +81,7 @@ NO  → 자체 리서치 체인만 실행 후 종합 리포트 생성"
 **YES 선택 시**: Q2b로
 
 > **자체 리서치 체인 (NO 경로 또는 Q2b 이후 공통 실행)**:
-> 1. parallel-dispatch로 searcher×N 팬아웃 (출처 수집, WebSearch-first 정책 적용)
+> 1. parallel-dispatch로 searcher×N 팬아웃 (출처 수집, searcher 의 목적별 우선순위 `agents/searcher.md` 를 따른다)
 > 학술 문헌(논문 · 이론 · 수학/과학 레퍼런스)을 찾는 searcher 는 `model: opus` · `effort: high` 로 소집한다(작업명 접두사 `opus:`, `name` 인자는 붙이지 않는다. 정본: `rules/model-assignment.md` § 예외 표).
 > 2. citation-verifier 대조 (핵심 인용의 철회 조회 → 원문 표·수치 대조, 논쟁적 인용만 옹호/회의 → 종합 디베이트)
 > 3. researcher가 인용 달린 종합 리포트 작성
@@ -213,7 +213,7 @@ NO  → 자체 결과로 리포트를 확정하고 후속 단계(핵심 논문 �
 
 ```
 parallel-dispatch 팬아웃
-  → searcher×N (WebSearch-first, 출처별 수집)
+  → searcher×N (목적별 우선순위는 `agents/searcher.md`, 출처별 수집)
        ↓ 수집 완료
 citation-verifier 대조 (기본, 논문당 1회)
   → 핵심 인용 논문 철회 게이트 (Crossref+OpenAlex)

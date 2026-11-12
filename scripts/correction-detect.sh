@@ -30,12 +30,20 @@ PATTERNS_CORE='하지 ?마|앞으로는|앞으로도|매번|항상|다시는|왜
 # 두 단계로 가른다: 핵심 표지가 있으면 바로 채택, 없고 «다시 …해» 뿐이면 재요청형만 걸러낸다.
 RETRY_RX='다시 .{0,10}해'
 RETRY_EXCL='다시 ?(출력|보고|확인|알려|보여|정리|설명|검토)'
+# 사용자 본인 실수형(2026-11-12): 핵심 표지가 «잘못» 하나뿐이고 이 식에 맞으면 교정이 아니다
+# («프롬프트 잘못 입력했어» T12-20261112-09). «잘못 만들었어» 같은 교정은 이 식에 안 맞아 그대로 잡힌다.
+# 주어가 사용자 자신인 꼴만 넘긴다: «내가·제가 잘못 …» 과 입력 행위(«잘못 입력했·눌렀·붙여»). «잘못 이해했·알려·말했·표현» 은
+# 주어가 없거나 «너·네가» 이면 어시스턴트 교정이라 잡는다(«너 잘못 이해했어»·«잘못 알려 줬잖아»).
+SELF_RX='(내가|제가) ?잘못|잘못 ?(입력했|눌렀|붙여)'
 
 # herestring 으로 먹인다 — `printf | grep -q` 는 grep 이 첫 매치에서 즉시 끝나 printf 가 SIGPIPE(141)로
 # 죽고, `set -o pipefail` 이 그 141 을 파이프라인 결과로 삼아 **매치인데 불일치로 읽힌다**. 문자열 앞쪽에서
 # 맞는 표지(«항상 …»)일수록 자주 터지는 경합이었다 (2026-09-14 테스트에서 재현).
 is_correction() {  # 0=교정 발화로 본다
-  LC_ALL=C.utf8 grep -qE "$PATTERNS_CORE" <<< "$1" && return 0
+  if LC_ALL=C.utf8 grep -qE "$PATTERNS_CORE" <<< "$1"; then
+    [ "$(LC_ALL=C.utf8 grep -oE "$PATTERNS_CORE" <<< "$1" | sort -u)" = "잘못" ] \
+      && LC_ALL=C.utf8 grep -qE "$SELF_RX" <<< "$1" || return 0
+  fi
   LC_ALL=C.utf8 grep -qE "$RETRY_RX" <<< "$1" || return 1
   LC_ALL=C.utf8 grep -qE "$RETRY_EXCL" <<< "$1" && return 1
   return 0
@@ -43,8 +51,20 @@ is_correction() {  # 0=교정 발화로 본다
 
 # 프롬프트 안의 개행·탭은 TSV 를 깨뜨리므로 추출 단계에서 공백으로 바꾼다.
 # fromjson? — 손상된 한 줄이 전체 파싱을 중단시키지 않게 (pattern-detect.sh 와 같은 이유).
+# 사람이 쓴 말만 본다(2026-11-12, 미판정 128건 중 103건이 잡음이던 실측): prompt-log.sh 는 훅·예약 메시지도 그대로
+#   적으므로 여기서 거른다. 로그 자체는 APPROVED 인용 대조에 쓰여 고치지 않는다.
+#   1) 접두 `[하네스 변경 알림`(본문 끝 «보고하지 마십시오» 가 78건 오탐) · `[예약 점검` · `<system-reminder` 는 통째로 뺀다.
+#   2) `<pasted_content` 뒤(붙여 넣은 터미널 출력)는 잘라 내고 앞의 사용자 문장만 본다.
+#   3) `[결정 팝업 확인]` 은 선택지 문구(«잘못된 막힘» 같은 기능 이름)를 빼고 «직접 입력)» 뒤 구간만 남긴다.
+#      직접 입력에는 진짜 교정이 들어온다(T12-20261110-27 «앞으로는 각 모델당 effort …» 가 실제 규칙이 됨).
+#      구간 끝은 다음 항목 머리 « - E2 » 꼴이다.
 PROMPTS=$(tail -n "$SCAN_LINES" "$LOG" 2>/dev/null \
-  | jq -rR 'fromjson? | .prompt // empty | gsub("[\n\r\t]"; " ")' 2>/dev/null)
+  | jq -rR 'fromjson? | .prompt // empty
+      | select(test("^\\s*(\\[하네스 변경 알림|\\[예약 점검|<system-reminder)") | not)
+      | gsub("[\n\r\t]"; " ")
+      | sub("<pasted_content.*$"; "")
+      | if startswith("[결정 팝업 확인]") then ([scan("직접 입력\\)\\s*(.*?)(?=\\s-\\s[A-Z][A-Za-z]*[0-9]+\\s|$)") | .[0]] | join(" ")) else . end
+      | select(test("\\S"))' 2>/dev/null)
 [ -n "$PROMPTS" ] || exit 0
 
 # 매칭은 python3 re 로 한 번에 건다 (2026-10-01 감사 P6): grep 3.7 은 `.` 가 U+D558 이상 글자(«확»·«한»
@@ -54,15 +74,17 @@ PROMPTS=$(tail -n "$SCAN_LINES" "$LOG" 2>/dev/null \
 # 중복 판정 키가 바뀌어 같은 발화가 새 후보가 된다. 발화 안의 탭은 위 gsub 가 이미 공백으로 바꿨다.
 MATCHED=$(printf '%s\n' "$PROMPTS" | python3 -c '
 import re, sys
-core, retry, excl = (re.compile(p) for p in sys.argv[1:4])
+core, retry, excl, selfm = (re.compile(p) for p in sys.argv[1:5])
 for l in sys.stdin:
     l = l.rstrip("\n")
     m = core.search(l)
+    if m and {x.group(0) for x in core.finditer(l)} == {"잘못"} and selfm.search(l):
+        m = None
     if not m and not excl.search(l):
         m = retry.search(l)
     if m:
         print(m.group(0).replace("\t", " ") + "\t" + l)
-' "$PATTERNS_CORE" "$RETRY_RX" "$RETRY_EXCL" 2>/dev/null) \
+' "$PATTERNS_CORE" "$RETRY_RX" "$RETRY_EXCL" "$SELF_RX" 2>/dev/null) \
   || MATCHED=$(while IFS= read -r l; do
        is_correction "$l" || continue
        kw=$(LC_ALL=C.utf8 grep -oE "$PATTERNS_CORE" <<< "$l" | head -1); [ -n "$kw" ] || kw=$(LC_ALL=C.utf8 grep -oE "$RETRY_RX" <<< "$l" | head -1)

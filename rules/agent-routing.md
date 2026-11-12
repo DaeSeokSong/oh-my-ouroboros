@@ -11,7 +11,7 @@ main은 직접 실행자가 아니라 **오케스트레이터**다. 핵심 루�
 
 ### ★프롬프트 1회 = 사용자 보고 1회 (MANDATORY)
 
-대화는 **`사용자 프롬프트 → (내부 작업 전부) → 최종 보고 1회`**만 반복한다. subagent·teammate 알림마다 중간 보고·예고·건건 통과 알림 **금지** — 알림은 **main을 깨우는 신호이지 사용자 전달 내용이 아니다**. **예외 (이때만 중간 발화)**: 1) 사용자 결정 필요 — 질문 2) 비가역·외부 영향 행동 직전 승인 3) 명시적 중간 경과 요구(`/loop` 등) 4) 수십 분+ 장기 작업 — 생존 신호 **한 줄**만 5) 작업성 요청의 착수 전 3줄 요약(CLAUDE.md 원칙 3.5) 6) 계획 확정 대기(CLAUDE.md 원칙 3). 근거·경위: `rules-lazy/notification-turn-reduction.md` § 프롬프트 1회.
+대화는 **`사용자 프롬프트 → (내부 작업 전부) → 최종 보고 1회`**만 반복한다. subagent·teammate 알림마다 중간 보고·예고·건건 통과 알림 **금지** — 알림은 **main을 깨우는 신호이지 사용자 전달 내용이 아니다**. **예외 (이때만 중간 발화)**: 1) 사용자 결정 필요 — 질문 2) 비가역·외부 영향 행동 직전 승인 3) 명시적 중간 경과 요구(`/loop` 등) 4) 15분 넘는 장기 작업 — 생존 신호 **한 줄**만 5) 작업성 요청의 착수 전 3줄 요약(CLAUDE.md 원칙 3.5) 6) 계획 확정 대기(CLAUDE.md 원칙 3). 근거·경위: `rules-lazy/notification-turn-reduction.md` § 프롬프트 1회.
 
 #### 알림 턴 물리적 감축 (MANDATORY)
 
@@ -25,7 +25,7 @@ sub-agent spawn 전 R(심문)·L(검증) 2-렌즈 통과 후 분해·라우팅 �
 
 | 에이전트 | 역할 | 모델 | 핵심 도구 | 소집 방식 |
 |----------|------|------|-----------|---------|
-| **searcher** | 인터넷 검색 전문 — 논문·기술문서·라이브러리 수집. 모든 에이전트가 자유롭게 소집 가능 | sonnet | Tavily MCP, WebSearch, WebFetch | Agent (subagent) |
+| **searcher** | 인터넷 검색 전문 — 논문·기술문서·라이브러리 수집. main 이 소집하고 다른 에이전트는 `NEEDS_SEARCH` 로 요청 | sonnet | Tavily MCP, WebSearch, WebFetch | Agent (subagent) |
 | **scout** | 코드베이스 정찰 + 프로젝트 전체 구조 분석(deepinit mode) — coder·qa의 조수 | haiku | Glob, Grep, Read, Bash(탐색성) | Agent (subagent) |
 | **planner** | 아키텍처·실험 설계, 워크플로우 | opus | Read, Glob, Grep (검색→searcher 위임) | Agent (subagent) |
 | **coder** | 코드 작성·리뷰·수정 + 조건부 리팩토링(code-simplifier, 실험 외) | sonnet | Read, Write, Edit, Bash | Agent (subagent) |
@@ -102,7 +102,7 @@ TeamCreate 호출 전 기존 활성 팀·동일 목적 여부 확인 필수 — 
 
 ## 라우팅 적용 방식
 
-> 위 표가 **단일 출처**다(첫 매칭). git push/pull은 항상 사용자 직접.
+> 위 표가 **단일 출처**다(첫 매칭). git push/pull은 항상 사용자 직접(승인 표시로도 통과하지 않음).
 >
 > **표 적용 전 탈출**: 사실 질문·단답·의견 요청은 위임 판단·라우팅 표를 적용하기 전에 main이 직접 답한다(10행. 의견 요청은 CLAUDE.md «/solve 자동 적용» 대상). `Agent` 소집은 이 표의 에이전트 이름만 쓰고 `general-purpose` 같은 표 밖 타입은 쓰지 않는다. 예외는 `/graphify` 추출 subagent 의 `general-purpose`(업스트림 스킬 원문) 하나뿐이다. 표 밖 타입 소집은 훅 `scripts/agent-type-gate.py` 가 막는다(graphify 예외 통과 조건·플러그인 에이전트 허용 범위·실측·경위: `agent-routing-mcp.md` § 라우팅 표 행 각주).
 

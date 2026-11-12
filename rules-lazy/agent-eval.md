@@ -14,7 +14,7 @@
 | **사용자 직접 재작업 지시·부정 피드백** ("다시 해", "이거 아니야", "그렇게 하는 게 아니라", "왜 이렇게 했어") | 직전 산출 에이전트 | **최강(명시)** |
 | qa FAIL (6-Gate / 2단계 1차 spec FAIL) | coder | 강 |
 | 재작업 ≥2회 (G-E loop·Ralph cycle·동일 지점 재수정) | coder | 강 |
-| coder status = BLOCKED / NEEDS_CONTEXT | 원인(scout 정찰부족 / planner 설계모호). 단 훅 자동 기록은 낸 에이전트·범위 준수로 귀속하고(§2 아래 «자동 기록의 차원·역할 귀속 규칙») 원인 재귀속은 사람·main 이 수동으로 한다 | 중 |
+| coder status = BLOCKED / NEEDS_CONTEXT (훅이 정책대로 막아 끝난 BLOCKED 는 약점으로 세지 않는다. 다만 막힌 뒤 우회를 시도한 흔적이 있으면 센다) | 원인(scout 정찰부족 / planner 설계모호). 단 훅 자동 기록은 낸 에이전트·범위 준수로 귀속하고(§2 아래 «자동 기록의 차원·역할 귀속 규칙») 원인 재귀속은 사람·main 이 수동으로 한다 | 중 |
 | main이 결과 반려·재의뢰 | 해당 에이전트 | 중 |
 | 사용자 교정(T12)이 에이전트 산출 대상 | 그 에이전트 | 중 |
 | citation-verifier contrasting/철회 | searcher / researcher | 중 |
@@ -50,7 +50,7 @@
 | citation-verifier | 철회 게이트 · 원문 대조 정확성 · (디베이트 시) 편향 회피 · 균형 |
 | tutor | 문항 근거 정확성(notes 인용 일치) · 유형 혼합 준수(숫자·단답 포함) · 정답 누설·전사 방지 · 설명 사다리 준수 · NEEDS_SEARCH 상한 준수 |
 
-> **자동 기록의 차원·역할 귀속 규칙** (코드 `scripts/t41-append.sh --from` 과 일치하며, §1·§2 표와 다르면 이 줄이 우선한다. 위 §2 표의 차원은 사람이 수동 기록할 때의 분류이고 자동 기록은 구현 정확성·범위 준수·결과 실패 3종만 쓴다): qa·reviewer·security의 FAIL/REJECT → 주체 coder·구현 정확성, BLOCKED/NEEDS_CONTEXT → 낸 에이전트·범위 준수, 그 밖 → 자기 자신·결과 실패. 같은 role/dim/signal은 10분 안 1회만 기록.
+> **자동 기록의 차원·역할 귀속 규칙** (코드 `scripts/t41-append.sh --from` 과 일치하며, §1·§2 표와 다르면 이 줄이 우선한다. 위 §2 표의 차원은 사람이 수동 기록할 때의 분류이고 자동 기록은 구현 정확성·범위 준수·결과 실패 3종만 쓴다): qa·reviewer·security의 FAIL/REJECT → 주체 coder·구현 정확성, BLOCKED/NEEDS_CONTEXT → 낸 에이전트·범위 준수, 그 밖 → 자기 자신·결과 실패. 신호에 `target=<역할>` 이 있고 유효 역할이면(main·general-purpose 포함) 위 주체를 그 역할로 덮고 차원은 그대로 둔다. 같은 role/dim/signal은 10분 안 1회만 기록.
 
 ## §3 프로세스 (평가 → 축적 → 개선)
 

@@ -9,7 +9,7 @@ Rules are split into two tiers: **eager** (always loaded) and **lazy** (on-deman
 Context is finite. Loading every rule on every turn wastes ~30–50K tokens per session.
 
 ```
-rules/       ← 5 files, always loaded (CLAUDE.md + rules/*.md = 73,568B (2026-11-12 실측) — 예산 75,000B, 초과는 경고만)
+rules/       ← 5 files, always loaded (CLAUDE.md + rules/*.md = 74,488B (2026-11-12 실측) — 예산 75,000B, 초과는 경고만)
 rules-lazy/  ← 53 files, loaded only when triggered
 ```
 

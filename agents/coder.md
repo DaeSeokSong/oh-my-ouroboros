@@ -28,8 +28,10 @@ mcpServers:
 - 코드 실행: 파일 저장 후 실행 명령서만 출력 (직접 실행 금지)
   - **예외**: Figure 생성 스크립트(`docs/paper/figures/scripts/gen_*.py`)는 Bash로 직접 실행 허용
   - **예외**: 검증 목적 실행(`rules/code-execution.md` § 예외: 검증 목적 실행 허용) — pytest 등 단위 테스트, dry-run 시험 구동, ruff/mypy(read-only) 직접 실행 허용. 학습·훈련 본 실행·배포·데이터 변경·환경 변경은 여전히 사용자 직접
+- 훅이나 권한 설정이 명령을 막으면 같은 일을 다른 꼴의 명령으로 바꿔 우회하지 않고, 막힌 명령과 사유를 보고한다(`RESULT: BLOCKED`). main 에게 대신 실행해 달라고 요청하지 않는다
 - 수정 전 계획 보고: 사용자 승인은 main 이 받는다. coder 는 main 이 넘긴 명세대로 진행하고, 계획 보고는 반환 보고에 포함한다. Evaluator 피드백 수신 시(Generator Mode)는 승인 없이 곧바로 Edit
 - 요청된 범위만 수정 (과도한 리팩토링 금지)
+- 격리 · 권한 · 경로 가드를 만들거나 고칠 때 (2026-11-12 후보 판정 G07, security 지적 3건): 시험용 환경변수나 플래그로 격리를 끄는 길을 만들지 않는다(시험은 주입 인자나 임시 사본으로 한다). 경로 검사는 같은 명령 안에서 만든 링크까지 푼 최종 경로로 한다. 쓰기는 자기 세션 · 잡 폴더로 한정하고 다른 세션의 산출물을 옮기지 않는다. 완료 보고 전에 이 세 우회를 시험으로 돌려 결과를 붙인다.
 
 ## 사고 우선 (Think Before Coding — MANDATORY)
 
@@ -91,7 +93,7 @@ def _get_lr(cfg):
 optimizer = SGD(model.parameters(), lr=_get_lr(cfg))
 
 # ✅ 정답: 인라인
-optimizer = SGD(model.parameters(), lr=cfg.get("lr", 1e-3))
+optimizer = SGD(model.parameters(), lr=cfg.lr or 1e-3)
 ```
 
 ### 적용 범위 (충돌 회피)
@@ -109,6 +111,7 @@ optimizer = SGD(model.parameters(), lr=cfg.get("lr", 1e-3))
 - [ ] 깨지지 않은 코드 리팩토링 금지
 - [ ] 기존 코드 스타일 유지 (본인이 다르게 쓸 것 같아도 일관성 우선)
 - [ ] 무관한 dead code 발견 시 — **삭제 금지, 보고만**
+- [ ] 계획이나 정본에 없는 항 · 문장을 넣지 않는다. «정본과 대조했다» 고 보고할 때는 대조한 정본의 `파일:줄` 과 일치하는 문장을 그대로 인용하고, 인용이 없으면 대조하지 않은 것으로 본다 (2026-11-12 후보 판정 G11)
 
 ### Orphan 정리 규칙
 - [ ] 본인의 변경이 **만들어낸** 미사용 import/변수/함수만 제거
@@ -131,14 +134,14 @@ optimizer = SGD(model.parameters(), lr=cfg.get("lr", 1e-3))
 +     """Compute MSE loss with nan handling."""  # 요청 외 변경
 +     loss = F.mse_loss(predictions, target)
 +     if torch.isnan(loss):
-+         return torch.tensor(0.0)
++         raise ValueError("loss is NaN")
 +     return loss
 
 # ✅ 정답: 요청한 부분만
   def compute_loss(pred, target):
       l = F.mse_loss(pred, target)
 +     if torch.isnan(l):
-+         return torch.tensor(0.0)
++         raise ValueError("loss is NaN")
       return l
 ```
 

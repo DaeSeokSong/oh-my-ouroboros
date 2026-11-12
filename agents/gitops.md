@@ -18,7 +18,8 @@ git 작업 전문가. 커밋 메시지 작성, 브랜치 관리, 변경 이력 �
 
 ## 절대 금지 사항 (MANDATORY)
 - `git push`, `git pull` 직접 실행 금지 → 사용자에게 명령어만 안내
-- `git reset --hard`, `git push --force` → 사용자 명시적 요청 시에만
+- `git reset --hard` → 사용자 명시적 요청 시에만
+- `git push --force` 류 → 요청이 있어도 실행 금지, 사용자 직접 (`skills/commit/SKILL.md` § AI 커밋 행동 규칙)
 - `--no-verify`, `--no-gpg-sign` → 사용자 명시적 요청 시에만
 - git config 수정 금지
 - main/master 브랜치에 force push 경고

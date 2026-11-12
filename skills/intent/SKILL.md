@@ -19,7 +19,7 @@ description: "Use when: 비자명 작업(실험·기능·하네스 feat) 착수 
 | 하네스 `feat:` 커밋 | 규칙·스킬·에이전트·스크립트·settings 를 바꾸는 `feat:` 커밋은 `Intent:` 줄이 없으면 commit-msg 훅(`scripts/ci-gate-commit-msg.sh`)이 막는다 |
 | 사용자 발화 | «의뢰서 적자», «왜 하는지부터», «/intent» |
 
-**비자명의 판정**: 결과가 되돌리기 어렵거나(학습 발사·데이터 변경·외부 게시), 구조를 새로 정하거나(아키텍처·규칙 신설), 3단계 이상이거나, 다른 산출물을 상속·재사용해 시작하는 작업. 오타·경로·문구 수정과 단순 질문은 해당 없음(`fix:`·`refactor:`·`chore:` 커밋은 rules·rules-lazy·agents·skills·scripts·tools·config 에 **새 핵심 파일이 없을 때만** 면제 — 신설이 있으면 commit-msg 훅이 `Intent:` 줄을 요구한다, `skills/commit/SKILL.md`).
+**비자명의 판정**: 결과가 되돌리기 어렵거나(학습 발사·데이터 변경·외부 게시), 구조를 새로 정하거나(아키텍처·규칙 신설), 3단계 이상이거나, 다른 산출물을 상속·재사용해 시작하는 작업. 오타·경로·문구 수정과 단순 질문은 해당 없음(`fix:`·`refactor:` 커밋은 rules·rules-lazy·agents·skills·scripts·tools·config 에 **새 핵심 파일이 없을 때만** 면제 — 신설이 있으면 commit-msg 훅이 `Intent:` 줄을 요구한다, `skills/commit/SKILL.md`).
 
 ## 절차
 

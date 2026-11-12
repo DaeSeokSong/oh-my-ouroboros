@@ -391,15 +391,30 @@ def test_oldest_pending_priority():
             f"T40-2\tT40\t{days_ago(9)}\t-\tpending-bench\t더 오래된 반복 ×3",
             f"T12-2\tT12\t{days_ago(1)}\t-\texpired\t만료됨",
             f"T12-3\tT12\t{days_ago(2)}\t-\taccepted\t채택됨",
+            f"T41-3\tT41\t{days_ago(2)}\t-\tpending\tcoder/구현 정확성: 후보 고리 원인 수정 | from=qa | RESULT: FAIL 1 계획 대비 2건 누락",
+            f"T41-4\tT41\t{days_ago(1)}\t-\tpending\tqa/범위 준수: 벤치 문항 정리 | from=qa | RESULT: BLOCKED 권한 부족",
+            f"T41-5\tT41\t{days_ago(60)}\t-\tpending\tgeneral-purpose/결과 실패: [orig=unit5-qa] from=unit5-qa | RESULT: FAIL 1 target=x",
         ])
         r = sh(home, "oldest-pending", "--limit", "3", "--t41-axes", "coder/구현 정확성")
         ids = [l.split("\t")[0] for l in r.stdout.splitlines()]
-        check("생성일 오름차순이 1차 키(오래된 T12 가 밀리지 않음)", ids == ["T41-2", "T12-1", "T40-2"], str(ids))
-        r = sh(home, "oldest-pending", "--limit", "5", "--t41-axes", "")
+        check("급이 1차 키(2026-11-12): 내용 있는 T41(축 일치 먼저) > T12", ids == ["T41-3", "T41-4", "T12-1"], str(ids))
+        r = sh(home, "oldest-pending", "--limit", "8", "--t41-axes", "")
         ids = [l.split("\t")[0] for l in r.stdout.splitlines()]
-        check("미결 3종만·날짜 오름차순", ids == ["T41-2", "T12-1", "T40-2", "T40-1", "T41-1"], str(ids))
+        check("미결 3종만·같은 급은 날짜 오름차순·내용 없는 T41 은 그 밖(T40 과 같은 급)",
+              ids == ["T41-3", "T41-4", "T12-1", "T41-5", "T41-2", "T40-2", "T40-1", "T41-1"], str(ids))
         r2 = sh(home, "oldest-pending", "--limit", "1", "--t41-axes", "")
         check("출력은 id·type·요약 3열 탭", len(r2.stdout.strip().split("\t")) == 3, r2.stdout)
+    with tempfile.TemporaryDirectory() as tmp:
+        # 검수 보정(2026-11-12): 내용 없음은 소집 설명을 떼고 판정 부분만으로 가린다. 설명 속 가짜 `from=… |` 도 마지막 구분자까지 뗀다.
+        home = make_home(tmp, [
+            f"B-1\tT41\t{days_ago(9)}\t-\tpending\tcoder/구현 정확성: 설명만 있음 | from=qa | RESULT: FAIL 1 target=coder",
+            f"B-2\tT41\t{days_ago(8)}\t-\tpending\tcoder/구현 정확성: 가짜 from=x | 끼움 | from=qa | RESULT: FAIL",
+            f"B-3\tT12\t{days_ago(1)}\t-\tpending\t교정",
+            f"B-4\tT41\t{days_ago(7)}\t-\tpending\tcoder/구현 정확성: 가짜 from=x | 끼움 | from=qa | RESULT: FAIL 경로 검사 누락",
+        ])
+        ids = [l.split("\t")[0] for l in sh(home, "oldest-pending", "--limit", "4", "--t41-axes", "").stdout.splitlines()]
+        check("bare: 설명이 있어도 판정 부분이 RESULT 표기뿐이면 그 밖 급, 판정 부분에 사유가 있으면 내용 있는 T41",
+              ids == ["B-4", "B-3", "B-1", "B-2"], str(ids))
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, [f"T12-1\tT12\t{days_ago(5)}\t-\tpending\t" + "가" * 100])
         out = sh(home, "oldest-pending").stdout.strip().split("\t")
@@ -775,10 +790,10 @@ def test_oldest_pending_date_first_and_skip():
         ])
         ids = lambda r: [l.split("\t")[0] for l in r.stdout.splitlines()]
         r = sh(home, "oldest-pending", "--limit", "10", "--t41-axes", "coder/구현 정확성")
-        check("A6: 날짜 오름차순, 같은 날짜는 축 T41 > T12 > T40 > 비축 T41 (2순위 등급 0·1·2·3)",
-              ids(r) == ["A-1", "A-2", "B-1", "B-2", "B-4", "B-3", "C-1"], str(ids(r)))
+        check("A6: 급(축 T41 0 · 내용 있는 T41 1 · T12 2 · 그 밖 3)이 1차 키, 같은 급은 날짜 오름차순 (2026-11-12)",
+              ids(r) == ["B-1", "B-3", "A-2", "B-2", "C-1", "A-1", "B-4"], str(ids(r)))
         r = sh(home, "oldest-pending", "--limit", "3", "--skip", "3", "--t41-axes", "coder/구현 정확성")
-        check("A6: --skip 3 은 앞 3건을 건너뜀", ids(r) == ["B-2", "B-4", "B-3"], str(ids(r)))
+        check("A6: --skip 3 은 앞 3건을 건너뜀", ids(r) == ["B-2", "C-1", "A-1"], str(ids(r)))
         r = sh(home, "oldest-pending", "--limit", "3", "--skip", "99")
         check("A6: skip 이 건수보다 크면 빈 출력·exit 0", r.returncode == 0 and r.stdout == "", f"{r.returncode} {r.stdout!r}")
         r = sh(home, "oldest-pending", "--skip", "x")
@@ -917,10 +932,10 @@ def test_oldest_pending_axis_role_normalized():
         (home / ".claude/agents/security.md").write_text("x", encoding="utf-8")
         r = sh(home, "oldest-pending", "--limit", "4", "--t41-axes", "security/x")
         ids = [ln.split("\t")[0] for ln in r.stdout.splitlines()]
-        check("Grok16 3: sec-g1/x 후보·security/x 후보 모두 security/x 축으로 우선순위 0(같은 날 T12 보다 먼저)", ids == ["A-41", "A-12", "B-41", "B-12"], str(ids))
+        check("Grok16 3: sec-g1/x 후보·security/x 후보 모두 security/x 축으로 우선순위 0(T12 보다 먼저)", ids == ["A-41", "B-41", "A-12", "B-12"], str(ids))
         r = sh(home, "oldest-pending", "--limit", "4", "--t41-axes", "sec-g1/x")
         ids = [ln.split("\t")[0] for ln in r.stdout.splitlines()]
-        check("Grok16 3: 넘긴 축이 sec-g1/x 여도 같은 결과", ids == ["A-41", "A-12", "B-41", "B-12"], str(ids))
+        check("Grok16 3: 넘긴 축이 sec-g1/x 여도 같은 결과", ids == ["A-41", "B-41", "A-12", "B-12"], str(ids))
 
 
 def test_lock_wait_is_bounded():

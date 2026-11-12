@@ -157,13 +157,14 @@ def test_digest_once_per_day():
         home, proj = make_env(tmp, rows)
         out = run_usage(home, proj)
         lines = [l for l in out.splitlines() if l.startswith("  · ")]
-        check("digest: 가장 오래된 3건, T40 이 먼저", len(lines) == 3 and "T40-1" in lines[0] and "T12-4" in lines[1] and "T12-3" in lines[2], "\n".join(lines))
-        check("digest: 마무리 한 줄", "→ 턴 끝에 1줄로 판정을 묻는다(accepted/rejected/보류)" in out, out)
+        check("digest: 5건, 교정(T12)이 그 밖(T40)보다 먼저·같은 급은 오래된 순(2026-11-12)",
+              len(lines) == 5 and [ln.split()[1] for ln in lines] == ["T12-4", "T12-3", "T12-2", "T12-1", "T40-1"], "\n".join(lines))
+        check("digest: 마무리 한 줄", "→ 첫 작업성 응답 끝에 결정 팝업 하나로 판정을 묻는다(후보마다 accepted/rejected/보류, 모바일 모드면 AskUserQuestion)" in out, out)
         check("digest: CANDIDATES_PENDING 경보와 함께", "CANDIDATES_PENDING: 5건" in out, out)
         marker = home / f".claude/_usage/candidates-digest-{TODAY}.d"
         check("digest: 오늘 선점 디렉터리가 생김(mkdir 원자 마커)", marker.is_dir())
         out2 = run_usage(home, proj)
-        check("digest: 같은 날 두 번째는 출력 안 함", "  · " not in out2 and "→ 턴 끝에" not in out2 and "CANDIDATES_PENDING" in out2, out2)
+        check("digest: 같은 날 두 번째는 출력 안 함", "  · " not in out2 and "→ 첫 작업성" not in out2 and "CANDIDATES_PENDING" in out2, out2)
         marker.rmdir()   # 다음 날을 흉내(어제 것은 치워지고 오늘 것은 없는 상태)
         out3 = run_usage(home, proj)
         check("digest: 마커가 지난 날짜면 다시 출력", "  · T40-1" in out3, out3)
@@ -293,7 +294,7 @@ def test_digest_parallel_single_output():
         procs = [subprocess.Popen(["bash", str(home / ".claude/scripts/harness-usage-check.sh")], stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, text=True, env=env, cwd=str(proj)) for _ in range(5)]
         outs = [p.communicate()[0] for p in procs]
-        n = sum(o.count("→ 턴 끝에 1줄로 판정을 묻는다") for o in outs)
+        n = sum(o.count("→ 첫 작업성 응답 끝에 결정 팝업 하나로 판정을 묻는다") for o in outs)
         check("digest: 병렬 5세션이어도 출력은 정확히 1회", n == 1, f"count={n}")
 
 
@@ -582,18 +583,18 @@ def test_digest_rotates_by_day():
             (home / ".claude/_usage/ca-calls").unlink(missing_ok=True)
             run_usage(home, proj, PATH=path, FAKE_J=j)
             got.append(skip_of(home))
-        check("B3: CP_N=7 이면 --skip 이 날짜(연중 일수 % 3)*3 으로 회전(0/3/6)", got == [3, 6, 0, 3, 0], str(got))
+        check("B3: CP_N=7 이면 --skip 이 날짜(연중 일수 % 2)*5 로 회전(0/5, digest 5건 2026-11-12)", got == [5, 0, 5, 0, 5], str(got))
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [f"T12-{i}\tT12\t{d(1 + i)}\t-\tpending\t교정 {i}" for i in range(3)])
         (home / ".claude/scripts/candidates-append.sh").write_text(ca_stub, encoding="utf-8")
         run_usage(home, proj)
-        check("B3: CP_N<=3 이면 --skip 0", skip_of(home) == 0, "")
+        check("B3: CP_N<=5 이면 --skip 0", skip_of(home) == 0, "")
     today_j = int(date.today().strftime("%j"))
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [f"T12-{i}\tT12\t{d(1 + i % 3)}\t-\tpending\t교정 {i}" for i in range(7)])
         (home / ".claude/scripts/candidates-append.sh").write_text(ca_stub, encoding="utf-8")
         run_usage(home, proj)
-        check("B3: 실제 날짜로도 (오늘 일수 % 3)*3", skip_of(home) == (today_j % 3) * 3, f"{skip_of(home)} j={today_j}")
+        check("B3: 실제 날짜로도 (오늘 일수 % 2)*5", skip_of(home) == (today_j % 2) * 5, f"{skip_of(home)} j={today_j}")
 
 
 def test_crosscheck_attempt_and_success_markers():

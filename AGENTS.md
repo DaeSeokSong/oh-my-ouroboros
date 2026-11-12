@@ -2,7 +2,7 @@
 
 12 specialized agents with defined roles, models, tools, and routing triggers. Figures are not an agent: main draws them with the `/figure` skill (designer was folded into that skill on 2026-11-10).
 
-> **Picking up a session (Grok or any other model, 2026-10-23)**: every session keeps a work-status card at `<project root>/.scratch/handoff/<first 8 chars of the session id>.md` (harness manager: `~/.claude/.scratch/handoff/`). Read the most recent one first, follow its «이어받는 이에게» and «4. 다음 할 일» sections, ask the user about anything under «결정 대기», and keep updating the same file. The harness rules (CLAUDE.md, rules/, rules-lazy/) still apply; pushes, training launches and external posts stay with the user. Format and update points: `rules-lazy/session-handoff.md`.
+> **Picking up a session (Grok or any other model, 2026-10-23)**: every session keeps a work-status card at `<project root>/.scratch/handoff/<first 8 chars of the session id>.md` (harness manager: `~/.claude/.scratch/handoff/`). Read the most recent one first, follow its «이어받는 이에게» and «4. 다음 할 일» sections, ask the user about anything under «결정 대기», and keep updating the same file. The harness rules (CLAUDE.md, rules/, rules-lazy/) still apply; pushes, training launches and external posts stay with the user. Without a decision popup or subagent tools, proceed as a single session and ask choices in plain text. Format and update points: `rules-lazy/session-handoff.md`.
 
 ---
 

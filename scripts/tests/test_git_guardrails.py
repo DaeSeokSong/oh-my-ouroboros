@@ -27,6 +27,16 @@ def blocked(cmd: str) -> bool:
     return '"deny"' in r.stdout
 
 
+def reason(cmd: str) -> str:
+    """훅을 실행해 deny 사유 문구를 반환(통과면 빈 문자열)."""
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}})
+    r = subprocess.run(["bash", str(HOOK)], input=payload, check=False, capture_output=True, text=True)
+    return json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if '"deny"' in r.stdout else ""
+
+
+AQ = "# APPROVED 사용자 «그렇게 진행해 주세요»\n"   # 승인 마커 줄(인용의 로그 실재는 bash-write-check 소관)
+STRICT = "승인 표시(# APPROVED)로도 통과하지 않습니다"   # 2026-11-12 결정 F1·G1: 마커로 안 풀리는 차단의 문구
+
 # (이름, 명령, 차단 기대)
 CASES = [
     # ── 차단 ──
@@ -226,6 +236,89 @@ CASES = [
     ("git config 소문자 키 영구 지정 → 차단", "git config core.hookspath /dev/null", True),
     ("git config 소문자 키 --get → 통과", "git config --get core.hookspath", False),
     ("hooksPath 하네스 경로 + 소문자 키 → 통과", f"git -c core.hookspath={HOOKS_DIR} commit -m x", False),
+    # ── 2026-11-12 결정 F1·G1: push · pull 은 마커로도 안 풀린다(I1), 그 밖의 확정된 차단은 마커로 풀린다(I2)
+    ("I2 마커 + reset --hard → 통과", AQ + "git reset --hard HEAD~1", False),
+    ("I2 마커 + checkout . → 통과", AQ + "git checkout .", False),
+    ("I2 마커 + clean -fd → 통과", AQ + "git clean -fd", False),
+    ("I2 마커 + branch -D → 통과", AQ + "git branch -D x", False),
+    ("I2 마커 + commit --no-verify → 통과", AQ + "git commit --no-verify -m x", False),
+    ("I2 마커 + config core.hooksPath 설정 → 통과", AQ + "git config core.hooksPath /tmp/h", False),
+    ("I2 마커 + stash drop; stash clear → 통과", AQ + "git stash drop; git stash clear", False),
+    ("I2 마커 + git 아닌 명령 → 통과", AQ + "rm scratch.txt", False),
+    ("I2 마커 + 커밋 메시지 속 push·pull 낱말 → 통과", AQ + "git commit -m 'docs: git push 와 git pull 규칙'", False),
+    ("I2 마커 인용 속 git push 낱말 + git status → 통과(마커 줄은 떼고 본다)", "# APPROVED 사용자 «git push 해 주세요»\ngit status", False),
+    ("I1 마커 + git push → 차단", AQ + "git push origin main", True),
+    ("I1 마커 + git pull → 차단", AQ + "git pull", True),
+    ("I1 마커 + 풀리는 stash 뒤 push → 차단", AQ + "git stash; git push origin main", True),
+    ("I1 마커 + 풀리는 reset --hard 뒤 push → 차단", AQ + "git reset --hard && git push", True),
+    ("I1 마커 + -c alias 로 감싼 push → 차단", AQ + "git -c alias.p=push p origin", True),
+    ("I1 마커 + config alias 설정 → 차단", AQ + "git config alias.p push", True),
+    ("I1 마커 + 하위 명령 자리 변수 → 차단", AQ + "git $SUB origin main", True),
+    ("I1 마커 + GIT_CONFIG_* 로 만든 alias → 차단", AQ + "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.st GIT_CONFIG_VALUE_0=push git st", True),
+    ("I1 마커 + rebase --exec → 차단", AQ + "git rebase --exec 'git push' main", True),
+    ("I1 마커 + submodule foreach → 차단", AQ + "git submodule foreach git status", True),
+    ("I1 마커 + 풀리는 --output 이 뒤 규칙을 가리지 않음(difftool -x) → 차단", AQ + "git difftool --output=x -x cat", True),
+    ("I2 마커 + 설정된 difftool(명령 문자열 없음) → 통과", AQ + "git difftool HEAD", False),
+    # 2026-11-12 security: push 계열 낱말 누락 보완(lfs push · svn 올려 보내기)
+    ("git lfs push → 차단", "git lfs push origin main", True),
+    ("git lfs push --all → 차단", "git lfs push --all origin", True),
+    ("git svn dcommit → 차단", "git svn dcommit", True),
+    ("git svn set-tree → 차단", "git svn set-tree HEAD", True),
+    ("git svn branch → 차단", "git svn branch -m msg new", True),
+    ("git lfs ls-files → 통과", "git lfs ls-files", False),
+    ("git lfs track → 통과", "git lfs track '*.bin'", False),
+    ("git svn log → 통과", "git svn log", False),
+    ("커밋 메시지 속 git lfs push → 통과", "git commit -m 'docs: git lfs push 안내'", False),
+    ("커밋 메시지 속 git svn dcommit → 통과", "git commit -m 'docs: git svn dcommit 안내'", False),
+    # 2026-11-12: lfs pull 은 pull 과 같은 급(마커로도 안 풀림), 조회는 통과
+    ("git lfs pull → 차단", "git lfs pull origin", True),
+    ("git lfs status → 통과", "git lfs status", False),
+    ("git lfs env → 통과", "git lfs env", False),
+    ("커밋 메시지 속 git lfs pull → 통과", "git commit -m 'docs: git lfs pull 안내'", False),
+    # 2026-11-12: 줄 이음(백슬래시+줄바꿈)은 셸이 지운다 → 이어 붙인 사본으로 판정
+    ("줄 이음으로 쪼갠 git 이름 + push → 차단", "gi\\\nt push origin main", True),
+    ("줄 이음으로 쪼갠 git 이름 + pull → 차단", "g\\\nit pull", True),
+    ("줄 이음으로 쪼갠 하위 명령 push → 차단", "git pu\\\nsh origin main", True),
+    ("줄 이음으로 쪼갠 lfs push → 차단", "git lfs pu\\\nsh origin", True),
+    ("줄 이음으로 나눈 git 아닌 명령 → 통과", "ls \\\n  -la", False),
+    ("원문의 줄 이음이 든 git 명령 → 차단(HEAD 와 같음: 원문 검사는 그대로)", "git log \\\n  --oneline -3", True),
+    ("여러 줄 커밋 메시지(줄 이음 없음) → 통과", 'git commit -m "fix: a\n\nb 설명"', False),
+    ("I1 마커 + 원문의 줄 이음이 든 git 명령 → 차단(판정 불가 종류)", AQ + "git log \\\n  --oneline -3", True),
+    ("I1 마커 + 줄 이음으로 나눈 stash → 차단(판정 불가 종류)", AQ + "git \\\n  stash", True),
+    # 2026-11-12: 승인 마커로 풀리지 않는 범위는 push · pull 을 감출 수 있는 꼴로 한정 — 감출 수 없는 것은 풀린다
+    ("I2 마커 + --work-tree → 통과", AQ + "git --work-tree /tmp/w status", False),
+    ("I2 마커 + init --template → 통과", AQ + "git init --template=/tmp/t x", False),
+    ("I2 마커 + maintenance start → 통과", AQ + "git maintenance start", False),
+    ("I1 마커 + filter-repo(호출 전체가 안 풀림) → 차단", AQ + "git filter-repo --path x", True),
+    ("I1 마커 + filter-branch 셸 필터 → 차단", AQ + "git filter-branch --tree-filter 'git push' HEAD", True),
+    ("I2 마커 + GIT_INDEX_FILE → 통과", AQ + "GIT_INDEX_FILE=/tmp/i git status", False),
+    ("I1 마커 + 풀리는 변수 뒤 GIT_CONFIG_* → 차단", AQ + "GIT_INDEX_FILE=/tmp/i GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.st GIT_CONFIG_VALUE_0=push git st", True),
+    # ── 2026-11-12 reviewer · security 반송: 원문은 HEAD 검사 그대로 + 이어 붙인 사본은 추가 검사
+    ("줄 끝 겹 백슬래시 + 인용 사이의 push → 차단", "echo \\\\\n\"x\" ; git push origin main ; echo \\\\\n\"y\"", True),
+    ("I1 마커 + 줄 끝 겹 백슬래시 + 인용 사이의 push → 차단", AQ + "echo \\\\\n\"x\" ; git push origin main ; echo \\\\\n\"y\"", True),
+    ("I1 마커 + 인용 속 겹 백슬래시 줄 끝 뒤 push → 차단", AQ + "echo \"a\\\\\n\" ; git push origin main ; echo \"b\"", True),
+    ("인용 속 줄 이음이 든 commit → 차단(HEAD 와 같음)", "git commit -m 'x\\\ny'", True),
+    ("I1 마커 + 줄 이음으로 쪼갠 git 이름 push → 차단", AQ + "g\\\nit push origin main", True),
+    ("I1 마커 + filter-branch --setup 명령 문자열 → 차단", AQ + "git filter-branch --setup 'git push origin main' HEAD", True),
+    ("I1 마커 + filter-branch 약어 --tree-f → 차단", AQ + "git filter-branch --tree-f 'git push' HEAD", True),
+    ("I1 마커 + filter-repo 콜백 약어 → 차단", AQ + "git filter-repo --filename-callb 'return x'", True),
+    ("git lfs pre-push → 차단", "git lfs pre-push origin", True),
+    ("I1 마커 + git lfs pre-push → 차단", AQ + "git lfs pre-push origin", True),
+    ("git lfs $a (인자 변수) → 차단", "git lfs $a origin main", True),
+    ("I1 마커 + git lfs $a → 차단", AQ + "git lfs $a origin main", True),
+    ("I1 마커 + git svn $a → 차단", AQ + "git svn $a", True),
+    ("I1 마커 + git subtree $a → 차단", AQ + "git subtree $a --prefix=x origin main", True),
+    ("git subtree pull → 차단", "git subtree pull --prefix=x origin main", True),
+    ("git svn rebase → 차단", "git svn rebase", True),
+    ("I1 마커 + git svn fetch → 차단", AQ + "git svn fetch", True),
+    ("I1 마커 + GIT_CONFIG_PARAMETERS 의 alias → 차단", AQ + "GIT_CONFIG_PARAMETERS=\"'alias.x=!git push' 'core.hooksPath=/x'\" git x", True),
+    ("I1 마커 + HOME 재대입 → 차단", AQ + "HOME=/tmp/h git x", True),
+    ("I1 마커 + --git-dir → 차단", AQ + "git --git-dir=/tmp/x status", True),
+    ("I1 마커 + -c alias(내용 무관) → 차단", AQ + "git -c alias.p=status p", True),
+    ("I1 마커 + rebase --exec= → 차단", AQ + "git rebase --exec=true main", True),
+    ("I1 마커 + --exec-path → 차단(GIT_EXEC_PATH 와 같은 종류)", AQ + "git --exec-path=/tmp/x status", True),
+    ("I2 마커 + GIT_TEMPLATE_DIR → 통과(--template 과 같은 종류)", AQ + "GIT_TEMPLATE_DIR=/tmp/t git init x", False),
+    ("I2 마커 + -c core.hooksPath → 통과", AQ + "git -c core.hooksPath=/tmp/h commit -m x", False),
 ]
 
 fail = 0
@@ -234,6 +327,28 @@ for name, cmd, want in CASES:
     ok = got == want
     fail += 0 if ok else 1
     print(f"{'OK ' if ok else 'FAIL'} {name}: deny={got} (기대 {want})")
+
+# I1 표: 마커 없이 «마커로 안 풀리는» 사유(push · pull 사유 포함)로 막히는 경우마다 마커를 붙여도 같은 사유 종류로 막히는지 본다.
+#   push · pull 사유 문구는 모두 그 종류여야 한다(«# APPROVED 로 재실행» 안내가 붙으면 안 된다).
+n_i1 = 0
+for name, cmd, _ in CASES:
+    if cmd.startswith("# APPROVED"):
+        continue
+    r0 = reason(cmd)
+    pushy = "push/pull은 항상 사용자 직접" in r0
+    if STRICT not in r0 and not pushy:
+        continue
+    n_i1 += 1
+    r1 = reason(AQ + cmd)
+    ok = STRICT in r0 and STRICT in r1 and "터미널에서 직접" in r1
+    fail += 0 if ok else 1
+    print(f"{'OK ' if ok else 'FAIL'} I1 마커 변형 {name}: {'차단' if r1 else '통과'}")
+assert n_i1 >= 40, n_i1   # 표가 비어 공허하게 통과하지 않게
+# 문구: 풀리는 차단은 종전 안내(# APPROVED 로 재실행)를 그대로 쓴다
+r_ok = reason("git stash")
+ok = "'# APPROVED'로 재실행" in r_ok and STRICT not in r_ok
+fail += 0 if ok else 1
+print(f"{'OK ' if ok else 'FAIL'} 풀리는 차단 문구 유지(git stash)")
 
 print(f"\n{'ALL PASS' if fail == 0 else f'FAIL {fail}'} ({len(CASES)} cases)")
 sys.exit(1 if fail else 0)

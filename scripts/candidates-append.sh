@@ -59,8 +59,12 @@
 #       37일 이내 expired 까지 풀면 correction-detect.sh 가 마지막 400줄의 옛 교정을 만료 직후 오늘 날짜 pending 으로 되살린다(2026-10-17 Codex 2차). 미결·accepted·rejected 는 계속 중복.
 #   dedupe-legacy [--dry-run]            T40 행 요약 끝의 ` ×N` 을 한 번 떼어 쓴다(1회 정리용. 행 삭제 없음, 중복 키는 이미 append 가 무시).
 #   oldest-pending [--limit N] [--skip N] [--t41-axes "role/dim,role/dim"]
-#       미결 3종 중 digest 용 상위 N건(기본 3)을 `id<TAB>type<TAB>요약(60자)` 로 출력. 정렬: 생성일 오름차순 → 같은 날짜면
-#       T41(T41_REPEAT 축 일치) > T12 > T40 > 그 밖 T41 > 나머지 → id. --skip N 은 정렬 뒤 앞 N건을 건너뛴다(기본 0, 날짜 회전용).
+#       미결 3종 중 digest 용 상위 N건(기본 3)을 `id<TAB>type<TAB>요약(60자)` 로 출력. 정렬(2026-11-12): 급이 1차 키 →
+#       내용 있는 T41(T41_REPEAT 축 일치가 먼저) > T12 > 그 밖(T40·내용 없는 T41 등), 같은 급에서는 생성일 오름차순 → id.
+#       «내용 없는 T41» 은 판정 부분(축 뒤에서 마지막 `from=… |` 까지와 `[orig=…]` 를 뗀 나머지, 소집 설명은 보지 않음)이
+#       `RESULT: FAIL 1 target=coder` 같은 판정 표기뿐인 행이다
+#       (판정할 정보가 없어 앞줄을 차지하면 digest 가 쓸모없어진다, 2026-11-12 원인 분석 2절).
+#       --skip N 은 정렬 뒤 앞 N건을 건너뛴다(기본 0, 날짜 회전용).
 #       읽기 전용이라 잠금을 잡지 않는다(대장 교체가 mv 라 반쯤 쓴 파일은 보이지 않는다).
 # shellcheck disable=SC2329  # set_*·attach_commit·expire_rows·dedupe_legacy 는 run_locked "$@" 로 간접 호출됨
 set -uo pipefail
@@ -310,14 +314,18 @@ oldest_pending() {  # $1=limit $2=T41 축 목록(쉼표) $3=skip(정렬 뒤 앞 
         function axis(x,   p) { p = index(x, ":"); return trim(p ? substr(x, 1, p - 1) : x) }
         BEGIN { na = split(ENVIRON["AXES"], ax, ","); for (i = 1; i <= na; i++) ax[i] = trim(ax[i])
                 nm = split(ENVIRON["AXMAP"], ml, "\n"); for (i = 1; i <= nm; i++) { split(ml[i], kv, "\t"); if (kv[1] != "") nmap[kv[1]] = kv[2] } }
+        function bare(x,   p, r, q, b) { p = index(x, ":"); r = p ? substr(x, p + 1) : x
+            while ((q = index(r, "from=")) > 0 && (b = index(substr(r, q), "|")) > 0) r = substr(r, q + b)
+            sub(/^[ \t]*(\[orig=[^]]*\][ \t]*)?/, "", r)
+            sub(/^((RESULT|STATUS|status|판정)[ \t]*[:=][ \t]*)?(FAIL|BLOCKED|NEEDS_CONTEXT|REJECT)/, "", r)
+            gsub(/target=[^ \t]*/, "", r); gsub(/[0-9 \t.,:()-]/, "", r); return r == "" }
         $1!="id" && ($5=="pending" || $5=="pending-bench" || $5=="pending-approval") {
-            t = 4
-            if ($2 == "T41") { t = 3; a6 = axis($6); if (a6 in nmap) a6 = nmap[a6]; for (i = 1; i <= na; i++) if (ax[i] != "" && ax[i] == a6) t = 0 }
-            else if ($2 == "T12") t = 1
-            else if ($2 == "T40") t = 2
-            print $3 "\t" t "\t" $1 "\t" $2 "\t" $6
+            t = 3
+            if ($2 == "T41" && !bare($6)) { t = 1; a6 = axis($6); if (a6 in nmap) a6 = nmap[a6]; for (i = 1; i <= na; i++) if (ax[i] != "" && ax[i] == a6) t = 0 }
+            else if ($2 == "T12") t = 2
+            print t "\t" $3 "\t" $1 "\t" $2 "\t" $6
         }' "$CAND" 2>/dev/null \
-        | LC_ALL=C sort -t$'\t' -k1,1 -k2,2n -k3,3 | tail -n +$(($3 + 1)) | head -n "$1" \
+        | LC_ALL=C sort -t$'\t' -k1,1n -k2,2 -k3,3 | tail -n +$(($3 + 1)) | head -n "$1" \
         | while IFS=$'\t' read -r _ _ id typ summ; do
             { local LC_ALL=C.utf8; summ="${summ:0:60}"; }
             printf '%s\t%s\t%s\n' "$id" "$typ" "$summ"

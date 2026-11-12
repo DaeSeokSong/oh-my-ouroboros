@@ -97,6 +97,10 @@ learner의 룰 후보는 **Tier-1 게이트를 통과한 경우에만 Tier-2로 
 > **근거 (awesome-evals)**: Anthropic infra-noise 연구 — 동일 작업도 RAM/리소스 제한으로 점수가 **±6pp 변동** → 단발 측정은 노이즈와 구별 불가(3사이클 평균과 사이클별 원값 필수). 결과뿐 아니라 **과정(process-first)**도 측정 대상(시도 흐름·중간 실패).
 > **judge 일관성**: 측정 채점도 judge 행위 → `~/.claude/rules-lazy/llm-judge-practices.md`(이진·기준 고정) 준수.
 
+## 문제지 보관
+
+규칙 전달도 벤치(상시 규칙만 읽고 상황 문항에 답하기)의 문제지 · 정답표 · 재는 법은 `skills/harness-bench/suites/README.md` 에 고정본으로 둔다. 2026-10-01 문제지는 파일로 남기지 않아 2026-11-12 에 세션 기록에서 복구해야 했다. 근거 파일(`qa-report*.md`)은 잡 폴더에 쓸 수 없으므로 `$HOME` 아래 작업 폴더에 둔다.
+
 ## 안전장치
 
 - 동일 벤치 ID 중복 init 차단

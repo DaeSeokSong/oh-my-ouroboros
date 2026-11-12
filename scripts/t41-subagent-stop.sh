@@ -58,23 +58,22 @@ else
         | LC_ALL=C.utf8 grep -v -E '(FAIL|BLOCKED|NEEDS_CONTEXT|REJECT)[[:space:]]*[:=]?[[:space:]]*(0|없음|none|zero)([^0-9A-Za-z]|$)' | head -1)
 fi
 [ -n "$SIGNAL" ] || exit 0
-# 추적 파일(history.md)로 가는 자유 문장: 토큰·UID 형태를 가리고 80 코드포인트로 절단한다. 마스킹 종류는
-# scripts/claude-notify.sh 의 MASK_SED 와 같다(고칠 땐 함께). 절단 전에 가려야 반으로 잘린 토큰이 새지 않는다.
-SIGNAL=$(printf '%s' "$SIGNAL" | tr '\t\n\r' '   ' | sed -E \
-    -e 's/(^|[^A-Za-z0-9])(sk|tvly)-[A-Za-z0-9_-]{8,}/\1<masked>/g' \
-    -e 's/(^|[^A-Za-z0-9])m0-[A-Za-z0-9]{16,}/\1<masked>/g' \
-    -e 's/AKIA[A-Z0-9]{12,}/<masked>/g' \
-    -e 's/AIza[0-9A-Za-z_-]{30,}/<masked>/g' \
-    -e 's/gh[pousr]_[A-Za-z0-9]{20,}/<masked>/g' \
-    -e 's/github_pat_[A-Za-z0-9_]{16,}/<masked>/g' \
-    -e 's/xox[abprs]-[A-Za-z0-9-]{8,}/<masked>/g' \
-    -e 's/AT(ATT|BB|CTT)[A-Za-z0-9_=-]{16,}/<masked>/g' \
-    -e 's/Bearer [A-Za-z0-9._-]{16,}/<masked>/g' \
-    -e 's/[0-9a-fA-F]{32,}/<masked>/g' \
-    -e 's/[0-9]+(\.[0-9]+){5,}/<masked>/g' \
-    | jq -Rr '.[0:80]' 2>/dev/null)
+# 추적 파일(history.md)로 가는 자유 문장: 토큰·UID 형태를 가리고 N 코드포인트로 절단한다.
+# 가림 함수 mask_cut 의 정본은 scripts/t41-mask.sh 한 곳이다(동기 경로 agent-spawn-log.sh 와 공용, 2026-11-12).
+# shellcheck source=/dev/null
+. "$HOME/.claude/scripts/t41-mask.sh" 2>/dev/null || exit 0
+SIGNAL=$(printf '%s' "$SIGNAL" | mask_cut 80)
 [ -n "$SIGNAL" ] || exit 0
 
+# 판정할 정보 (2026-11-12): agent-spawn-log.sh 와 같은 `<소집 설명 앞 40자> | from=<원 역할> | <RESULT 줄>` 꼴로 넘긴다.
+#   SubagentStop 입력에는 소집 설명이 없다. 서브에이전트 기록 옆의 `<agent-…>.meta.json` 의 description 을 읽고
+#   (2026-11-12 실측: agentType · description · toolUseId 키), 없으면 `from=<역할> | <RESULT 줄>` 만 넘긴다.
+#   세션 기록(transcript_path 폴백)이면 meta 가 없어 설명이 빈다.
+DESC40=""
+META="${TP%.jsonl}.meta.json"
+[ "$META" != "$TP" ] && [ -f "$META" ] \
+    && DESC40=$(jq -r '.description // ""' "$META" 2>/dev/null | mask_cut 40 | sed 's/[[:space:]]*$//')
+
 # --from 자동 모드 — 약점 주체·차원 매핑은 t41-append.sh 한 곳(두 훅 공용). stderr 는 막지 않는다.
-bash "$HOME/.claude/scripts/t41-append.sh" --from "$ROLE" --signal "$SIGNAL" >/dev/null
+bash "$HOME/.claude/scripts/t41-append.sh" --from "$ROLE" --signal "${DESC40:+$DESC40 | }from=$ROLE | $SIGNAL" >/dev/null
 exit 0

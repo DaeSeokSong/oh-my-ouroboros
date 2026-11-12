@@ -79,7 +79,7 @@ Tavily 호출 시도 → 실패/미연결
 | 검색 목적 | 1순위 | 2순위 | 3순위 |
 |----------|-------|-------|-------|
 | 라이브러리 공식 문서 | context7 | WebSearch | WebFetch (공식 URL) |
-| 학술 논문 검색 | scientific-papers | WebSearch | Tavily (advanced + 학술 도메인) |
+| 학술 논문 검색 | scientific-papers | arxiv-latex-mcp | WebFetch (Semantic Scholar API 등), 그다음 Tavily (advanced + 학술 도메인) |
 | 논문 인용 신뢰도·철회 검증 | citation-verifier 에이전트(별도 소집) | — | — |
 | SOTA 벤치마크 | Tavily advanced + include_domains(arxiv.org) | scientific-papers | WebFetch |
 | 최신 뉴스/동향 | **WebSearch** (credit 0) | Tavily (topic="news") | — |

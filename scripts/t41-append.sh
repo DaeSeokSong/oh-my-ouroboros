@@ -36,15 +36,22 @@ if [[ "${1:-}" == "--from" ]]; then
     exit 2
   fi
   FROM="$2"; SIGNAL="$4"
+  # 신호 꼴 (2026-11-12): 두 훅은 `<소집 설명 40자> | from=<원 역할> | <RESULT 줄>` 을 넘긴다(설명 칸은 없을 수 있다).
+  #   귀속·target= 은 «from=… | » 뒤의 판정 부분(RES)에서만 읽는다. 설명에 FAIL·BLOCKED·target= 같은 낱말이 들어 있어도
+  #   축이 바뀌지 않게 하기 위해서다. from= 이 없는 종전 꼴은 신호 전체가 RES 다.
+  #   떼는 기준은 넘겨받은 역할 값 그대로의 `from=<FROM> | ` 의 **마지막** 자리다(2026-11-12 검수): 설명 안에 `from=… | …` 꼴 글자가
+  #   있어도 진짜 구분자는 설명 뒤에 오므로 가장 긴 접두 제거가 맞다(최단 제거는 설명 속 가짜 구분자에서 끊겼다).
+  RES="${SIGNAL}"
+  [[ "${SIGNAL}" == *"from=${FROM} | "* ]] && RES="${SIGNAL##*"from=${FROM} | "}"
   # 역할 정규화를 귀속 판단보다 먼저 적용한다(v2 A-2) — 팀원 이름(qa-p1)이 그대로 넘어오면 아래
   # qa·reviewer·security 비교가 실패해 «검증자 FAIL→coder» 규칙이 죽는다(09-26 qa-p1 실사례).
   FROM_NORM="$(normalize_role "${FROM}")"
   [[ -n "${FROM_NORM}" ]] && FROM="${FROM_NORM}"
   # herestring — `printf | grep -q` 는 grep 이 먼저 끝나면 printf 가 SIGPIPE 로 죽고 pipefail 이 그
   # 141 을 결과로 삼아 매치를 놓친다(같은 날 correction-detect 에서 재현된 경합).
-  if grep -qE '(BLOCKED|NEEDS_CONTEXT)' <<< "${SIGNAL}"; then
+  if grep -qE '(BLOCKED|NEEDS_CONTEXT)' <<< "${RES}"; then
     ROLE="${FROM}"; DIM="범위 준수"
-  elif grep -qE '(FAIL|REJECT)' <<< "${SIGNAL}" \
+  elif grep -qE '(FAIL|REJECT)' <<< "${RES}" \
        && [[ "${FROM}" == "qa" || "${FROM}" == "reviewer" || "${FROM}" == "security" ]]; then
     ROLE="coder"; DIM="구현 정확성"
   else
@@ -52,7 +59,7 @@ if [[ "${1:-}" == "--from" ]]; then
   fi
   # target=<이름> 귀속 (v2 A-5 결정 항목 3): SIGNAL 안에 target= 토큰이 있고 그 이름이 정규화로
   # 유효 역할이면 ROLE 을 그 역할로 덮는다. DIM 은 위에서 정한 값을 그대로 쓴다.
-  TARGET=$(grep -oE 'target=[A-Za-z0-9_-]+' <<< "${SIGNAL}" | head -1 | cut -d= -f2- || true)
+  TARGET=$(grep -oE 'target=[A-Za-z0-9_-]+' <<< "${RES}" | head -1 | cut -d= -f2- || true)
   if [[ -n "${TARGET}" ]]; then
     # main·general-purpose 는 agents/ 파일이 없어도 유효 역할(아래 존재 검사와 같은 예외).
     # 09-26 실측: 첫 실기록 «target=main» 이 normalize_role 빈 값으로 coder 에 오귀속됐다.
@@ -64,7 +71,7 @@ if [[ "${1:-}" == "--from" ]]; then
     fi
   fi
 elif [[ $# -eq 3 ]]; then
-  ROLE="$1"; DIM="$2"; SIGNAL="$3"
+  ROLE="$1"; DIM="$2"; SIGNAL="$3"; RES="$3"
 else
   usage
   exit 2
@@ -84,12 +91,16 @@ if [[ "${ROLE}" != "main" && "${ROLE}" != "general-purpose" ]]; then
     ROLE="${NORM}"
   else
     SIGNAL="[orig=${ROLE}] ${SIGNAL}"
+    RES="[orig=${ROLE}] ${RES}"   # 억제 키에서도 표 밖 이름끼리 섞이지 않게(종전 키가 신호 전체였을 때와 같은 구분)
     ROLE="general-purpose"
   fi
 fi
 
 DIM="$(printf '%s' "${DIM}" | tr '\t\n' '  ')"
-SIGNAL="$(printf '%s' "${SIGNAL}" | tr '\t\n' '  ')"
+# 끝 공백은 뗀다(2026-11-12 실측): agent-spawn-log.sh 의 san 이 RESULT 줄 끝 개행을 공백으로 바꿔 넘겨, 같은 결과가
+#   SubagentStop 경로(끝 공백 없음)와 다른 억제 키가 되어 history 에 두 줄 남았다.
+SIGNAL="$(printf '%s' "${SIGNAL}" | tr '\t\n' '  ' | sed 's/[[:space:]]*$//')"
+RES="$(printf '%s' "${RES}" | tr '\t\n' '  ' | sed 's/[[:space:]]*$//')"
 
 # 10분 중복 억제 (2026-09-14 재감사 §3-b) — 동기 소집은 PostToolUse 와 SubagentStop 이 **둘 다**
 # 같은 결과를 보므로 history 에 같은 신호가 두 줄 남고, T41_REPEAT 의 3회 문턱이 부풀었다.
@@ -102,7 +113,9 @@ SIGNAL="$(printf '%s' "${SIGNAL}" | tr '\t\n' '  ')"
 # 가지치기만 같은 잠금 안에서 임시 파일→mv 로 한다(candidates-append.sh 와 같은 flock 방식).
 RECENT="${CLAUDE_DIR}/_usage/t41-recent.tsv"
 LOCK="${CLAUDE_DIR}/_usage/t41.lock"
-KEY="${ROLE}/${DIM}|$(printf '%s' "${SIGNAL}" | cut -c1-60)"
+# 키는 판정 부분(RES)만 쓴다(2026-11-12): 소집 설명은 동기 경로(PostToolUse)에는 있고 SubagentStop 경로에는 없을 수 있어,
+#   설명을 키에 넣으면 같은 소집의 두 기록이 서로 다른 키가 되어 억제가 깨진다(T41_REPEAT 3회 문턱이 다시 부푼다).
+KEY="${ROLE}/${DIM}|$(printf '%s' "${RES}" | cut -c1-60)"
 NOW="$(date +%s)"
 LINE="- $(date +%Y-%m-%d) T41: ${ROLE}/${DIM} — ${SIGNAL}"
 mkdir -p "${CLAUDE_DIR}/_usage" 2>/dev/null || true
@@ -141,5 +154,7 @@ printf '%s\n' "${LINE}"
 # 쓰는 같은 대장에 T41 도 한 행 남겨야 세 갈래가 한 큐에서 판정된다. 중복 차단·id 연번·헤더 보장은
 # candidates-append.sh 잠금 안에서 하고(직접 cp→mv 하던 판은 동시 실행에서 행을 잃었다 — 재감사 B1),
 # 실패는 stdout 만 버리고 stderr 로 드러낸다 — 종전엔 cp 실패가 통째로 조용히 삼켜졌다(재감사 §3-c).
-SUMMARY="${ROLE}/${DIM}: $(printf '%s' "${SIGNAL}" | cut -c1-60)"
+# 요약 길이 (2026-11-12): 신호 앞에 소집 설명(40자)과 from= 이 붙어 종전 60바이트 절단(cut -c)으로는 한글 설명 20자 안팎에서
+#   잘려 from= · RESULT 가 통째로 빠지고 UTF-8 이 반쯤 잘렸다. 120 코드포인트 문자 단위로 자른다(설명 40 + from= + RESULT 앞부분).
+SUMMARY="${ROLE}/${DIM}: $(LC_ALL=C.utf8; printf '%s' "${SIGNAL:0:120}")"
 bash "${CLAUDE_DIR}/scripts/candidates-append.sh" T41 "${SUMMARY}" >/dev/null || true

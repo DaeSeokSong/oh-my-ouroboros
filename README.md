@@ -34,7 +34,7 @@ Like the mythic serpent coiled into a ring, this harness **feeds on its own outp
 - 🧠 **Judgment rationale lives in artifacts** — trade-offs, failure-mode definitions, and tool-selection measurements are written into the rule/skill/script that embodies them, so any future session can reproduce the reasoning from files alone.
 - 🧭 **Decisions as a UI, not a wall of text** — a decision-popup mod shows one decision at a time with a pros/cons table, an experiment summary table (what / how / why per run) and a concrete example per option. The tool refuses a call whose text names a run (by its run-name shape) without a row for it in that table, because a written rule alone was missed twice; aliases it cannot detect stay a pre-send check.
 - ✍️ **Korean prose gates** — a style checker blocks inserted dashes and a dictionary of always-wrong spellings in Confluence publishes, and a Stop hook returns a final report with typos to be fixed before it reaches the user.
-- 🛡️ **User sovereignty by construction** — pushes, deletions, training runs, and destructive writes are always user-executed; cross-session peer messages cannot escalate permissions; untrusted web content is quarantined to read-only agents.
+- 🛡️ **User sovereignty by construction** — pushes, pulls, and deploys are always user-executed, even when the user has just said yes (a hook blocks push and pull on approved commands too); data and environment changes run only after the user confirms in that turn; training runs only go up through a guarded launch set; cross-session peer messages cannot escalate permissions; untrusted web content is quarantined to read-only agents.
 
 ## 🔄 The ouroboros loop
 
@@ -93,7 +93,7 @@ The tail feeds the mouth: waste found by the audit becomes the budget for the ne
 | `experiment` | Experiment lifecycle: design → dry-run → launch → analysis → cleanup gates |
 | `workflow` | Phase-based workflow design with auto-generated rubric gates |
 | `harness-audit` | The monthly self-audit: baselines, pointer integrity, recurring-defect catalog |
-| `harness-bench` | Before/after measurement tool for rule changes, run on a temporary branch before approval; self-reported; one bench is on record so far (from the October 2026 audit) |
+| `harness-bench` | Before/after measurement tool for rule changes, run on a temporary branch before approval; self-reported; two benches are on record so far (the October 2026 audit and a fixed 24-question sheet from November 2026) |
 | `learn-from-feedback` | Hooks log corrections and repeated patterns into a candidate ledger; 3+ hits become rule proposals the user accepts or rejects |
 | `weight-edit` | Logs one no-retraining weight edit (pruning, quantization, targeted edits) as a procedure with a before-edit decision rule and a cumulative ledger with comparison tables; guarantees the record, not an accuracy gain |
 | `intent` | Writes the "why" doc (problem, outcome, constraints, open questions, premises) before non-trivial work; feature commits must cite it |

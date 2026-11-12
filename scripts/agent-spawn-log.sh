@@ -64,10 +64,18 @@ if [ "$PHASE" = "post" ]; then
         # san() 이 jq 출력의 끝 개행까지 공백으로 바꾸므로 TYPE 은 "coder " 꼴이다. 로그 형식은 그대로 두고
         # 역할 이름만 다듬어 넘긴다 — 안 다듬으면 t41-append 의 agents/<role>.md 검증이 전부 실패한다.
         ROLE_T=$(printf '%s' "$TYPE" | sed 's/[[:space:]]*$//')
+        # 판정할 정보 (2026-11-12): RESULT 줄 한 줄만으로는 무엇을 하던 소집이 누구의 FAIL 인지 알 수 없어 판정이 불가했다.
+        #   신호를 `<소집 설명 앞 40자> | from=<원 역할> | <RESULT 줄>` 꼴로 넘긴다(설명이 비면 앞 칸 생략). 40자는 jq 문자 단위 절단이다.
+        #   t41-append.sh 는 «from=… | » 뒤만 귀속·10분 중복 키에 쓰고, 설명은 history·후보 요약에만 남긴다.
         # --from 자동 모드 — 약점 주체·차원 매핑은 t41-append.sh 한 곳에만 둔다(두 훅 공용).
         # stderr 는 막지 않는다: 기록 실패를 삼키면 «T41 0건»의 원인이 또 안 보인다.
-        [ -n "$SIGNAL" ] && [ -n "$ROLE_T" ] \
-            && bash "$HOME/.claude/scripts/t41-append.sh" --from "$ROLE_T" --signal "$SIGNAL" >/dev/null
+        # 설명·RESULT 줄은 추적 파일 history.md 로 가므로 비동기 경로와 같은 가림(scripts/t41-mask.sh 의 mask_cut)을 거친다(2026-11-12 검수).
+        # shellcheck source=/dev/null
+        if [ -n "$SIGNAL" ] && [ -n "$ROLE_T" ] && . "$HOME/.claude/scripts/t41-mask.sh" 2>/dev/null; then
+            SIGNAL=$(printf '%s' "$SIGNAL" | mask_cut 80)
+            DESC40=$(printf '%s' "$INPUT" | jq -r '.tool_input.description // ""' 2>/dev/null | mask_cut 40 | sed 's/[[:space:]]*$//')
+            [ -n "$SIGNAL" ] && bash "$HOME/.claude/scripts/t41-append.sh" --from "$ROLE_T" --signal "${DESC40:+$DESC40 | }from=$ROLE_T | $SIGNAL" >/dev/null
+        fi
     fi
 fi
 exit 0

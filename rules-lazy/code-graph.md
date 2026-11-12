@@ -131,7 +131,7 @@ echo "graphify-out/" >> .gitignore
 
 > **위험**: `graph.json`·`obsidian/*.md`는 LLM 추출 산출물이라 **비결정적**(같은 입력도 서버마다 다른 텍스트가 나올 수 있음) — git이 텍스트 자동병합 불가, 두 서버가 동시에 빌드 후 각자 push하면 **수동 conflict 해결 필요**.
 
-- **빌더 구성 (07-10 결정 유지)**: 주력 1서버(서버 등록부 `graphify.builder` 가 true 인 서버)에만 설치하는 단일 빌더 원칙(§7.1 상단, 비결정적 산출물의 무가치한 중복 생성 회피) — 요일 슬롯 분산은 없다. 아래 가드는 그 단일 빌더가 push-pull 겹침을 만들지 않도록 하는 안전장치다. 커밋·push·pull은 전량 사용자 몫.
+- **빌더 구성 (07-10 결정 유지)**: 주력 1서버(서버 등록부 `graphify.builder` 가 true 인 서버)에만 설치하는 단일 빌더 원칙(§7.1 상단, 비결정적 산출물의 무가치한 중복 생성 회피) — 요일 슬롯 분산은 없다. 아래 가드는 그 단일 빌더가 push-pull 겹침을 만들지 않도록 하는 안전장치다. 커밋·push는 사용자 몫이고, ff-only pull은 무인 파이프라인(systemd, 세션 훅 관할 밖)이 한다.
 - **자동 커밋 폐지 (2026-08-05 사용자 결정 — 멀티서버 충돌 실사고 재발)**: 나이틀리는 빌드 → export → **`git add graphify-out/` 스테이징 + `.commit-msg`(gitignored) 준비 + ntfy 알림**까지만. 커밋은 사용자가 pull로 순서를 잡은 뒤 `git commit -F graphify-out/.commit-msg -- graphify-out/ && git push`. 근거: 커밋 시점을 기계가 정하면 사용자가 pull 순서를 통제할 수 없고, 무인증 서버는 behind 가드도 무력해 낡은 베이스 위 커밋이 충돌을 만든다 — 스테이징뿐이면 커밋 드랍 수술 없이 `git restore`로 폐기 가능(파생물).
 - **가드 (`scripts/ontology-pipeline.sh` — 2026-08-03 1)·3) 신설, 3) 은 08-05부터 스테이징 보류로 동작)**:
   1) **behind 빌드 금지 (detect)**: fetch 성공 시 ff-pull 필수 — ff 불가(발산·로컬 충돌)면 **skip**. 종전 "pull 실패=로컬 상태로 빌드"가 낡은 상태 위 커밋을 쌓아 발산을 만들던 발생원이었다. fetch 자체 불가(무인증 서버)만 로컬 빌드 허용.

@@ -12,8 +12,15 @@
 # 구분자는 `-` 와 `_` 둘 다 인정한다(2026-10-17 G2: `qa_v_rep` 이 general-purpose 로 새던 10-06 실사례).
 # 역할 별칭 표 (2026-10-17, 정본은 여기 한 곳): 줄임말 접두를 agents/ 이름으로 바꾼다
 # (sec-g1→security, citation-1→citation-verifier). 접두 뒤는 끝이거나 `-`·`_`·숫자일 때만 인정하고 표 밖 이름은 그대로 둔다.
+# 묶음 접두 (2026-11-12): `unit<숫자>-` · `unit<숫자>_` 는 떼고 나머지를 같은 규칙으로 푼다(unit5-security→security, unit3-qa-2→qa).
+#   검증자의 FAIL 이 general-purpose 로 오귀속되던 T41-20261112-02·04 실사례. 숫자가 없거나 구분자가 없으면(unitx-qa·unit5qa) 그대로 둔다.
 normalize_role() {
-  local raw="$1" dir="${HOME}/.claude/agents" best="" bestlen=0 f base pair
+  local raw="$1" dir="${HOME}/.claude/agents" best="" bestlen=0 f base pair rest
+  if [[ "${raw}" == unit[0-9]* ]]; then
+    rest="${raw#unit}"
+    while [[ "${rest}" == [0-9]* ]]; do rest="${rest#[0-9]}"; done
+    [[ "${rest}" == [-_]?* ]] && raw="${rest#[-_]}"
+  fi
   for pair in sec:security security:security qa:qa coder:coder scout:scout searcher:searcher planner:planner researcher:researcher \
       reviewer:reviewer docs:docs gitops:gitops tutor:tutor citation:citation-verifier; do
     if [[ "${raw}" == "${pair%%:*}" || "${raw}" == "${pair%%:*}"[-_0-9]* ]]; then raw="${pair#*:}"; break; fi

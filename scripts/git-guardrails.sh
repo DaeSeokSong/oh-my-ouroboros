@@ -43,6 +43,21 @@
 # 우회: 첫 줄 "# APPROVED" (bash-write-check와 동일 규약 — 사용자 승인 후 재실행).
 #   `# APPROVED` 가 실제 사용자 승인 발화를 인용했는지 검사하는 일은 같은 PreToolUse 체인에서
 #   먼저 도는 bash-write-check.sh 가 한다(순서: bash-write-check → git-guardrails). 여기서 반복하지 않는다.
+#   2026-11-12 결정 F1·G1(push · pull 은 사용자만): 마커 없는 명령의 판정은 종전과 같다. 마커가 있으면 사유 종류에 따라 갈린다.
+#   · 마커가 푸는 것(deny, 확장 검사의 ok=True): 하위 명령이 확정됐고 push · pull 이 아닌 차단. 작업 트리 · 색인 폐기(reset --hard·
+#     clean·checkout/restore 경로·stash·switch -f 등), ref · 객체 · 설정 삭제(branch -D·tag -d·update-ref -d·gc --prune·reflog 등),
+#     훅 우회(commit --no-verify·core.hooksPath·--template·GIT_TEMPLATE_DIR), 파일 쓰기(--output 등), 설정된 도구(maintenance·
+#     -x 없는 difftool), --work-tree·경로 해석 변수(GIT_*_PATHSPECS·GIT_INDEX_FILE·GIT_WORK_TREE·GIT_OBJECT_DIRECTORY 류)·GIT_TRACE.
+#   · 마커가 풀지 않는 것(deny_strict, 확장 검사의 기본): push · pull 과 그 계열(send-pack·http-push·remote/subtree/lfs push·lfs pre-push·
+#     lfs/subtree pull·svn dcommit/set-tree/commit-diff/branch/tag/fetch/rebase·submodule foreach push), 그리고 push · pull 을 감출 수 있어
+#     판정을 확정할 수 없는 꼴. 그 꼴은 다음 종류다. 별칭(alias 설정·-c alias.*), 다른 설정 끌어오기(include.path·GIT_CONFIG_*·GIT_DIR·
+#     --git-dir·HOME 류 변수·--config-env), 허용 목록 밖 -c 키, 다른 git-* 프로그램(--exec-path·GIT_EXEC_PATH), 명령 문자열 실행(rebase -x·
+#     bisect run·submodule foreach·difftool -x·filter-branch · filter-repo 호출 전체·--upload-pack/--exec·ext::·send-email 류·grep -O·코드를
+#     싣는 환경 변수), 셸 전개(-c 키 · 하위 명령 · 전역 옵션 · 동작어 · lfs/svn/subtree 인자의 변수·글롭·ANSI-C 인용), 셸 간접(alias·hash·
+#     함수·명령 자리 변수), 해석 실패(따옴표·heredoc·중첩·원문의 줄 이음·확장 검사 실패).
+#   줄 이음(2026-11-12): 원문은 종전 검사를 그대로 받고, 줄 이음을 이어 붙인 사본이 같은 검사를 한 번 더 받는다(둘 중 하나라도 막으면 차단).
+#   왜 이렇게 했나: 앞선 E4 안(그 턴에 확인받은 «단순 push» 꼴만 글자 해석으로 골라 통과)은 검수에서 세 번 떨어졌다. 회차마다 허용 꼴을
+#   비껴가는 새 글자 조합이 나왔다. 그래서 허용 꼴을 가리는 해석을 두지 않고 기존 push · pull 검사를 마커와 무관하게 그대로 적용한다.
 # 판정 단위 (2026-09-14 재감사 B3·B4): 명령 문자열을 `;`·`&&`·`||`·`|`·개행으로 갈라 **세그먼트마다
 #   독립 판정**한다. 전체 문자열 매칭이던 종전에는 앞 조각의 허용 예외(stash list·config --get)가
 #   뒤 조각의 파괴 동작(stash drop·config core.hooksPath 설정)까지 덮어 통과시켰다. 아래 check_git 참조.
@@ -56,22 +71,45 @@
 #   셸 별칭·함수로 감싼 git, 이 저장소 밖에서(다른 셸·편집기·전역 설정 파일 직접 수정으로)
 #   만들어 둔 설정.
 #   Write 로 ~/.gitconfig 를 만들어 전역 훅 경로를 심는 길은 scope-gate 범위 밖이다(어느 저장소에도 속하지 않는 경로라 경계 개념이 없다) — 알려진 한계.
+#   push · pull 낱말이 명령에 드러나지 않는 것: 미리 정의된 git 별칭(저장소·전역 설정)·셸 별칭·함수·래퍼 스크립트로 감싼 push,
+#   마커로 풀린 훅 경로 바꿔치기(-c core.hooksPath)가 가리키는 훅 프로그램이 하는 push. 마커가 있든 없든 이 훅은 보지 못한다.
+#   다른 프로그램이 낱말을 이어 붙여 git 을 부르는 꼴(xargs·find -exec·parallel 등에 낱말을 나눠 넘김)도 보지 못한다.
 
 INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 [ -z "$CMD" ] && exit 0
 
 # 사용자 승인 마커 (정확 매칭 — '# APPROVED_X' 오승인 방지, bash-write-check와 동일)
-echo "$CMD" | head -1 | grep -qE '^# APPROVED([[:space:]]|$)' && exit 0
+# 2026-11-12 결정 F1·G1: 마커가 있어도 바로 통과시키지 않고 아래 검사를 모두 돌린다. 마커 줄(셸에는 주석 한 줄)은 떼고 본다(인용 속 낱말이 판정에 끼지 않게).
+#   그때 deny 는 아무것도 하지 않고 deny_strict(push·pull 계열과 그것을 감출 수 있는 형태)만 막는다. 확장 검사에는 --approved 를 넘긴다.
+APPR=""
+if echo "$CMD" | head -1 | grep -qE '^# APPROVED([[:space:]]|$)'; then
+    APPR=1
+    CMD=$(printf '%s\n' "$CMD" | tail -n +2)
+    INPUT=$(printf '%s' "$INPUT" | jq -c --arg c "$CMD" '.tool_input.command = $c')
+fi
+# 2026-11-12: 셸은 낱말을 가르기 전에 줄 이음(백슬래시+줄바꿈)을 지운다(`gi⏎t push` 는 git push). 원문은 종전 검사를 그대로 받고,
+#   줄 이음을 이어 붙인 사본(JOINED)은 맨 끝에서 같은 검사를 «한 번 더» 받는다. 둘 중 하나라도 막으면 막는다. 원문을 바꿔 넘기지 않는 까닭:
+#   이어 붙이기는 따옴표·이스케이프를 보지 않아(`\\⏎` 는 셸에서 줄 이음이 아니다) 사본만 보면 원문이 막히던 꼴이 통과할 수 있다(2026-11-12 reviewer).
+JOINED=${CMD//$'\\\n'/}
 
 # git 토큰 자체가 없으면 즉시 통과 (저비용 단락). 따옴표·백슬래시로 쪼갠 이름(`g"i"t`·`g'i't`·`g\it`)은 셸이 벗긴 뒤 git 이 되므로,
-#   따옴표·백슬래시를 뗀 사본에서도 찾는다 (2026-11-09 5단계 sec4: 단락이 쪼갠 이름을 통과시켜 뒤 규칙 전체가 안 돌았다).
-echo "$CMD" | grep -q 'git' || printf '%s' "$CMD" | tr -d '"\047\134' | grep -q 'git' || exit 0
+#   따옴표·백슬래시를 뗀 사본에서도 찾는다 (2026-11-09 5단계 sec4: 단락이 쪼갠 이름을 통과시켜 뒤 규칙 전체가 안 돌았다). 원문·JOINED 둘 다에 없을 때만 통과.
+echo "$CMD" | grep -q 'git' || printf '%s' "$CMD" | tr -d '"\047\134' | grep -q 'git' \
+    || printf '%s' "$JOINED" | tr -d '"\047\134' | grep -q 'git' || exit 0
 
-deny() {
-    jq -cn --arg r "[git 차단] $1 — 사용자 직접 실행 원칙. 목적을 설명하고 승인받은 뒤 첫 줄 '# APPROVED'로 재실행하세요 (code-execution.md § Hook 차단 시 처리)." \
+emit_deny() {
+    jq -cn --arg r "[git 차단] $1" \
         '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
     exit 0
+}
+# deny: 승인 마커로 풀리는 차단(하위 명령이 확정된 파괴·훅 우회). deny_strict: 마커로도 안 풀리는 차단(2026-11-12 결정 F1·G1).
+deny() {
+    [ -n "$APPR" ] && return 0
+    emit_deny "$1 — 사용자 직접 실행 원칙. 목적을 설명하고 승인받은 뒤 첫 줄 '# APPROVED'로 재실행하세요 (code-execution.md § Hook 차단 시 처리)."
+}
+deny_strict() {
+    emit_deny "$1 — 승인 표시(# APPROVED)로도 통과하지 않습니다. push·pull 과 그것을 감출 수 있는 형태는 사용자가 터미널에서 직접 실행하세요 (2026-11-12 결정, code-execution.md § Hook 차단 시 처리)."
 }
 
 # 따옴표 문자열 제거 — 커밋 메시지·echo 인용문 오탐 방지 (bash-write-check와 동일 전처리)
@@ -121,7 +159,6 @@ strip_quoted() {
             out = out c; i++ }
         gsub(NL, ";", out); print out }'
 }
-S=$(printf '%s' "$CMD" | strip_quoted)
 
 # 명령 이름 앞 옵션 구간. 옵션과 값이 별개 토큰인 형태(`-c protocol.version=2`)까지 넘긴다.
 # (2026-09-08 security 재현: `git -c protocol.version=2 push origin main` 이 통과했다)
@@ -137,8 +174,8 @@ HP_OK="(${HOME}/\.claude/\.git/hooks|${HP_REAL:-${HOME}/\.claude/\.git/hooks}|~/
 HPK='[Cc][Oo][Rr][Ee]\.[Hh][Oo][Oo][Kk][Ss][Pp][Aa][Tt][Hh]'
 GITB='(^|[[:space:];|&(=])([^[:space:]]*/)?git'   # `=` : zsh `=git` (경로 펼침) 도 git 명령 낱말 (2026-11-09 r5fix 1)
 # 같은 명령이 HOME 을 다시 대입하면(`export HOME=…`·`HOME=… git …`) 허용값 HP_OK 의 `~`·`$HOME` 표기가 가리키는 곳이 바뀐다 → 예외 불인정 (2026-10-17 security 3차).
+#   판정할 명령마다 check_cmd 가 정한다.
 HOME_REASSIGNED=""
-printf '%s' "$CMD" | grep -qE '(^|[[:space:];&|(])(export[[:space:]]+)?HOME=' && HOME_REASSIGNED=1
 
 # 커밋의 훅 건너뛰기 옵션 (2026-10-17 검수팀 보안).
 #   --no-verify: git 은 모호하지 않은 접두를 받는다. 실측(git 2.34.1, 임시 저장소 + 실패하는 pre-commit): `--no-veri`·`--no-verif`·`--no-verify` 만 훅을 건너뛰고
@@ -178,19 +215,19 @@ check_extra() {
     local V="$1" CTX="$2" RD
     RD="${G}config[^;|&]*[[:space:]]--(get|get-all|get-regexp|get-urlmatch|list|unset|unset-all)([[:space:]]|$)"
     if echo "$V" | grep -qiE "${G}config([[:space:]][^;|&]*)?[[:space:]]include(if\.[^[:space:]]*)?\.path([[:space:]=]|$)"; then
-        echo "$V" | grep -qE "$RD" || deny "git config include.path/includeIf (다른 파일로 core.hooksPath 를 끌어들이는 우회 — 허용 예외 없음)${CTX}"
+        echo "$V" | grep -qE "$RD" || deny_strict "git config include.path/includeIf (다른 파일로 core.hooksPath 를 끌어들이는 우회 — 허용 예외 없음)${CTX}"
     fi
     echo "$V" | grep -qiE "${GITB}[^;|&]*[[:space:]]-c[[:space:]]*include(if\.[^[:space:]]*)?\.path=|--config-env[[:space:]=]+include(if\.[^[:space:]]*)?\.path=" \
-        && deny "git -c include.path= (다른 파일로 core.hooksPath 를 끌어들이는 우회 — 허용 예외 없음)${CTX}"
+        && deny_strict "git -c include.path= (다른 파일로 core.hooksPath 를 끌어들이는 우회 — 허용 예외 없음)${CTX}"
     if echo "$V" | grep -qiE "${G}config([[:space:]][^;|&]*)?[[:space:]]alias\.[^[:space:]]+"; then
-        echo "$V" | grep -qE "$RD" || deny "git config alias.* (셸 alias 로 push 등 규칙 우회 — 설정 자체를 막는다. push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
+        echo "$V" | grep -qE "$RD" || deny_strict "git config alias.* (셸 alias 로 push 등 규칙 우회 — 설정 자체를 막는다. push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
     fi
     echo "$V" | grep -qE "${G}(send-pack|http-push)([[:space:]]|$)" \
-        && deny "git send-pack/http-push (push 우회 — push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
+        && deny_strict "git send-pack/http-push (push 우회 — push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
     echo "$V" | grep -qE "${G}(remote|subtree)[[:space:]]([^;|&]*[[:space:]])?push([[:space:]]|$)" \
-        && deny "git remote/subtree … push (push 우회 — push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
+        && deny_strict "git remote/subtree … push (push 우회 — push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
     echo "$V" | grep -qE "${G}submodule[[:space:]]+([^;|&]*[[:space:]])?foreach[[:space:]]([^;|&]*[[:space:]])?[^[:space:]]*push" \
-        && deny "git submodule foreach … push (push 우회 — push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
+        && deny_strict "git submodule foreach … push (push 우회 — push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
     return 0
 }
 
@@ -201,7 +238,7 @@ check_cfg_opts() {
     local V="$1" CTX="$2" GOPT
     GOPT="${GITB}([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+"
     echo "$V" | grep -qiE "${GOPT}-c[[:space:]]*alias\." \
-        && deny "git -c alias.* (인라인 별칭으로 하위명령 규칙 우회)${CTX}"
+        && deny_strict "git -c alias.* (인라인 별칭으로 하위명령 규칙 우회)${CTX}"
     # 훅 경로 `-c` 는 정규화본에서 하위명령 위치와 무관하게 세그먼트 안 어디든 본다(8차, 과차단 허용 — 위 config 와 같은 기준).
     if echo "$V" | grep -qiE "${GITB}[^;|&]*[[:space:]]-c[[:space:]]*core\.hookspath="; then
         [ -n "$HOME_REASSIGNED" ] && deny "git -c core.hooksPath= — HOME 재대입 뒤 훅 경로 예외 불인정${CTX}"
@@ -212,7 +249,7 @@ check_cfg_opts() {
     echo "$V" | grep -qiE -e "${GOPT}--config-env[[:space:]=]+[^[:space:]]*core\.hookspath=" \
         && deny "core.hooksPath 변형 지정(--config-env) — 값을 검증할 수 없어 차단${CTX}"
     echo "$V" | grep -qE "${GOPT}-c[[:space:]]*[^[:space:]]*\\$" \
-        && deny "git -c 키에 변수 확장 — 검증 불가 (core.hooksPath 우회 가능)${CTX}"
+        && deny_strict "git -c 키에 변수 확장 — 검증 불가 (core.hooksPath 우회 가능)${CTX}"
     # 영구 설정 `git config core.hooksPath` 도 같은 사본에서 본다(6차 Codex: `core.hooks\Path` 가 통과).
     #   8차(Codex): 실행 접두(`env -u FOO`·`sudo -u x env -i` 처럼 값을 받는 래퍼 옵션)를 일일이 파싱하면 깨지므로 접두 판정을 버리고,
     #   정규화본에서는 세그먼트 안 «어디든» `git` 뒤에 `config … core.hookspath`(읽기·해제 형태가 아닌 것)가 오면 막는다.
@@ -230,9 +267,16 @@ check_git_segment() {
     local S="$1" CTX="$2"
     # 하위명령 낱말 경계에 `)` 포함(2026-10-02): `(git push)`·`$(git push)` 는 `push)` 라 공백·줄끝 경계에 안 걸렸다.
     echo "$S" | grep -qE "${G}push([[:space:])]|$)" \
-        && deny "git push (push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
+        && deny_strict "git push (push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
     echo "$S" | grep -qE "${G}pull([[:space:])]|$)" \
-        && deny "git pull (push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
+        && deny_strict "git pull (push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
+    # 2026-11-12 security: lfs push · svn 의 올려 보내기. 따옴표 제거본(check_extra)에서 보면 커밋 메시지 낱말까지 걸려 여기서만 본다.
+    echo "$S" | grep -qE "${G}(lfs[[:space:]]([^;|&]*[[:space:]])?(push|pre-push|pull)|subtree[[:space:]]([^;|&]*[[:space:]])?pull)([[:space:])]|$)" \
+        && deny_strict "git lfs push/pre-push/pull · subtree pull (push/pull 우회 — push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
+    echo "$S" | grep -qE "${G}svn[[:space:]]([^;|&]*[[:space:]])?(fetch|rebase)([[:space:])]|$)" \
+        && deny_strict "git svn fetch/rebase (SVN 서버에서 받아옴 — push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
+    echo "$S" | grep -qE "${G}svn[[:space:]]([^;|&]*[[:space:]])?(dcommit|set-tree|commit-diff|branch|tag)([[:space:])]|$)" \
+        && deny_strict "git svn dcommit/set-tree/commit-diff/branch/tag (SVN 서버로 올려 보냄 — push/pull은 항상 사용자 직접 — agent-routing.md)${CTX}"
     echo "$S" | grep -qE "${G}reset[[:space:]][^;|&]*--hard" \
         && deny "git reset --hard (작업트리·이력 파괴)${CTX}"
     echo "$S" | grep -qE "${G}clean[[:space:]][^;|&]*-[a-zA-Z]*f" \
@@ -256,7 +300,7 @@ check_git_segment() {
     echo "$S" | grep -qE "${G}(checkout|switch)[[:space:]]([^;|&]*[[:space:]])?(-[a-zA-Z]*f[a-zA-Z]*|--force|--discard-changes)([[:space:])]|$)" \
         && deny "git checkout/switch -f · --force · --discard-changes (로컬 수정 폐기 강제 전환)${CTX}"
     echo "$S" | grep -qiE "(^|[[:space:];|&(])([^[:space:]]*/)?git[^;|&]*[[:space:]]-c[[:space:]]*alias\." \
-        && deny "git -c alias.* (인라인 별칭으로 하위명령 규칙 우회)${CTX}"
+        && deny_strict "git -c alias.* (인라인 별칭으로 하위명령 규칙 우회)${CTX}"
     check_commit_opts "$S" "$CTX"
     check_extra "$S" "$CTX"
 
@@ -276,7 +320,7 @@ check_git_segment() {
     #   옵션 목록 `(-옵션 [값])*` 바로 뒤의 `-c` 만 본다: `git commit -c $SHA`(커밋 재사용 옵션)는 하위명령 뒤라 걸리지 않는다.
     if echo "$S" | grep -qE "${GITB}([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+-c[[:space:]]*[^[:space:]]*\\$" \
         || echo "$S" | grep -qiE -e "--config-env[[:space:]=]+[^[:space:]=]*\\$"; then
-        deny "git -c 키에 변수 확장 — 검증 불가 (core.hooksPath 우회 가능)${CTX}"
+        deny_strict "git -c 키에 변수 확장 — 검증 불가 (core.hooksPath 우회 가능)${CTX}"
     fi
     # 2026-10-17: 같은 우회의 변형 — `--config-env=core.hooksPath=ENV` 와 환경변수 경유(GIT_CONFIG_PARAMETERS·COUNT·KEY_n)는 값이 명령 문자열에 없어 허용값 검증이 불가능하다 → 허용 예외 없이 차단.
     if echo "$S" | grep -qiE -e "--config-env[[:space:]=]+[^[:space:]]*core\.hookspath=" \
@@ -315,8 +359,6 @@ check_git() {
     return 0
 }
 
-check_git "$S" ""
-
 # 환경변수 경유 hooksPath 지정은 따옴표 제거 «전» 원문 세그먼트에서 본다 (2026-10-17 Codex 2차).
 #   전처리(strip_quoted)가 공백 든 따옴표 문자열을 지우므로 `GIT_CONFIG_PARAMETERS="'core.hooksPath'='/dev/null' 'user.name'='x'" git commit`
 #   은 값이 통째로 사라져 위 check_git 의 같은 검사를 비껴간다. 값이 무엇이든 hookspath 가 보이면 검증 불가라 차단한다.
@@ -333,8 +375,11 @@ check_env_raw() {
         # 2026-10-17 검수팀 보안: 설정 파일·저장소 위치를 바꾸는 환경변수(전역·시스템 설정 파일 교체, 다른 .git 지정)는 그 안의 core.hooksPath 를 검사할 수 없다.
         # 명령 어디든(`env` 경유·앞선 export 포함) 있으면 막는다. 허용 예외(HP_OK) 없음, 과차단 허용.
         # 17차: 옵션형(`--git-dir=`·`--work-tree=`, 값이 따로 오는 형태 포함)도 같은 효과라 같이 막는다.
-        if printf '%s' "$v" | grep -qE '(^|[^A-Za-z0-9_])(GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|GIT_DIR|GIT_COMMON_DIR)=|(^|[[:space:]])--(git-dir|work-tree)([=[:space:]]|$)'; then
-            deny "git 설정 파일·저장소 위치 지정(환경변수 GIT_CONFIG_GLOBAL·GIT_CONFIG_SYSTEM·GIT_DIR·GIT_COMMON_DIR, 옵션 --git-dir·--work-tree) — 그 안의 core.hooksPath 를 검사할 수 없어 차단${2:-}"
+        # 2026-11-12: --work-tree 만은 다른 설정을 끌어오지 않아(push 를 감출 수 없음) 승인 마커로 풀린다.
+        printf '%s' "$v" | grep -qE '(^|[[:space:]])--work-tree([=[:space:]]|$)' \
+            && deny "git --work-tree 지정 — 확인 호출이 다른 작업 트리를 볼 수 있어 차단${2:-}"
+        if printf '%s' "$v" | grep -qE '(^|[^A-Za-z0-9_])(GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|GIT_DIR|GIT_COMMON_DIR)=|(^|[[:space:]])--git-dir([=[:space:]]|$)'; then
+            deny_strict "git 설정 파일·저장소 위치 지정(환경변수 GIT_CONFIG_GLOBAL·GIT_CONFIG_SYSTEM·GIT_DIR·GIT_COMMON_DIR, 옵션 --git-dir) — 그 안의 core.hooksPath 를 검사할 수 없어 차단${2:-}"
         fi
     done
 }
@@ -345,7 +390,7 @@ check_ansi_c() {
     local seg
     while IFS= read -r seg; do
         if grep -qF "\$'" <<< "$seg" && grep -qiE '(^|[^A-Za-z0-9_])git([^A-Za-z0-9_]|$)|GIT_CONFIG_' <<< "$seg"; then
-            deny "ANSI-C 인용(\$'…')은 해석하지 않아 차단 — git 명령 세그먼트에서는 \$'…' 를 쓰지 않는다${2:-}"
+            deny_strict "ANSI-C 인용(\$'…')은 해석하지 않아 차단 — git 명령 세그먼트에서는 \$'…' 를 쓰지 않는다${2:-}"
         fi
     done <<< "$(printf '%s' "$1" | sed -E 's/[;&|]/\n/g')"
 }
@@ -367,24 +412,34 @@ check_raw_all() {
         done <<< "$(printf '%s' "$v" | sed -E 's/[;&|]/\n/g')"
     done
 }
-check_raw_all "$CMD" ""
 
 # 셸 `-c` 페이로드 재검사 (bash-write-check.sh 의 2단계 재검사 이식).
 # 인용 페이로드만 꺼내 겉따옴표를 벗기고 같은 전처리를 다시 돌린다. 그래서 페이로드 안의
 # 커밋 메시지(`bash -c 'git commit -m "docs: git push"'`)는 여전히 지워져 오탐이 나지 않는다.
 # 파이프 대신 here-string 을 쓰는 이유는 while 이 서브셸로 떨어지면 deny 의 종료가 본체에 안 닿기 때문이다.
 SHC_RE="(^|[[:space:];&|(])([^[:space:]]*/)?(r?ba|z|da|k)?sh([[:space:]]+-[^[:space:]]+)*[[:space:]]+-c[[:space:]]+('[^']*'|\"[^\"]*\")"
-PAYLOADS=$(printf '%s\n' "$CMD" | grep -oE "$SHC_RE" | sed -E "s/^[^'\"]*//")
-while IFS= read -r payload; do
-    [ -n "$payload" ] || continue
-    P=$(printf '%s' "$payload" | sed -E "s/^(['\"])(.*)\1\$/\2/" | strip_quoted)
-    check_git "$P" " — 셸 -c 페이로드 안"
-    check_raw_all "$(printf '%s' "$payload" | sed -E "s/^(['\"])(.*)\1\$/\2/")" " — 셸 -c 페이로드 안(원문 기준)"
-done <<< "$PAYLOADS"
-
-# 확장 검사 (2026-11-09 5단계): 기존 검사를 모두 통과한 명령만 넘긴다. 실행 실패는 막는 방향이다.
-EXT_OUT=$(printf '%s' "$INPUT" | python3 -I "$(dirname "$(readlink -f "$0")")/git_guard_ext.py"); EXT_RC=$?
-[ -n "$EXT_OUT" ] && { printf '%s\n' "$EXT_OUT"; exit 0; }
-[ "$EXT_RC" -ne 0 ] && deny "확장 검사(git_guard_ext.py) 실행 실패 — 판정할 수 없어 차단"
+# 명령 한 벌의 검사 전부: 세그먼트 검사 · 원문 기준 검사 · 셸 -c 페이로드 · 확장 검사. $1 명령, $2 확장 검사에 넘길 입력 JSON, $3 사유 꼬리표.
+check_cmd() {
+    local payload P PAYLOADS EXT_OUT EXT_RC
+    HOME_REASSIGNED=""
+    printf '%s' "$1" | grep -qE '(^|[[:space:];&|(])(export[[:space:]]+)?HOME=' && HOME_REASSIGNED=1
+    check_git "$(printf '%s' "$1" | strip_quoted)" "$3"
+    check_raw_all "$1" "$3"
+    PAYLOADS=$(printf '%s\n' "$1" | grep -oE "$SHC_RE" | sed -E "s/^[^'\"]*//")
+    while IFS= read -r payload; do
+        [ -n "$payload" ] || continue
+        P=$(printf '%s' "$payload" | sed -E "s/^(['\"])(.*)\1\$/\2/" | strip_quoted)
+        check_git "$P" " — 셸 -c 페이로드 안$3"
+        check_raw_all "$(printf '%s' "$payload" | sed -E "s/^(['\"])(.*)\1\$/\2/")" " — 셸 -c 페이로드 안(원문 기준)$3"
+    done <<< "$PAYLOADS"
+    # 확장 검사 (2026-11-09 5단계): 기존 검사를 모두 통과한 명령만 넘긴다. 실행 실패는 막는 방향이다.
+    EXT_OUT=$(printf '%s' "$2" | python3 -I "$(dirname "$(readlink -f "$0")")/git_guard_ext.py" ${APPR:+--approved}); EXT_RC=$?
+    [ -n "$EXT_OUT" ] && { printf '%s\n' "$EXT_OUT"; exit 0; }
+    [ "$EXT_RC" -ne 0 ] && deny_strict "확장 검사(git_guard_ext.py) 실행 실패 — 판정할 수 없어 차단$3"
+    return 0
+}
+check_cmd "$CMD" "$INPUT" ""
+[ "$JOINED" != "$CMD" ] \
+    && check_cmd "$JOINED" "$(printf '%s' "$INPUT" | jq -c --arg c "$JOINED" '.tool_input.command = $c')" " — 줄 이음을 이어 붙인 사본"
 
 exit 0

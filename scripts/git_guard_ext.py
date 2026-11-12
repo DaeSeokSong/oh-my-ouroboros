@@ -212,6 +212,21 @@ import subprocess
 import sys
 
 TAIL = "— 사용자 직접 실행 원칙. 목적을 설명하고 승인받은 뒤 첫 줄 '# APPROVED'로 재실행하세요 (code-execution.md § Hook 차단 시 처리)."
+# 2026-11-12 decision F1/G1: push and pull are the user's alone, an `# APPROVED` marker never lifts them. git-guardrails.sh
+# passes --approved (marker line removed from the command). Then only verdicts marked deny(..., ok=True) are skipped: forms
+# whose git subcommand is fixed and is not push/pull (discarded work, erased refs, hook bypass, file writes, tools
+# or hook files on disk: --template, maintenance, a configured difftool). Everything else stays a deny by default, and only
+# these may stay so: push/pull and their family (incl. lfs push/pre-push/pull, subtree push/pull, svn dcommit/fetch/
+# rebase ...), and forms that can hide one so the verdict cannot be fixed: a command string git runs (rebase -x, bisect run,
+# submodule foreach, difftool -x, filter-branch and filter-repo as a whole, --upload-pack/--exec, ext::, send-email
+# --to-cmd and the other PROG_SUBS, grep -O), other git-* programs (--exec-path, GIT_EXEC_PATH), `-c`/config keys outside
+# the allow-list, --config-env, environment that runs code or pulls in config (all but ENV_LIFT and GIT_TRACE*), shell
+# expansion in the subcommand, global options, an action word or the arguments of lfs/svn/subtree, shell indirection
+# (alias, hash, function, `$` command word), nesting, line continuation, a failed parse, heredoc. A rule added later is
+# therefore not lifted unless marked.
+STRICT_TAIL = ("— 승인 표시(# APPROVED)로도 통과하지 않습니다. push·pull 과 그것을 감출 수 있는 형태는 사용자가 터미널에서 직접 실행하세요"
+               " (2026-11-12 결정, code-execution.md § Hook 차단 시 처리).")
+APPROVED = "--approved" in sys.argv[1:]
 HEREDOC_MSG = "git 명령과 heredoc(<<) 을 함께 쓰지 않습니다 — 커밋 메시지는 git commit -F <파일> 로"
 MAX_DEPTH = 3
 PUNCT = set(";&|()<>\n")
@@ -247,6 +262,9 @@ ENV_DENY = {
     "BROWSER", "MANPAGER", "LESSOPEN", "LESSCLOSE", "SHELLOPTS", "PS4",
 }
 TRACE_NAME = re.compile(r"GIT_TRACE\w*")
+ENV_LIFT = {"GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS", "GIT_INDEX_FILE",
+            "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_TEMPLATE_DIR"}  # marker lifts them; GIT_TEMPLATE_DIR = --template (hook files, like core.hooksPath)
 TRACE_SAFE = {"1", "2", "true", "false", "0", ""}  # any other GIT_TRACE* value is a file path or fd: appends to an arbitrary file
 ENV_PAGER = {"GIT_PAGER", "PAGER", "GIT_EDITOR", "EDITOR", "VISUAL", "GIT_SEQUENCE_EDITOR"}
 PAGER_SAFE = {"cat", "less", "more", "true", ":", ""}
@@ -262,9 +280,10 @@ WIDE_SUBS = {
     "symbolic-ref", "notes", "replace", "remote", "fetch", "pull", "repack", "maintenance", "fast-import", "bisect",
     "difftool", "mergetool", "ls-remote", "clone", "init",
     "commit", "bundle", "format-patch", "index-pack", "fast-export", "merge-file",  # r6fix 7
+    "lfs", "svn", "subtree",  # 2026-11-12: a `$a` there can become push/pull
 }
 # Subcommands whose first non-option argument is an action word (remove, run, foreach, prune, create ...); a glob there can rewrite it.
-ACT_SUBS = {"remote", "bisect", "submodule", "worktree", "notes", "maintenance", "sparse-checkout", "bundle"}
+ACT_SUBS = {"remote", "bisect", "submodule", "worktree", "notes", "maintenance", "sparse-checkout", "bundle", "lfs", "svn", "subtree"}
 # Subcommands that start a server, send mail or run a program the caller picks (rule 11 X).
 PROG_SUBS = {"instaweb", "send-email", "web--browse", "remote-ext"}
 # Options whose next argument is a value, not an action word (so `notes --ref x remove` finds `remove`).
@@ -295,9 +314,11 @@ class Deny(Exception):
     """Raised to stop the check with a deny reason."""
 
 
-def deny(msg):
-    """Abort the check and report msg as the deny reason."""
-    raise Deny(msg)
+def deny(msg, ok=False):
+    """Abort the check with msg; ok=True marks a verdict an `# APPROVED` marker lifts (then the check goes on)."""
+    if ok and APPROVED:
+        return
+    raise Deny(f"{msg} {TAIL if ok else STRICT_TAIL}")
 
 
 class QuotedTok(str):
@@ -439,7 +460,8 @@ def glob_op_paths(cmd):
 
 def has_git(text):
     """Return True when text mentions git, also when quotes or backslashes split the name (g"i"t or g-backslash-it)."""
-    return bool(GIT_WORD.search(text) or GIT_WORD.search(re.sub(r"[\"'\\]", "", text)))
+    # backslash-newline is dropped by the shell before it splits words (2026-11-12: `gi\<newline>t push` was not seen as git)
+    return bool(GIT_WORD.search(text) or GIT_WORD.search(re.sub(r"[\"'\\]", "", re.sub(r"\\\r?\n", "", text))))
 
 
 def cmd_base(tok):
@@ -471,6 +493,11 @@ def bad_env(tok):
 def deny_name(n):
     """Return True when a variable called n matters to git whatever value it gets."""
     return n in ENV_DENY or n.startswith("GIT_TEST_") or bool(re.fullmatch(r"GIT_CONFIG_(KEY|VALUE)_\d+", n))
+
+
+def env_lifted(n):
+    """Return True when the marker lifts variable n: it only moves pathspec/index/object lookup or appends a trace file, no command or config."""
+    return n in ENV_LIFT or bool(TRACE_NAME.fullmatch(n))
 
 
 def bad_targets(seg):
@@ -554,18 +581,18 @@ def check_config(val, label="git -c"):
         return
     if norm == "core.hookspath" and v.removesuffix("/") in HOOK_PATHS:
         return
-    deny(f"{label} {key} (허용 목록 밖 — 프로그램 실행·설정 끌어오기 가능)")
+    deny(f"{label} {key} (허용 목록 밖 — 프로그램 실행·설정 끌어오기 가능)", ok=norm == "core.hookspath")  # hook path: lifted as before
 
 
 def check_config_write(args):
     """Apply the -c allow-list to `git config` write forms (key+value, --add, --replace-all, `set`); reads pass."""
     if long_hit(args, ("edit", "remove-section")) or short_hit(args, "e"):
-        deny("git config --edit/--remove-section (편집기 실행·섹션 영구 삭제)")
+        deny("git config --edit/--remove-section (편집기 실행·섹션 영구 삭제)", ok=True)
     wide = long_hit(args, ("global", "system", "file", "blob")) or short_hit(args, "f")
     if wide and long_hit(args, ("unset-all",)):
-        deny("git config --unset(-all) 를 --global/--system/--file 범위에 (사용자·시스템 설정 항목 삭제 — 되돌리려면 값을 알아야 함)")
+        deny("git config --unset(-all) 를 --global/--system/--file 범위에 (사용자·시스템 설정 항목 삭제 — 되돌리려면 값을 알아야 함)", ok=True)
     if wide and long_hit(args, ("rename-section",)):
-        deny("git config --rename-section 을 --global/--system/--file 범위에 (사용자·시스템 설정 섹션 이름 바꿈 — 옛 키가 사라짐)")
+        deny("git config --rename-section 을 --global/--system/--file 범위에 (사용자·시스템 설정 섹션 이름 바꿈 — 옛 키가 사라짐)", ok=True)
     pos, read, add, k = [], False, False, 0
     while k < len(args):
         a = args[k]
@@ -582,11 +609,11 @@ def check_config_write(args):
         else:
             pos.append(a)
     if pos[:1] in (["edit"], ["remove-section"]):
-        deny("git config edit/remove-section (편집기 실행·섹션 영구 삭제)")
+        deny("git config edit/remove-section (편집기 실행·섹션 영구 삭제)", ok=True)
     if wide and pos[:1] == ["unset"]:
-        deny("git config unset 을 --global/--system/--file 범위에 (사용자·시스템 설정 항목 삭제)")
+        deny("git config unset 을 --global/--system/--file 범위에 (사용자·시스템 설정 항목 삭제)", ok=True)
     if wide and pos[:1] == ["rename-section"]:
-        deny("git config rename-section 을 --global/--system/--file 범위에 (사용자·시스템 설정 섹션 이름 바꿈)")
+        deny("git config rename-section 을 --global/--system/--file 범위에 (사용자·시스템 설정 섹션 이름 바꿈)", ok=True)
     if read:
         return
     if pos[:1] == ["set"]:
@@ -643,7 +670,7 @@ def run_git(base, popts, *args, stdin=None):
         return subprocess.run(cmd, timeout=3, capture_output=True, check=False, env=git_env(), text=True,
                               errors="replace", **feed)
     except (OSError, subprocess.SubprocessError):
-        deny("확인용 git 호출 실패 또는 3초 초과 — 변경 여부를 판정할 수 없어 차단")
+        deny("확인용 git 호출 실패 또는 3초 초과 — 변경 여부를 판정할 수 없어 차단", ok=True)
 
 
 def changed_paths(base, popts, paths):
@@ -654,26 +681,26 @@ def changed_paths(base, popts, paths):
     # all restores in the harness repo itself, which has a local filter.nomodel.)
     r = run_git(base, popts, "config", "--show-scope", "--get-regexp", r"^filter\.")
     if r.returncode not in (0, 1):
-        deny("확인용 git config 실패 — 필터 설정을 판정할 수 없어 차단")
+        deny("확인용 git config 실패 — 필터 설정을 판정할 수 없어 차단", ok=True)
     if any(ln.split("\t")[0] not in ("system", "global") for ln in r.stdout.split("\n") if ln):
         files = run_git(base, popts, "ls-files", "-z", "--", *paths)
         attrs = run_git(base, popts, "check-attr", "-z", "--stdin", "filter", stdin=files.stdout)
         if files.returncode != 0 or attrs.returncode != 0:
-            deny("확인용 git check-attr 실패 — 필터 적용 여부를 판정할 수 없어 차단")
+            deny("확인용 git check-attr 실패 — 필터 적용 여부를 판정할 수 없어 차단", ok=True)
         fields = attrs.stdout.split("\0")
         if any(v not in ("unspecified", "unset") for v in fields[2::3] if v):
-            deny("필터가 설정된 저장소의 필터 적용 파일 — 확인 호출이 필터를 실행할 수 있음")
+            deny("필터가 설정된 저장소의 필터 적용 파일 — 확인 호출이 필터를 실행할 수 있음", ok=True)
     names = []
     for extra in ([], ["--cached"]):
         if extra and run_git(base, popts, "rev-parse", "--verify", "--quiet", "HEAD").returncode != 0:
             continue
         r = run_git(base, popts, "diff", "--name-only", "--no-ext-diff", "--no-textconv", *extra, "--", *paths)
         if r.returncode != 0:
-            deny("확인용 git diff 실패 — 변경 여부를 판정할 수 없어 차단")
+            deny("확인용 git diff 실패 — 변경 여부를 판정할 수 없어 차단", ok=True)
         names += [n for n in r.stdout.split("\n") if n]
     r = run_git(base, popts, "ls-files", "-v", "--", *paths)
     if r.returncode != 0:
-        deny("확인용 git ls-files 실패 — 변경 여부를 판정할 수 없어 차단")
+        deny("확인용 git ls-files 실패 — 변경 여부를 판정할 수 없어 차단", ok=True)
     # lowercase tag = assume-unchanged, S = skip-worktree: diff cannot see edits to these files
     names += [ln[2:] for ln in r.stdout.split("\n") if len(ln) > 2 and (ln[0].islower() or ln[0] == "S")]
     return names
@@ -685,20 +712,20 @@ def is_commit(base, popts, arg):
         return False
     rc = run_git(base, popts, "rev-parse", "--verify", "--quiet", arg + "^{commit}").returncode
     if rc not in (0, 1):
-        deny("확인용 git rev-parse 실패 — 인자 종류를 판정할 수 없어 차단")
+        deny("확인용 git rev-parse 실패 — 인자 종류를 판정할 수 없어 차단", ok=True)
     return rc == 0
 
 
 def resolve_base(ctx, cdirs, relocated):
     """Return the folder git will run in, or deny when it cannot be known."""
     if ctx["has_cd"]:
-        deny("명령 안에 cd·chdir·pushd 가 있어 기준 폴더를 확정할 수 없음 — git -C <폴더> 형태로 쓰세요")
+        deny("명령 안에 cd·chdir·pushd 가 있어 기준 폴더를 확정할 수 없음 — git -C <폴더> 형태로 쓰세요", ok=True)
     if relocated:
-        deny("--git-dir·--work-tree 지정 — 확인 호출이 다른 저장소를 볼 수 있어 차단")
+        deny("--git-dir·--work-tree 지정 — 확인 호출이 다른 저장소를 볼 수 있어 차단", ok=True)
     base = ctx["cwd"]
     for d in cdirs:
         if re.search(r"[$`]", d):
-            deny("git -C 경로에 변수 확장 — 기준 폴더를 확정할 수 없음")
+            deny("git -C 경로에 변수 확장 — 기준 폴더를 확정할 수 없음", ok=True)
         base = os.path.join(base, os.path.expanduser(d))
     return base
 
@@ -715,17 +742,17 @@ def check_restore_checkout(sub, args, cmdpos, ctx, cdirs, popts, relocated):
         switch = any(o in opts for o in ("-b", "-B", "-d", "--orphan", "--detach"))
         paths = post if (switch or dd) else pos  # without `--`, pos[0] may still be a tree-ish
     if ctx["glob_ops"]:  # r5fix 6: zsh expands `a(.)` / `<->` / `(a|b)` to other paths than the tokens we checked
-        deny(f"git {sub} (경로 자리에 괄호·꺾쇠 glob 연산자 — zsh 가 펼친 경로를 확정할 수 없음)")
+        deny(f"git {sub} (경로 자리에 괄호·꺾쇠 glob 연산자 — zsh 가 펼친 경로를 확정할 수 없음)", ok=True)
     if "--patch" in opts or "-p" in opts or "--pathspec-from-file" in opts:
-        deny(f"git {sub} -p/--patch/--pathspec-from-file (버릴 변경을 미리 확인할 수 없음)")
+        deny(f"git {sub} -p/--patch/--pathspec-from-file (버릴 변경을 미리 확인할 수 없음)", ok=True)
     if not cmdpos and not (switch and not dd):
-        deny(f"git {sub} (git 이 명령 자리에 있지 않아 경로를 확정할 수 없음)")
+        deny(f"git {sub} (git 이 명령 자리에 있지 않아 경로를 확정할 수 없음)", ok=True)
     if not paths:
         return
     if any(re.search(r"[$`{}]", re.sub(r"@\{[^{}$`]*\}", "", p)) for p in paths):  # @{-1} / HEAD@{1} are revisions
-        deny(f"git {sub} (경로에 $·백틱·{{}} — 확정할 수 없음)")
+        deny(f"git {sub} (경로에 $·백틱·{{}} — 확정할 수 없음)", ok=True)
     if any(p.startswith("~") for p in paths):  # the shell expands ~ after this check, the check call would see a literal ~
-        deny(f"git {sub} (경로가 ~ 로 시작 — 셸이 펼친 경로를 확정할 수 없음)")
+        deny(f"git {sub} (경로가 ~ 로 시작 — 셸이 펼친 경로를 확정할 수 없음)", ok=True)
     base = resolve_base(ctx, cdirs, relocated)
     if sub == "checkout" and not switch and not dd and is_commit(base, popts, paths[0]):
         paths = paths[1:]
@@ -733,7 +760,7 @@ def check_restore_checkout(sub, args, cmdpos, ctx, cdirs, popts, relocated):
             return
     names = changed_paths(base, popts, paths)
     if names:
-        deny(f"git {sub} {' '.join(paths)} (커밋 안 된 변경이 있는 경로 — 되돌릴 수 없음: {names[0]} 외 {len(names) - 1}개)")
+        deny(f"git {sub} {' '.join(paths)} (커밋 안 된 변경이 있는 경로 — 되돌릴 수 없음: {names[0]} 외 {len(names) - 1}개)", ok=True)
 
 
 def check_ref_move(args, cmdpos, ctx, cdirs, popts, relocated):
@@ -742,13 +769,13 @@ def check_ref_move(args, cmdpos, ctx, cdirs, popts, relocated):
     if len(pos) < 2:
         return
     if not cmdpos:  # r5fix 12: like restore/checkout, the folder git runs in is only known when git stands at a command position
-        deny("git update-ref (git 이 명령 자리에 있지 않아 기준 폴더를 확정할 수 없음)")
+        deny("git update-ref (git 이 명령 자리에 있지 않아 기준 폴더를 확정할 수 없음)", ok=True)
     base = resolve_base(ctx, cdirs, relocated)
     rc = run_git(base, popts, "rev-parse", "--verify", "--quiet", pos[0]).returncode
     if rc == 1:
         return  # new ref: nothing is overwritten
     if rc != 0 or run_git(base, popts, "merge-base", "--is-ancestor", pos[0], pos[1]).returncode != 0:
-        deny(f"git update-ref {pos[0]} {pos[1]} (기존 ref 를 후손이 아닌 커밋으로 이동 — 커밋이 브랜치에서 빠질 수 있음)")
+        deny(f"git update-ref {pos[0]} {pos[1]} (기존 ref 를 후손이 아닌 커밋으로 이동 — 커밋이 브랜치에서 빠질 수 있음)", ok=True)
 
 
 def clone_configs(args):
@@ -848,15 +875,21 @@ def check_shell_rules(sub, args):
     if sub in ("push", "pull", "send-pack", "http-push"):
         deny(f"git {sub} (push/pull은 항상 사용자 직접 — agent-routing.md)")
     elif sub == "stash" and args[:1] not in (["list"], ["show"]):
-        deny("git stash (작업트리 변경을 치우거나 덮어씀 — 조회는 list·show)")
+        deny("git stash (작업트리 변경을 치우거나 덮어씀 — 조회는 list·show)", ok=True)
     elif sub == "commit" and any(a.startswith("--no-v") or re.fullmatch(r"-[aeinopqsvz]*n[a-zA-Z0-9]*", a) for a in before_dd(args)):
-        deny("git commit --no-verify/-n (pre-commit·commit-msg 게이트 전면 우회)")
+        deny("git commit --no-verify/-n (pre-commit·commit-msg 게이트 전면 우회)", ok=True)
     elif sub in ("checkout", "switch") and (short_hit(args, "f") or long_hit(args, ("force", "discard-changes"))):
-        deny(f"git {sub} -f/--force/--discard-changes (로컬 수정 폐기 강제 전환)")
+        deny(f"git {sub} -f/--force/--discard-changes (로컬 수정 폐기 강제 전환)", ok=True)
     elif sub in ("restore", "checkout") and any(a in (".", "./", ":/") for a in args):
-        deny(f"git {sub} . (작업트리 전체 폐기 — 경로 지정 복구는 허용)")
-    elif sub in ("remote", "subtree") and "push" in args:
+        deny(f"git {sub} . (작업트리 전체 폐기 — 경로 지정 복구는 허용)", ok=True)
+    elif sub in ("remote", "subtree", "lfs") and ("push" in args or (sub == "lfs" and "pre-push" in args)):  # lfs: 2026-11-12 security
         deny(f"git {sub} … push (push 우회 — push/pull은 항상 사용자 직접)")
+    elif sub in ("lfs", "subtree") and "pull" in args:  # 2026-11-12: same rank as git pull
+        deny(f"git {sub} … pull (pull 우회 — push/pull은 항상 사용자 직접)")
+    elif sub == "svn" and {"fetch", "rebase"} & set(args):  # pulls from the SVN server
+        deny("git svn fetch/rebase (SVN 서버에서 받아옴 — push/pull은 항상 사용자 직접)")
+    elif sub == "svn" and {"dcommit", "set-tree", "commit-diff", "branch", "tag"} & set(args):  # writes to the SVN server (2026-11-12 security)
+        deny("git svn dcommit/set-tree/commit-diff/branch/tag (SVN 서버로 올려 보냄 — push/pull은 항상 사용자 직접)")
 
 
 def check_wide(sub, args):
@@ -869,68 +902,68 @@ def check_wide(sub, args):
     if sub == "clone":  # clone -c / --config takes key=value like `git -c`: same allow-list
         for v in clone_configs(args):
             check_config(v, "git clone -c")
+    if long_hit(args, ("output",)):  # own test: inside the elif chain a lifted --output would hide the program rows below
+        deny(f"git {sub} --output (기존 파일 덮어쓰기)", ok=True)
     if long_hit(args, ("upload-pack", "receive-pack", "exec")) or (sub == "clone" and short_hit(args, "u")):
         deny(f"git {sub} --upload-pack/--receive-pack/--exec (git 이 지정한 프로그램을 실행)")
     elif sub in PROG_SUBS:
         deny(f"git {sub} (서버·메일·브라우저 등 지정한 프로그램을 실행 — --httpd·--to-cmd·--browser)")
-    elif long_hit(args, ("output",)):
-        deny(f"git {sub} --output (기존 파일 덮어쓰기)")
     elif sub in ("init", "clone") and long_hit(args, ("template",)):
-        deny(f"git {sub} --template (템플릿 폴더의 훅이 복사됨)")
+        deny(f"git {sub} --template (템플릿 폴더의 훅이 복사됨)", ok=True)
     elif sub in ("merge", "cherry-pick", "revert", "am") and long_hit(args, ("quit",)):
-        deny(f"git {sub} --quit (진행 중 작업 상태 삭제 — --abort 만 통과)")
+        deny(f"git {sub} --quit (진행 중 작업 상태 삭제 — --abort 만 통과)", ok=True)
     elif sub in ("cherry-pick", "revert", "am") and long_hit(args, ("skip",)):
-        deny(f"git {sub} --skip (진행 중인 항목을 버리고 넘어감 — 작업 상태가 바뀜, --abort 만 통과)")
+        deny(f"git {sub} --skip (진행 중인 항목을 버리고 넘어감 — 작업 상태가 바뀜, --abort 만 통과)", ok=True)
     elif sub in ("checkout", "restore") and long_hit(args, ("ours", "theirs")):
-        deny(f"git {sub} --ours/--theirs (충돌 파일을 한쪽 버전으로 덮어씀 — 해결 중인 변경이 사라짐)")
+        deny(f"git {sub} --ours/--theirs (충돌 파일을 한쪽 버전으로 덮어씀 — 해결 중인 변경이 사라짐)", ok=True)
     elif sub in ("rm", "mv") and force:
-        deny(f"git {sub} -f/--force (수정된 파일 삭제·대상 덮어쓰기)")
+        deny(f"git {sub} -f/--force (수정된 파일 삭제·대상 덮어쓰기)", ok=True)
     elif sub == "worktree" and ((act in ("remove", "move") and force) or act == "prune" or (act == "add" and short_hit(args, "B"))):
-        deny("git worktree remove/move --force·prune·add -B (변경 있는 worktree 삭제·기록 삭제·기존 브랜치 강제 이동)")
+        deny("git worktree remove/move --force·prune·add -B (변경 있는 worktree 삭제·기록 삭제·기존 브랜치 강제 이동)", ok=True)
     elif sub == "submodule" and (act == "foreach" or (act in ("deinit", "update") and force)):
-        deny("git submodule foreach·deinit/update --force (문자열 인자 실행·서브모듈 변경 폐기)")
+        deny("git submodule foreach·deinit/update --force (문자열 인자 실행·서브모듈 변경 폐기)", ok=act != "foreach")
     elif sub == "sparse-checkout" and act not in ("", "list", "check-rules"):
-        deny("git sparse-checkout (skip-worktree 로 추적 파일을 숨기거나 지움 — list 만 통과)")
+        deny("git sparse-checkout (skip-worktree 로 추적 파일을 숨기거나 지움 — list 만 통과)", ok=True)
     elif sub == "archive" and short_hit(args, "o"):
-        deny("git archive -o (기존 파일 덮어쓰기)")
+        deny("git archive -o (기존 파일 덮어쓰기)", ok=True)
     elif sub == "tag" and (short_hit(args, "df", stop="mFu") or long_hit(args, ("delete", "force"))):
-        deny("git tag -d/-f (태그 삭제·이동)")
+        deny("git tag -d/-f (태그 삭제·이동)", ok=True)
     elif sub == "branch" and (short_hit(args, "fDMC") or long_hit(args, ("force",))):
-        deny("git branch -f/-D/-M/-C (브랜치 강제 삭제·이동 — -d/-m 만 통과)")
+        deny("git branch -f/-D/-M/-C (브랜치 강제 삭제·이동 — -d/-m 만 통과)", ok=True)
     elif sub == "symbolic-ref" and (short_hit(args, "d") or long_hit(args, ("delete",)) or len(pos) >= 2):
-        deny("git symbolic-ref 쓰기/-d (HEAD 를 옮기거나 지움 — 작업 트리와 어긋남)")
+        deny("git symbolic-ref 쓰기/-d (HEAD 를 옮기거나 지움 — 작업 트리와 어긋남)", ok=True)
     elif sub == "notes" and (act in ("remove", "prune", "edit") or force):  # act skips the value of --ref
-        deny("git notes remove/prune/edit/--force (노트 삭제·편집기 실행)")
+        deny("git notes remove/prune/edit/--force (노트 삭제·편집기 실행)", ok=True)
     elif sub == "replace" and args and not (short_hit(args, "l") or long_hit(args, ("list",))):
-        deny("git replace (객체 대체 — 이력 재작성에 준함, list 만 통과)")
+        deny("git replace (객체 대체 — 이력 재작성에 준함, list 만 통과)", ok=True)
     elif sub == "remote" and act in ("remove", "rm"):
-        deny("git remote remove (원격 설정과 추적 ref 삭제)")
+        deny("git remote remove (원격 설정과 추적 ref 삭제)", ok=True)
     elif sub in ("fetch", "pull") and (force or any(a.startswith("+") for a in args)):
-        deny(f"git {sub} --force/+refspec (로컬 ref·태그 강제 덮어쓰기)")
+        deny(f"git {sub} --force/+refspec (로컬 ref·태그 강제 덮어쓰기)", ok=sub == "fetch")
     elif sub == "repack" and short_hit(args, "d"):
-        deny("git repack -d (팩 삭제 — 도달 불가 객체도 함께 사라짐)")
+        deny("git repack -d (팩 삭제 — 도달 불가 객체도 함께 사라짐)", ok=True)
     elif sub == "maintenance" and act not in ("", "run"):
-        deny("git maintenance (run 이외 — 스케줄러 등록·해제)")
+        deny("git maintenance (run 이외 — 스케줄러 등록·해제)", ok=True)
     elif sub == "fast-import" and force:
-        deny("git fast-import --force (브랜치 ref 덮어쓰기)")
+        deny("git fast-import --force (브랜치 ref 덮어쓰기)", ok=True)
     elif sub == "bisect" and act == "run":
         deny("git bisect run (스크립트 실행)")
     elif sub in ("difftool", "mergetool"):
-        deny(f"git {sub} (외부 도구 실행)")
+        deny(f"git {sub} (외부 도구 실행)", ok=not (short_hit(args, "x") or long_hit(args, ("extcmd",))))  # -x/--extcmd: a command string
     elif sub == "grep" and (short_hit(args, "O", stop="efABCm") or long_hit(args, ("open-files-in-pager",))):
         deny("git grep -O/--open-files-in-pager (페이저 프로그램 실행)")
     elif sub == "fetch" and fetch_prune_reason(args):
-        deny(f"git fetch {fetch_prune_reason(args)}")
+        deny(f"git fetch {fetch_prune_reason(args)}", ok=True)
     elif sub == "merge-file" and not (short_hit(args, "p", stop="L") or long_hit(args, ("stdout",))):
-        deny("git merge-file -p/--stdout 없이 (첫 파일을 제자리에서 덮어씀)")
+        deny("git merge-file -p/--stdout 없이 (첫 파일을 제자리에서 덮어씀)", ok=True)
     elif sub in ("fast-export", "fast-import") and long_hit(args, ("export-marks", "export-pack-edges")):
-        deny(f"git {sub} --export-marks/--export-pack-edges (지정한 파일에 씀)")
+        deny(f"git {sub} --export-marks/--export-pack-edges (지정한 파일에 씀)", ok=True)
     elif sub == "index-pack" and short_hit(args, "o"):
-        deny("git index-pack -o (지정한 파일에 씀)")
+        deny("git index-pack -o (지정한 파일에 씀)", ok=True)
     elif sub == "format-patch" and (short_hit(args, "o") or long_hit(args, ("output-directory",))):
-        deny("git format-patch -o/--output-directory (지정한 폴더에 파일을 씀)")
+        deny("git format-patch -o/--output-directory (지정한 폴더에 파일을 씀)", ok=True)
     elif sub == "bundle" and act == "create":
-        deny("git bundle create (기존 파일 덮어쓰기)")
+        deny("git bundle create (기존 파일 덮어쓰기)", ok=True)
 
 
 def check_subcommand(sub, args, cmdpos, ctx, cdirs, popts, relocated):
@@ -938,42 +971,42 @@ def check_subcommand(sub, args, cmdpos, ctx, cdirs, popts, relocated):
     check_shell_rules(sub, args)
     check_wide(sub, args)
     if sub in ("filter-repo", "filter-branch"):
-        deny(f"git {sub} (이력 전체 재작성)")
+        deny(f"git {sub} (이력 전체 재작성)")  # shell filters / python callbacks (abbreviations too): never lifted
     elif sub == "update-ref" and (
         short_hit(args, "d", stop="m") or long_hit(args, ("stdin", "delete")) or any(re.fullmatch(r"0{4,}", a) for a in args)
     ):
-        deny("git update-ref -d/--stdin/영 oid (ref 삭제 — --stdin 은 삭제 줄을 검증할 수 없음)")
-    elif sub == "update-ref":
+        deny("git update-ref -d/--stdin/영 oid (ref 삭제 — --stdin 은 삭제 줄을 검증할 수 없음)", ok=True)
+    elif sub == "update-ref" and not APPROVED:  # every verdict of the path/ref checks is lifted by the marker: skip their git calls
         check_ref_move(args, cmdpos, ctx, cdirs, popts, relocated)
     elif sub == "gc" and long_hit(args, ("prune",)):
-        deny("git gc --prune (도달 불가 객체 영구 삭제)")
+        deny("git gc --prune (도달 불가 객체 영구 삭제)", ok=True)
     elif sub == "prune" and not any(a == "--dry-run" or re.fullmatch(r"-[a-z]*n[a-z]*", a) for a in args):
-        deny("git prune (도달 불가 객체 영구 삭제 — -n/--dry-run 만 통과)")
+        deny("git prune (도달 불가 객체 영구 삭제 — -n/--dry-run 만 통과)", ok=True)
     elif sub == "reflog" and next((a for a in args if not a.startswith("-")), "") in ("expire", "delete"):
-        deny("git reflog expire/delete (복구 단서 삭제)")
-    elif sub == "rebase" and args not in (["--abort"], ["--show-current-patch"]):
-        deny("git rebase (이력 재작성 — --abort·--show-current-patch 만 통과)")
+        deny("git reflog expire/delete (복구 단서 삭제)", ok=True)
+    elif sub == "rebase" and args not in (["--abort"], ["--show-current-patch"]):  # --exec/-x runs commands: not lifted
+        deny("git rebase (이력 재작성 — --abort·--show-current-patch 만 통과)", ok=not (long_hit(args, ("exec",)) or short_hit(args, "x")))
     elif sub == "checkout-index":
-        deny("git checkout-index (작업 트리 덮어쓰기)")
+        deny("git checkout-index (작업 트리 덮어쓰기)", ok=True)
     elif sub == "read-tree" and (short_hit(args, "u") or long_hit(args, ("reset",))):
-        deny("git read-tree -u/--reset (작업 트리 덮어쓰기)")
+        deny("git read-tree -u/--reset (작업 트리 덮어쓰기)", ok=True)
     elif sub == "apply" and (long_hit(args, ("apply",)) or not any(a in ("--check", "--stat", "--numstat", "--summary") for a in before_dd(args))):
-        deny("git apply (작업 트리를 바꿈, 되돌린 패치로 변경도 지움 — --check·--stat·--numstat·--summary 조회형만 통과)")
+        deny("git apply (작업 트리를 바꿈, 되돌린 패치로 변경도 지움 — --check·--stat·--numstat·--summary 조회형만 통과)", ok=True)
     elif sub == "reset" and long_hit(args, ("hard", "merge", "keep")):
-        deny("git reset --hard/--merge/--keep (색인·작업 트리 변경 폐기 — --soft·--mixed 만 통과)")
+        deny("git reset --hard/--merge/--keep (색인·작업 트리 변경 폐기 — --soft·--mixed 만 통과)", ok=True)
     elif sub == "clean" and not (short_hit(args, "n", stop="e") or long_hit(args, ("dry-run",))):
-        deny("git clean (추적 안 되는 파일 삭제 — -n/--dry-run 만 통과)")
+        deny("git clean (추적 안 되는 파일 삭제 — -n/--dry-run 만 통과)", ok=True)
     elif sub == "switch" and (short_hit(args, "C") or long_hit(args, ("force", "discard-changes", "force-create"))):
-        deny("git switch -C/--force/--discard-changes (브랜치 강제 이동·작업 트리 변경 폐기)")
+        deny("git switch -C/--force/--discard-changes (브랜치 강제 이동·작업 트리 변경 폐기)", ok=True)
     elif sub == "update-index" and long_hit(
         args, ("assume-unchanged", "skip-worktree", "remove", "force-remove", "cacheinfo", "index-info", "replace")
     ):
-        deny("git update-index --assume-unchanged/--skip-worktree/--remove/--force-remove/--cacheinfo/--index-info (변경을 숨기거나 색인 항목을 지우거나 바꿈)")
+        deny("git update-index --assume-unchanged/--skip-worktree/--remove/--force-remove/--cacheinfo/--index-info (변경을 숨기거나 색인 항목을 지우거나 바꿈)", ok=True)
     elif sub == "config":
         check_config_write(args)
     elif sub == "checkout" and (short_hit(args, "B") or long_hit(args, ("force",))):
-        deny("git checkout -B/--force (브랜치 강제 이동·작업 트리 변경 폐기)")
-    elif sub in ("restore", "checkout"):
+        deny("git checkout -B/--force (브랜치 강제 이동·작업 트리 변경 폐기)", ok=True)
+    elif sub in ("restore", "checkout") and not APPROVED:
         check_restore_checkout(sub, args, cmdpos, ctx, cdirs, popts, relocated)
 
 
@@ -997,7 +1030,7 @@ def check_git(seg, i, ctx):
             if long_ and name == "--config-env":
                 deny("git --config-env (값이 환경 변수에 있어 검증할 수 없음)")
             if long_ and name == "--exec-path" and eq:
-                deny("git --exec-path=<값> (다른 위치의 git-* 실행 파일을 돌리게 됨)")
+                deny("git --exec-path=<값> (다른 위치의 git-* 실행 파일을 돌리게 됨)")  # like GIT_EXEC_PATH: the subcommand name no longer fixes what runs
             if o in ("-c", "-C") or (long_ and name in VALUE_LONG):
                 if long_ and eq:
                     v = val
@@ -1020,7 +1053,7 @@ def check_git(seg, i, ctx):
     else:
         sub, args = b[4:], rest
     if ctx["env_bad"]:
-        deny(f"git 실행 환경 변수 {ctx['env_bad']} (-c 와 같은 효과 — 프로그램 실행·설정 끌어오기 가능)")
+        deny(f"git 실행 환경 변수 {ctx['env_bad']} (-c 와 같은 효과 — 프로그램 실행·설정 끌어오기 가능)", ok=env_lifted(ctx["env_bad"]))
     if any(re.match(r"(?:[^\s=]*=)?ext::", t) for t in rest):
         deny("git 인자의 ext:: 전송 (임의 명령 실행)")
     for t in rest[:k]:
@@ -1038,7 +1071,7 @@ def check_git(seg, i, ctx):
             if a == "--":
                 dd = True
             elif has_expansion(a, glob=not (path_sub and (dd or not a.startswith("-")))):
-                deny(f"git {sub} {a} (셸 확장 — 검증 불가)")
+                deny(f"git {sub} {a} (셸 확장 — 검증 불가)", ok=sub not in ACT_SUBS)  # an action word could become foreach/push
     check_subcommand(sub, args, cmdpos, ctx, cdirs, popts, relocated)
 
 
@@ -1188,7 +1221,8 @@ def analyze(cmd, depth, ctx):
         **ctx,
         # cd inside a quoted payload (`eval 'cd sub'`) also moves the shell, so look at the raw text too
         "has_cd": ctx["has_cd"] or any(t in ("cd", "chdir", "pushd") for t in toks) or bool(CD_WORD.search(cmd)),
-        "env_bad": ctx["env_bad"] or next((n for n in map(bad_env, toks) if n), None) or next((n for n in (bad_targets(s) for s, _ in segs) if n), None),
+        # a name the marker cannot lift comes first, so a liftable one never hides it (2026-11-12)
+        "env_bad": next(iter(sorted((n for n in (ctx["env_bad"], *map(bad_env, toks), *(bad_targets(s) for s, _ in segs)) if n), key=env_lifted)), None),
         "glob_ops": ctx["glob_ops"] or glob_op_paths(cmd),
     }
     for seg, here in segs:
@@ -1238,9 +1272,9 @@ def main():
     except Exception as e:  # noqa: BLE001 - fail closed: a git command we could not judge is denied
         if not has_git(cmd):
             return 0
-        reason = f"확장 검사 판정 실패({type(e).__name__})"
+        reason = f"확장 검사 판정 실패({type(e).__name__}) {STRICT_TAIL}"
     out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                  "permissionDecisionReason": f"[git 차단] {reason} {TAIL}"}}
+                                  "permissionDecisionReason": f"[git 차단] {reason}"}}
     print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
     return 0
 
