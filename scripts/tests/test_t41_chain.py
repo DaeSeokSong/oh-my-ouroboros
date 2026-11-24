@@ -1,4 +1,4 @@
-"""T41 사슬 스모크 테스트 — 동기 agentId 오판 수정 + 역할 정규화 회귀 (2026-09-26 신설).
+"""T41 사슬 스모크 테스트 — 동기 agentId 오판 수정 + 역할 정규화 회귀.
 
 대상: agent-spawn-log.sh(ASYNC_RX 에서 agentId: 제거) · t41-append.sh(역할 정규화 + target= 귀속) ·
       t41-subagent-stop.sh(팀원 이름이 정규화를 거쳐 판정에 반영됨).
@@ -7,10 +7,12 @@
       scripts/ 는 실제 폴더로 심볼릭 링크한다.
 
 실행: python3 ~/.claude/scripts/tests/test_t41_chain.py → 실패 0 이면 exit 0
+REF: knowledge/harness/code-history/scripts__tests__test_t41_chain.py.md
 """
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -54,6 +56,10 @@ def history_t41(home):
             if "T41:" in ln]
 
 
+def strip_id(line):
+    return re.sub(r" — \[t41id:[0-9a-f]{8}\] ", " — ", line, count=1)
+
+
 def write_transcript(path, texts):
     lines = []
     for t in texts:
@@ -65,7 +71,6 @@ def write_transcript(path, texts):
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-# ── 픽스처 ① SubagentStop: name=qa-p1, 마지막 블록 RESULT: FAIL → 정규화 후 현행 귀속(coder)
 def test_fixture1_subagent_stop_qap1():
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, roles=("coder", "qa"))
@@ -78,7 +83,6 @@ def test_fixture1_subagent_stop_qap1():
               len(t41) == 1 and "coder/구현 정확성" in t41[0], f"{t41} rc={r.returncode} {r.stderr[:150]}")
 
 
-# ── 픽스처 ② 동기 tool_response(agentId 메타 동반) RESULT: BLOCKED → 1행
 def test_fixture2_sync_agentid_blocked():
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, roles=("coder",))
@@ -90,7 +94,6 @@ def test_fixture2_sync_agentid_blocked():
               len(t41) == 1 and "coder/범위 준수" in t41[0], f"{t41} rc={r.returncode}")
 
 
-# ── 픽스처 ③ 비동기 ack(세 문구 있음) → 0행
 def test_fixture3_async_ack_no_record():
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, roles=("coder",))
@@ -101,7 +104,6 @@ def test_fixture3_async_ack_no_record():
         check("③ 비동기 ack 는 무기록", history_t41(home) == [], str(history_t41(home)))
 
 
-# ── 픽스처 ④ 마지막 블록 RESULT: PASS → 0행 (DONE 을 정규식에 넣는 회귀 방지)
 def test_fixture4_result_pass_no_record():
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, roles=("coder",))
@@ -111,7 +113,6 @@ def test_fixture4_result_pass_no_record():
         check("④ RESULT: PASS 는 비신호(무기록)", history_t41(home) == [], str(history_t41(home)))
 
 
-# ── 픽스처 ⑤ agents/*.md 전부에 RESULT: 계약 문장 존재 (실제 ~/.claude/agents, 패키지 B 대기)
 def test_fixture5_agents_contract_line():
     files = sorted(AGENTS_REAL.glob("*.md"))
     missing = [f.name for f in files if "RESULT:" not in f.read_text(encoding="utf-8")]
@@ -119,13 +120,11 @@ def test_fixture5_agents_contract_line():
           missing == [], f"미보유: {missing}")
 
 
-# ── 추가 어서션: san 80 절단 불변
 def test_san80_unchanged():
     src = (SCRIPTS / "agent-spawn-log.sh").read_text(encoding="utf-8")
     check("san 80 호출 유지", "san 80" in src, "san 80 호출이 사라짐")
 
 
-# ── 추가 어서션: target=coder 명시 귀속
 def test_target_override():
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, roles=("coder", "scout"))
@@ -135,7 +134,6 @@ def test_target_override():
         check("target=coder 지정 시 coder 로 귀속",
               len(t41) == 1 and t41[0].split("T41: ", 1)[1].startswith("coder/"),
               f"{t41} rc={r.returncode} {r.stderr[:150]}")
-    # target=main 은 agents/ 파일이 없어도 main 으로 귀속돼야 한다(09-26 첫 실기록 오귀속 재발 방지)
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, roles=("coder", "qa"))
         r = run(["bash", str(SCRIPTS / "t41-append.sh"), "--from", "qa",
@@ -146,7 +144,6 @@ def test_target_override():
               f"{t41} rc={r.returncode} {r.stderr[:150]}")
 
 
-# ── 추가 어서션: citation-verifier-1 → citation-verifier 정규화 (첫 조각 규칙 기각 반례)
 def test_citation_verifier_normalize():
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, roles=("citation-verifier",))
@@ -158,7 +155,6 @@ def test_citation_verifier_normalize():
               f"{t41} rc={r.returncode} {r.stderr[:150]}")
 
 
-# ── 2026-10-17 G2: 구분자 `_` 도 `-` 와 같이 정규화 (qa_v_rep → qa)
 def test_underscore_normalize():
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, roles=("qa", "citation-verifier"))
@@ -172,9 +168,7 @@ def test_underscore_normalize():
         check("구분자 없는 접두(qaxyz)는 여전히 정규화 안 됨", len(t41) == 2 and "general-purpose" in t41[1], str(t41))
 
 
-# ── 2026-10-17: SubagentStop 역할 별칭 표 (sec-g1→security, qa-2→qa, foo→foo 그대로)
 def test_stop_role_alias():
-    # foo 는 표 밖이라 훅이 그대로(foo) 넘기고, 뒤단 t41-append.sh 가 agents/ 에 없는 이름을 general-purpose + [orig=foo] 로 남긴다
     for name, want in (("sec-g1", "security/범위 준수"), ("qa-2", "qa/범위 준수"), ("foo", "general-purpose/범위 준수 — [orig=foo]")):
         with tempfile.TemporaryDirectory() as tmp:
             home = make_home(tmp, roles=("coder", "security", "qa"))
@@ -183,11 +177,10 @@ def test_stop_role_alias():
             r = run_hook(["bash", str(SCRIPTS / "t41-subagent-stop.sh")], home,
                          {"hook_event_name": "SubagentStop", "name": name, "transcript_path": str(tp)})
             t41 = history_t41(home)
-            check(f"stop 별칭 {name} → {want.split('/')[0]}", len(t41) == 1 and want in t41[0] and (name != "sec-g1" or "orig=" not in t41[0]),
+            check(f"stop 별칭 {name} → {want.split('/')[0]}", len(t41) == 1 and want in strip_id(t41[0]) and (name != "sec-g1" or "orig=" not in t41[0]),
                   f"{t41} rc={r.returncode} {r.stderr[:150]}")
 
 
-# ── 2026-10-17: t41-append.sh 를 직접 부르는 경로도 같은 별칭 표(--from sec-g1 → security)
 def test_append_role_alias():
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, roles=("coder", "security"))
@@ -197,7 +190,6 @@ def test_append_role_alias():
               f"{t41} rc={r.returncode} {r.stderr[:150]}")
 
 
-# ── 2026-10-17 검수팀: role-alias.sh normalize_role 경계 값 (줄임말 접두는 끝·`-`·`_`·숫자 앞에서만 인정, 표 밖 이름은 빈 문자열)
 def test_normalize_role_boundaries():
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, roles=("coder", "security", "qa", "citation-verifier", "reviewer"))
@@ -214,7 +206,6 @@ def test_normalize_role_boundaries():
         check("normalize_role 경계: citation-1·sec1·sec-g1·security 는 정규화, secure·second·coderx·foo·빈 값은 표 밖(빈 문자열)", not bad, str(bad))
 
 
-# ── 2026-11-12: 판정할 정보가 든 신호 `<설명 40자> | from=<원 역할> | <RESULT 줄>`
 DESC = "sonnet: 후보 고리 원인 수정과 채택 지침 반영, 그리고 뒤에 붙은 아주 긴 설명 꼬리"
 DESC40 = DESC[:40].rstrip()
 
@@ -232,11 +223,10 @@ def test_signal_carries_desc_and_from():
         run_hook(["bash", str(SCRIPTS / "agent-spawn-log.sh"), "post"], home, payload)
         t41 = history_t41(home)
         want = f"coder/구현 정확성 — {DESC40} | from=qa | RESULT: FAIL 1"
-        check("동기 경로: history 에 설명 40자 · from=qa · RESULT 줄", len(t41) == 1 and t41[0].endswith(want), str(t41))
+        check("동기 경로: history 에 설명 40자 · from=qa · RESULT 줄", len(t41) == 1 and strip_id(t41[0]).endswith(want), str(t41))
         cs = cand_summaries(home)
         check("동기 경로: 후보 요약에 설명 · from= · RESULT 가 문자 단위로 온전히 남음",
               cs == [f"coder/구현 정확성: {DESC40} | from=qa | RESULT: FAIL 1"], str(cs))
-        # 같은 소집을 SubagentStop 이 설명 없이(meta 없음) 다시 보면 10분 억제로 1줄 유지
         tp = Path(tmp) / "session.jsonl"
         write_transcript(tp, ["RESULT: FAIL 1"])
         run_hook(["bash", str(SCRIPTS / "t41-subagent-stop.sh")], home,
@@ -256,7 +246,6 @@ def test_desc_words_do_not_change_axis():
 
 
 def test_sync_desc_masked_and_fake_from_in_desc():
-    # 검수 보정(2026-11-12): 동기 경로 설명도 t41-mask.sh 가림을 거치고, 설명 속 `from=… | …` 은 귀속·억제 키를 흔들지 않는다
     tok = "sk-" + "A1b2C3d4E5f6G7h8"
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, roles=("coder", "qa"))
@@ -286,7 +275,7 @@ def test_subagent_stop_reads_meta_description():
                  {"hook_event_name": "SubagentStop", "agent_type": "unit5-security", "agent_transcript_path": str(tp)})
         t41 = history_t41(home)
         check("비동기 경로: meta.json 설명 + from=unit5-security, unit 접두는 security 로 풀려 coder 귀속",
-              len(t41) == 1 and t41[0].endswith(f"coder/구현 정확성 — {DESC40} | from=unit5-security | RESULT: FAIL 1"), str(t41))
+              len(t41) == 1 and strip_id(t41[0]).endswith(f"coder/구현 정확성 — {DESC40} | from=unit5-security | RESULT: FAIL 1"), str(t41))
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, roles=("coder", "qa"))
         tp = Path(tmp) / "agent-c3.jsonl"
@@ -294,7 +283,7 @@ def test_subagent_stop_reads_meta_description():
         run_hook(["bash", str(SCRIPTS / "t41-subagent-stop.sh")], home,
                  {"hook_event_name": "SubagentStop", "agent_type": "qa", "agent_transcript_path": str(tp)})
         t41 = history_t41(home)
-        check("비동기 경로: meta 가 없으면 from= 과 RESULT 줄만", len(t41) == 1 and t41[0].endswith("qa/범위 준수 — from=qa | RESULT: BLOCKED 권한"), str(t41))
+        check("비동기 경로: meta 가 없으면 from= 과 RESULT 줄만", len(t41) == 1 and strip_id(t41[0]).endswith("qa/범위 준수 — from=qa | RESULT: BLOCKED 권한"), str(t41))
 
 
 for fn in (test_signal_carries_desc_and_from, test_desc_words_do_not_change_axis, test_sync_desc_masked_and_fake_from_in_desc,

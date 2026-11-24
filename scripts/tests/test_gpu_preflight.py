@@ -1,4 +1,7 @@
-"""tools/train-watcher/gpu_preflight.py 의 순수 판정(decide) 시험. 실제 GPU·/proc 는 건드리지 않는다."""
+"""tools/train-watcher/gpu_preflight.py 의 순수 판정(decide) 시험. 실제 GPU·/proc 는 건드리지 않는다.
+
+REF: knowledge/harness/code-history/scripts__tests__test_gpu_preflight.py.md
+"""
 import importlib.util
 import subprocess
 from pathlib import Path
@@ -55,11 +58,10 @@ def test_cpu_shortage_refused_even_on_empty_gpu():
 def test_ddp_multi_gpu_each_checked():
     ok, _ = gp.decide(GPUS, [3, 4], {3: 60.0}, 40.0, args(vram=30, cpu=12))
     assert ok
-    ok, _ = gp.decide(GPUS, [3, 4], {}, 40.0, args(vram=30, cpu=12))  # 공유 GPU3 사용률 측정 실패 → 거부
+    ok, _ = gp.decide(GPUS, [3, 4], {}, 40.0, args(vram=30, cpu=12))
     assert not ok
 
 
-# ───────────── 가짜 nvidia-smi 실행 파일(실제 nvidia-smi 는 부르지 않는다): 조회 실패·[N/A]·측정 중 점유 변화 ─────────────
 
 FAKE_SMI = """#!/bin/bash
 mode="$(cat "$(dirname "$0")/mode")"
@@ -75,7 +77,6 @@ esac
 
 @pytest.fixture
 def fake_smi(tmp_path, monkeypatch):
-    """gp._smi 가 고정 PATH 로 nvidia-smi 를 부르므로 subprocess.run 의 실행 파일만 가짜로 바꾼다(나머지 _smi 코드는 그대로 돈다). 모드는 같은 폴더 mode 파일."""
     exe = tmp_path / "nvidia-smi"
     exe.write_text(FAKE_SMI)
     exe.chmod(0o755)
@@ -91,8 +92,7 @@ def fake_smi(tmp_path, monkeypatch):
 
 
 def test_smi_query_failure_is_refused_not_read_as_empty_gpu(fake_smi, capsys):
-    """점유 프로세스 조회가 실패했는데 «빈 결과 = 빈 GPU» 로 읽어 통과하던 결함(D3)."""
-    assert gp.main(["--gpu", "0"]) == 0   # 통제: 정상 조회면 빈 GPU 통과
+    assert gp.main(["--gpu", "0"]) == 0
     fake_smi("fail")
     assert gp.main(["--gpu", "0"]) == gp.REFUSE
     assert "조회 실패" in capsys.readouterr().err
@@ -100,26 +100,24 @@ def test_smi_query_failure_is_refused_not_read_as_empty_gpu(fake_smi, capsys):
 
 def test_smi_na_value_is_a_query_failure_not_a_crash_or_arg_error(fake_smi, capsys):
     fake_smi("na")
-    assert gp.main(["--gpu", "0"]) == gp.REFUSE   # 예전에는 int('[N/A]') ValueError traceback
+    assert gp.main(["--gpu", "0"]) == gp.REFUSE
     err = capsys.readouterr().err
     assert "읽을 수 없음" in err and "memory.total" in err
 
 
 def test_smi_short_utilization_row_is_a_query_failure_not_a_crash(fake_smi, capsys):
-    """2026-10-01 P6 검수: 사용률 조회 행의 열 수가 어긋나면 unpack ValueError traceback 이 아니라 조회 실패(거부 76)여야 한다."""
     fake_smi("shortrow")
     assert gp.main(["--gpu", "0", "--vram-gb", "5", "--cpu-cores", "1", "--sample-sec", "1"]) == gp.REFUSE
     assert "형식 이상" in capsys.readouterr().err
 
 
 def test_card_taken_by_another_job_during_sampling_is_refused(fake_smi, monkeypatch, capsys):
-    """표본 60초 동안 다른 판이 올라온 카드를 측정 전 상태로 판정해 겹쳐 올리던 결함."""
     def sample_then_job_starts(targets, sec, want_util):
-        fake_smi("busy")   # 측정이 도는 사이 판이 올라옴
+        fake_smi("busy")
         return {}, 1e9
     monkeypatch.setattr(gp, "sample", sample_then_job_starts)
     assert gp.main(["--gpu", "0", "--vram-gb", "5", "--cpu-cores", "1"]) == gp.REFUSE
     assert "측정 중 새로 판이 올라온" in capsys.readouterr().err
-    fake_smi("idle")   # 통제: 변화가 없으면 통과
+    fake_smi("idle")
     monkeypatch.setattr(gp, "sample", lambda t, s, want_util: ({}, 1e9))
     assert gp.main(["--gpu", "0", "--vram-gb", "5", "--cpu-cores", "1"]) == 0

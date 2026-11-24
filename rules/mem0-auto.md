@@ -57,7 +57,7 @@ search_memories(query="관련 키워드 자연어", filters={"metadata": {"categ
 
 - 다중 카테고리 검색: 단일 호출로 다중 카테고리 지정 불가 → N회 순차 호출
 
-> **기본 limit 강제**: `search_memories` limit=5, `get_memories` limit=10 + filter 필수 (main 컨텍스트 보호 — `rules-lazy/token-efficiency.md` 참조). 초과 사용 시 명시적 사용자 요청 필요.
+> **기본 limit 강제**: `search_memories` limit=5, `get_memories` limit=10 + filter 필수. 초과 사용 시 명시적 사용자 요청 필요.
 
 ### §1.4 Smart Retrieval 규칙 (모든 search_memories 호출 시 적용)
 
@@ -101,9 +101,3 @@ search_memories(query="관련 키워드 자연어", filters={"metadata": {"categ
 ### OPTIONAL (T05, T13~T37) — 해당 시 실행 (lazy)
 
 > **상세 표·호출 템플릿 본문**: `~/.claude/rules-lazy/mem0-templates.md` § OPTIONAL 트리거 마스터 테이블
-
----
-
-## §4 infer 전략
-
-- **기본**: `infer=True` (명시하지 않아도 기본 적용, 수치 정확값은 §1.1).

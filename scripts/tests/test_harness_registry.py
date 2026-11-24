@@ -57,9 +57,9 @@ def test_bad_shapes(root):
         hr.lookup("host", "grp.n", "../box1", root=root)
     (root / "config/hosts/broken.json").write_text("{not json")
     with pytest.raises(hr.RegistryError, match="cannot read"):
-        hr.lookup("host", "grp.n", "broken", default="ignored", root=root)   # a corrupt file never falls back
+        hr.lookup("host", "grp.n", "broken", default="ignored", root=root)
     with pytest.raises(hr.RegistryError):
-        hr.lookup("host", "grp.n.deeper", "box1", root=root)                  # path walks into a scalar
+        hr.lookup("host", "grp.n.deeper", "box1", root=root)
     assert cli("host", "k", "--host", "../etc").returncode == 1
     assert cli("bogus", "k").returncode == 2
 

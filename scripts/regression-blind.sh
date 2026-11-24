@@ -29,8 +29,6 @@ mkdir -p "$BENCH_DIR"
 ACTION="${1:-help}"
 shift 1 || true
 
-# ── helpers ────────────────────────────────────────────────────────────────────
-
 _experiment_gate() {
     if [[ -f "$HOME/.claude/_bench/.experiment_active" ]]; then
         echo "실험 활성 — 보류"
@@ -38,7 +36,6 @@ _experiment_gate() {
     fi
 }
 
-# settings.json에서 hooks 제거 (jq 우선, python3 폴백)
 _remove_hooks() {
     local settings_file="$1"
     [[ ! -f "$settings_file" ]] && return 0
@@ -61,7 +58,6 @@ PYEOF
     fi
 }
 
-# rsync 우선, cp -a 폴백으로 디렉토리 경량 복사
 _copy_claude_dir() {
     local src="$1" dst="$2"
     mkdir -p "$dst"
@@ -83,18 +79,15 @@ _copy_claude_dir() {
             --exclude='ide' \
             "$src/" "$dst/"
     else
-        # cp -a 폴백: 전체 복사 후 무거운 폴더만 제거
         cp -a "$src/." "$dst/"
         for excl in projects jobs _bench shell-snapshots todos statsig \
                     file-history worktrees teams logs .git downloads ide; do
             rm -rf "${dst:?}/$excl" 2>/dev/null || true
         done
-        # history.jsonl 파일 제거
         rm -f "${dst:?}/history.jsonl" 2>/dev/null || true
     fi
 }
 
-# ── prepare ────────────────────────────────────────────────────────────────────
 cmd_prepare() {
     local candidate_edit_file="${1:-}"
     local work_dir="${2:-}"
@@ -118,15 +111,12 @@ cmd_prepare() {
     echo "work_dir:  $work_dir"
     echo ""
 
-    # ruleset_old 복사
     echo "[1/4] ruleset_old 복사 중..."
     _copy_claude_dir "$HOME/.claude" "$old_dir"
 
-    # ruleset_new 복사
     echo "[2/4] ruleset_new 복사 중..."
     _copy_claude_dir "$HOME/.claude" "$new_dir"
 
-    # ruleset_new에 후보 룰 append (원본 CLAUDE.md 불변)
     echo "[3/4] 후보 룰 적용 (ruleset_new/CLAUDE.md append)..."
     local new_claude_md="$new_dir/CLAUDE.md"
     if [[ -f "$new_claude_md" ]]; then
@@ -137,7 +127,6 @@ cmd_prepare() {
         cat "$candidate_edit_file" > "$new_claude_md"
     fi
 
-    # 양쪽 settings.json hooks 제거 (부작용 차단)
     echo "[4/4] settings.json hooks 제거..."
     _remove_hooks "$old_dir/settings.json"
     _remove_hooks "$new_dir/settings.json"
@@ -148,23 +137,22 @@ cmd_prepare() {
     echo "NEW: $new_dir"
 }
 
-# ── run ────────────────────────────────────────────────────────────────────────
 cmd_run() {
     local work_dir="${1:-}"
     local suite_file="${2:-}"
-    local MODEL="haiku"  # 별칭 — 특정 버전 하드코딩 금지
+    local MODEL="haiku"  # NEVER: 특정 버전을 하드코딩하지 않는다(별칭)
     local CATCH_N=2
     shift 2 2>/dev/null || true
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            # 값 없음 방어 (2026-07-18 Codex): shift 2가 인자 1개 남을 때 실패해 무한루프
+            # WHY: 값 없음 방어 (2026-07-18 Codex): shift 2가 인자 1개 남을 때 실패해 무한루프
             --model)
                 [[ -z "${2:-}" ]] && { echo "--model 값 필요" >&2; exit 2; }
                 MODEL="$2"; shift 2 ;;
             --catch)
                 [[ -z "${2:-}" ]] && { echo "--catch 값 필요" >&2; exit 2; }
-                # 숫자 검증 + 최소 1 (catch=0은 attention-check 무력화 → blind 게이트 우회)
+                # NEVER: --catch 0 을 받지 않는다. catch=0은 attention-check 무력화 → blind 게이트 우회
                 [[ "$2" =~ ^[0-9]+$ ]] || { echo "--catch는 양의 정수" >&2; exit 2; }
                 [ "$2" -lt 1 ] && { echo "--catch는 1 이상 (0은 catch trial 없어 게이트 우회)" >&2; exit 2; }
                 CATCH_N="$2"; shift 2 ;;
@@ -195,7 +183,6 @@ cmd_run() {
     local key_tsv="$work_dir/key.tsv"
     mkdir -p "$pairs_dir"
 
-    # key.tsv 헤더
     echo -e "trial_idx\ttype\tnew_label" > "$key_tsv"
 
     echo "── regression-blind run ──────────────────────────────"
@@ -208,7 +195,6 @@ cmd_run() {
     echo "   실제 실행 전 사용자가 직접 수행하세요."
     echo ""
 
-    # task 목록 읽기 (빈 줄·# 주석 제외)
     mapfile -t TASKS < <(grep -v '^[[:space:]]*$\|^#' "$suite_file")
     local real_count=${#TASKS[@]}
 
@@ -222,11 +208,7 @@ cmd_run() {
 
     local idx=0
 
-    # real trials
     for task in "${TASKS[@]}"; do
-        local t_start
-        t_start=$(date +%s)
-
         echo "[trial $idx] task: ${task:0:60}..."
 
         local out_old out_new
@@ -235,19 +217,17 @@ cmd_run() {
         out_new=$(CLAUDE_CONFIG_DIR="$new_dir" claude -p "$task" \
             --model "$MODEL" --output-format text 2>/dev/null) || out_new="(오류)"
 
-        # 라벨 랜덤 셔플 (A/B 어느 쪽이 new인지 숨김)
-        # new_label은 new 콘텐츠가 실제로 들어간 라벨과 일치해야 함 (verdict W 계산의 정확성)
-        local new_label="B"               # 기본: A=old, B=new → new는 B
+        # NEVER: new_label 을 new 콘텐츠가 실제로 들어간 라벨과 다르게 두지 않는다 (verdict W 계산의 정확성)
+        local new_label="B"
         local label_a_content="$out_old"
         local label_b_content="$out_new"
         local coin=$(( RANDOM % 2 ))
         if [[ "$coin" -eq 1 ]]; then
-            new_label="A"                 # 셔플: A=new, B=old → new는 A
+            new_label="A"
             label_a_content="$out_new"
             label_b_content="$out_old"
         fi
 
-        # pairs/<idx>.txt 저장
         {
             echo "=== Trial $idx ==="
             echo "Task: $task"
@@ -259,15 +239,13 @@ cmd_run() {
             echo "$label_b_content"
         } > "$pairs_dir/${idx}.txt"
 
-        # key.tsv 기록 (사용자에게 안 보임)
         printf "%s\treal\t%s\n" "$idx" "$new_label" >> "$key_tsv"
 
         idx=$(( idx + 1 ))
-        # 블라인드 유지 (2026-07-17 Codex C3): new_label을 stdout에 노출하지 않는다 — 운영자 편향 방지. key_tsv에만 보존.
+        # NEVER: new_label을 stdout에 노출하지 않는다 (2026-07-17 Codex C3) — 운영자 편향 방지. key_tsv에만 보존.
         echo "  → trial $((idx-1)) 저장 완료 (파일: pairs/$((idx-1)).txt)"
     done
 
-    # catch trials — old 출력을 양쪽 동일하게 삽입
     for (( c=0; c<CATCH_N; c++ )); do
         local catch_task_idx=$(( RANDOM % real_count ))
         local catch_task="${TASKS[$catch_task_idx]}"
@@ -289,7 +267,6 @@ cmd_run() {
             echo "$out_catch"
         } > "$pairs_dir/${idx}.txt"
 
-        # catch: new_label=none (정답=same, A≡B)
         printf "%s\tcatch\tnone\n" "$idx" >> "$key_tsv"
 
         idx=$(( idx + 1 ))
@@ -305,21 +282,19 @@ cmd_run() {
     echo "아래 파일들을 순서대로 열어 각 trial의 A/B 중 더 나은 응답을 선택하세요."
     echo "(catch trial은 A≡B — 구별 불가 시 'same' 입력)"
     echo ""
-    # 블라인드 유지 (2026-07-17 Codex C3): trial 타입(real/catch)을 판정자 리스팅에 노출하지 않는다 — key_tsv에만 보존
+    # NEVER: trial 타입(real/catch)을 판정자 리스팅에 노출하지 않는다 (2026-07-17 Codex C3) — key_tsv에만 보존
     for (( i=0; i<idx; i++ )); do
         echo "  trial $i: $pairs_dir/${i}.txt"
     done
     echo ""
     echo "picks_file 형식(TSV — verdict에 전달):"
     echo "  trial_idx<TAB>type<TAB>user_pick(A|B|same)<TAB>new_label<TAB>response_sec"
-    echo "  예: 0\treal\tA\tA\t5"
+    printf '%s\n' "  예: 0\treal\tA\tA\t5"
     echo ""
     echo "verdict 실행:"
     echo "  regression-blind.sh verdict <picks_file>"
 }
 
-# ── verdict ────────────────────────────────────────────────────────────────────
-# 모델 호출 없음 — 결정론적
 cmd_verdict() {
     local picks_file="${1:-}"
 
@@ -336,7 +311,6 @@ cmd_verdict() {
     echo "picks: $picks_file"
     echo ""
 
-    # TSV 파싱 + 통계 계산 (python3 — bash 산술 부동소수점 한계 회피)
     python3 - "$picks_file" <<'PYEOF'
 import sys, math
 
@@ -466,7 +440,6 @@ PYEOF
     exit $py_exit
 }
 
-# ── 서브커맨드 라우팅 ───────────────────────────────────────────────────────────
 case "$ACTION" in
     prepare)
         cmd_prepare "$@"

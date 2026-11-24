@@ -1,40 +1,7 @@
-#!/usr/bin/env python3
 """korean-style-gate.sh (+ korean_style_check.py) 회귀 테스트.
 
 실행: python3 ~/.claude/scripts/tests/test_korean_style_gate.py → 실패 0 이면 exit 0
-
-■ 파악한 계약 (소스 대조 — 추측 아님)
-  · 입력: PreToolUse 훅이 stdin 으로 JSON 을 받는다. 훅은 `.tool_name` 을 읽어
-    `*updateConfluencePage` / `*createConfluencePage` 로 끝나는 도구만 검사하고
-    (settings.json matcher: `mcp__claude_ai_Atlassian__(update|create)ConfluencePage`),
-    그 외 도구는 즉시 exit 0(무출력). 본문은 `.tool_input.body` 필드에서 꺼낸다.
-    본문이 비어 있으면 역시 exit 0(무출력).
-  · 훅 프로세스는 항상 exit 0 이다. Claude Code PreToolUse 훅 프로토콜은 차단 여부를
-    exit code 가 아니라 stdout JSON 의 `hookSpecificOutput.permissionDecision` 필드로
-    전달한다. 그래서 이 테스트는 exit code 대신 그 필드로 통과/차단을 판정한다.
-  · 차단 시 stdout: `{"hookSpecificOutput":{"hookEventName":"PreToolUse",
-    "permissionDecision":"deny","permissionDecisionReason":"..."}}` (jq -nc 로 생성,
-    REASON 은 "★한국어 문체 3규칙 위반 — 게시 중단." 으로 시작). 통과 시 stdout 은 빈 문자열.
-  · korean_style_check.py 의 실제 판정(check() 함수, 스크립트 자체 12행 주석에도 명시):
-    ① 산문 문장 안 삽입 대시(—, &mdash;) → 차단(blocked)
-    ② 제목(h1~h6) 안 대시 → 차단
-    ③ 쉼표 2개 이상인 문장 → 경고(warned)만, 차단 아님
-    ④ 영문·숫자 뒤 조사 → 경고만, 차단 아님
-    report() 는 blocked 가 1건이라도 있어야 exit 1(→ 훅이 deny)이고, warned 만 있으면
-    exit 0(→ 훅이 통과)이다. 즉 이 훅이 실제로 막는 건 삽입 대시뿐이고 쉼표 위반은
-    막지 않는다(아래 케이스 2 참조 — CLAUDE.md 문체 3규칙엔 쉼표도 위반으로 적혀 있지만,
-    이 게이트 구현은 경고로만 처리한다. 스크립트 자체 주석에 명시된 설계다).
-  · 제외 대상(코드가 실제로 지우는 것, `_strip_cells`): `<td>/<th>` 표 셀, `<ac:link>` 안
-    페이지 제목, `<code>` 내용. 이 안의 대시는 검사 대상에서 아예 사라진다(케이스 5).
-
-■ 케이스 요약
-  1. 산문 <p> 안 삽입 대시 → 차단
-  2. 쉼표 2개 이상(대시 없음) → 경고만, 차단 아님(실제 계약 — 위 설명 참조)
-  3. 위반 없는 정상 본문 → 통과(무출력)
-  4. 제목의 콜론 형식(대시 없음) → 통과(오탐 방지)
-  5. <code> 블록 안의 대시 → 통과(제외 대상 실측 확인)
-  6. 제목(h1) 안 삽입 대시 → 차단(제목 전용 분기)
-  7. Confluence 편집 도구가 아닌 tool_name → 훅이 본문을 보지 않고 즉시 통과
+REF: knowledge/harness/code-history/scripts__tests__test_korean_style_gate.py.md
 """
 import json
 import subprocess
@@ -46,15 +13,13 @@ CONFLUENCE_TOOL = "mcp__claude_ai_Atlassian__updateConfluencePage"
 
 
 def run(tool_name: str, body: str, fmt: str | None = "html"):
-    """fmt: tool_input.contentFormat 값(2026-10-01 감사: 훅이 형식에 따라 html/markdown 모드를 고른다). None 이면 필드 없음."""
     tool_input = {"body": body} if fmt is None else {"body": body, "contentFormat": fmt}
     payload = json.dumps({"tool_name": tool_name, "tool_input": tool_input})
-    r = subprocess.run(["bash", str(HOOK)], input=payload, capture_output=True, text=True)
+    r = subprocess.run(["bash", str(HOOK)], input=payload, capture_output=True, text=True, check=False)
     return r.returncode, r.stdout.strip(), r.stderr.strip()
 
 
 def denied(stdout: str):
-    """stdout 이 deny JSON 이면 (True, reason), 아니면 (False, None) 을 준다."""
     if not stdout:
         return False, None
     try:
@@ -88,7 +53,7 @@ fail = 0
 for name, tool_name, body, want_denied in CASES:
     rc, out, err = run(tool_name, body)
     is_denied, reason = denied(out)
-    rc_ok = rc == 0   # 훅은 항상 exit 0 이어야 한다(차단도 exit 0 + deny JSON)
+    rc_ok = rc == 0
     verdict_ok = is_denied == want_denied
     ok = rc_ok and verdict_ok
     fail += 0 if ok else 1
@@ -100,14 +65,12 @@ for name, tool_name, body, want_denied in CASES:
         detail = f"\n     reason 앞부분: {reason[:60]!r}"
     print(f"{tag} {name}:{detail}")
 
-# REASON 문구 계약 고정(차단 케이스 하나로 재확인)
 rc, out, _ = run(CONFLUENCE_TOOL, "<p>이 문장은 — 중간에 대시가 있다.</p>")
 is_denied, reason = denied(out)
 reason_ok = is_denied and reason.startswith("★한국어 문체 3규칙 위반 — 게시 중단.")
 print(f"{'OK ' if reason_ok else 'FAIL'} REASON 문구 계약(★한국어 문체 3규칙 위반으로 시작): {reason[:40]!r}")
 fail += 0 if reason_ok else 1
 
-# ── 2026-10-01 감사: 본문 형식(contentFormat)별 판정. 수정 전에는 항상 HTML 로 읽어 markdown·ADF 위반이 «0건» 으로 통과했다 ──
 MD_BAD = "# 제목\n\n이 문장은 — 중간에 대시가 있다.\n"
 MD_OK = "# 제목\n\n이 문서는 정상적으로 작성됐다.\n"
 FMT_CASES = [

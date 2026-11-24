@@ -1,10 +1,5 @@
 """plan-confirm-gate.py — main 세션이 계획 확정 없이 «바꾸는 도구» 를 부르면 막는 PreToolUse 게이트
 
-■ 왜 훅인가 (판단 근거 이식 — 2026-11-11)
-  규칙은 CLAUDE.md 원칙 3 «수정 계획 보고 → 승인 후 진행» 한 줄뿐이었고 무엇이 승인 대상인지가 main 판단에 맡겨져,
-  3줄 요약만 적고 바로 고치는 일이 되풀이됐다(2026-11-06 «결정 답에 질문 · 수정이 섞이면 고친 계획부터 보고», 2026-10-17 점검을 빠뜨린 발사).
-  사용자 지시(2026-11-11): «main 세션의 경우 계획 보고 후 사용자와 의견 주고 받은 후 확정되면 진행하도록 하는 걸 하네스에 기입해».
-  external-model-gate.py 와 같은 결론이다: «매번 기억해서 지킨다» 를 게이트로 옮긴다.
   의뢰서: intent/2026-11-11-plan-confirm-gate.md · 계획: docs/superpowers/plans/2026-11-11-plan-confirm-gate.md · 규칙 정본: rules-lazy/pre-work-summary.md § 계획 확정
 
 ■ 판정 순서 (계획 2.1, 2026-11-11 검수 반영)
@@ -63,9 +58,6 @@
     - 기록용 명령: 명령 글이 record_commands 의 정확한 경로(«~/…» · «$HOME/…» 꼴 · 펼친 경로 · 실제 경로)로 시작하고, 그 뒤 인자 어디에도
       (따옴표 안 포함) RECORD_ARG_FORBIDDEN 문자(명령을 잇거나 바꿔 넣는 ; | & $ ` < > ( ) { } \\ # 개행 복귀)가 없다.
     - 그 밖은 전부 바꾸는 것이다. 명령을 풀어 읽지 않는다.
-    구조를 바꾼 까닭: 명령을 풀어 읽는 허용 문법(조각 나누기 · 명령별 옵션 목록 · 인용 판별 · git 전역 옵션 규칙)이 security 검수 세 번 연속으로
-    새 틈을 냈다(1차 접두 명령 · 변수 앞세우기, 2차 글롭 · 중괄호 전개와 tmux 구분자, 3차 주석 뒤 따옴표가 줄을 넘어 뒤 줄을 가림과 기록용 폴더의
-    git 설정 실행 항목). 셸 문법을 다시 구현하는 판정은 끝까지 셸과 어긋나므로 풀어 읽기를 그만두고 글자 일치로 바꿨다.
   · MCP: mcp_allow_tools(결정 팝업 · 메모리 기록)에 들거나 도구 이름의 첫 낱말(서버 이름 낱말 뒤 첫 낱말 포함)이 mcp_read_verbs 에 들면 통과.
   · 설정 pass_tools(Read · Grep · Glob · AskUserQuestion · SendMessage · Skill 등)는 통과. SendMessage · Skill 은 훅 대상에 넣지 않고
     문구 규칙으로 다룬다(2026-11-11 main 결정, 남는 한계). 그 밖의 모든 도구는 바꾸는 것이다.
@@ -102,6 +94,7 @@
   · 확정이 살아 있는 동안 대화 기록 파일 자체를 고쳐 쓰는 위조는 막지 않는다. 등록 전 시작 세션을 resume 하면 계속 등록 전 세션이다.
   · AskUserQuestion 에서 선택지 이름과 글자 하나까지 같은 글을 직접 쳤으면 고른 것과 구분하지 못한다.
 시험: scripts/tests/test_plan_confirm_gate.py (pytest, 합성 대화 기록). 이 파일을 고치면 먼저 돌린다.
+REF: knowledge/harness/code-history/scripts__plan-confirm-gate.py.md
 """
 from __future__ import annotations
 
@@ -114,37 +107,35 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.dont_write_bytecode = True   # external-model-gate.py 를 불러올 때 하네스 scripts/ 에 __pycache__ 를 남기지 않는다
-UTC = timezone.utc   # noqa: UP017  훅은 시스템 python3 3.10 으로 돈다(datetime.UTC 는 3.11 부터)
+sys.dont_write_bytecode = True   # WHY: external-model-gate.py 를 불러올 때 하네스 scripts/ 에 __pycache__ 를 남기지 않는다
+# WHY: 훅은 시스템 python3 3.10 으로 돈다(datetime.UTC 는 3.11 부터)
+UTC = timezone.utc   # noqa: UP017
 
 HARNESS = Path(__file__).resolve().parent.parent
 CONFIG = HARNESS / "config/plan-confirm-gate.json"
 EXTERNAL_GATE = HARNESS / "scripts/external-model-gate.py"
-# «잘못된 막힘» 표시가 있을 때 판정 불가 상태에서도 Write · Edit 를 허용하는 훅 자신의 파일 묶음(계획 2.5)
 HOOK_FILES = (HARNESS / "scripts/plan-confirm-gate.py", CONFIG,
               HARNESS / "scripts/tests/test_plan_confirm_gate.py", HARNESS / "rules-lazy/pre-work-summary.md")
 TAG = "[계획 확정 게이트]"
 POPUP_TOOL = "mcp__decision-popup__ask"
-# 사건 없이 읽는 상한. 실측(2026-11-11, 검수 반영판): 이 서버 실제 기록 351MB~1,021MB 3개는 최근 사건을 0.05~0.09초에 찾았고, 사건이 없는 116MB
+# WHY: 사건 없이 읽는 상한. 실측(2026-11-11, 검수 반영판): 이 서버 실제 기록 351MB~1,021MB 3개는 최근 사건을 0.05~0.09초에 찾았고, 사건이 없는 116MB
 # 합성 기록(사람 글 · main 글 · 도구 결과 섞음)에서 64MB 까지 읽고 멈추는 최악이 0.54초였다(훅 timeout 10초 대비 여유). 그보다 오래된 확정은 최종 보고 없이 64MB 를 넘긴 작업뿐이라 다시 확정받게 한다.
 SCAN_LIMIT_BYTES = 64 * 1024 * 1024
-# 선택 창 답에서 그 tool_use 를 찾으러 거슬러 올라가는 줄 수 상한. 실측(2026-11-11): 같은 폴더 기록의 선택 창 답 348건에서 tool_use 와 답 사이는
+# WHY: 선택 창 답에서 그 tool_use 를 찾으러 거슬러 올라가는 줄 수 상한. 실측(2026-11-11): 같은 폴더 기록의 선택 창 답 348건에서 tool_use 와 답 사이는
 # 최대 27줄 · 99분위 16줄이었다. 5000 은 그 180배 여유이고, 못 찾으면 부여하지 않는 쪽(막는 쪽)으로 틀린다.
 BIND_LOOKBACK_LINES = 5000
-SESSION_ID_OK = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # 표시 파일 이름으로 쓰므로 mod 와 같은 모양 검사
+SESSION_ID_OK = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 AGENT_TOOLS = ("Agent", "Task")
 SHELL_TOOLS = ("Bash", "Monitor")
 ALWAYS_CHANGING = ("Workflow", "CronCreate", "CronDelete", "RemoteTrigger", "ScheduleWakeup", "TeamCreate", "EnterWorktree", "ExitWorktree")
 END_REASONS = ("end_turn", "stop_sequence")
 STATE_MARK = "_usage/plan-confirm-gate"
-# 기록용 명령 인자에 하나라도 있으면 바꾸는 것으로 보는 문자(따옴표 안 포함): 명령을 잇거나(; | & 개행 복귀) 바꿔 넣는($ ` < > ( ) { } \ #) 문자
 RECORD_ARG_FORBIDDEN = frozenset(";|&$`<>(){}\\#\n\r")
 
 ANSWER_PART = re.compile(r": (\d+|직접 입력)\) ")
 LIST_KEYS = ("immediate_phrases", "immediate_phrases_word_end", "negation_phrases", "stop_phrases", "readonly_agents", "pass_tools",
              "record_commands", "mcp_read_verbs", "mcp_allow_tools", "artifact_read_actions")
-# 비면 규칙 하나가 꺼지는 목록(중단 문구 없음 = 중단 불가, 조회용 에이전트 없음 = 1의 판정 꺼짐, 부정 표현 없음 = 부정 무시) — 비면 판정 불가
 NONEMPTY_KEYS = ("stop_phrases", "readonly_agents", "negation_phrases")
 
 
@@ -153,28 +144,25 @@ class Undecidable(Exception):
 
 
 def deny(reason: str) -> None:
-    """Emit a PreToolUse deny as ASCII JSON; if even that fails, exit 2 (block) with the reason on stderr."""
     out = json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                              "permissionDecisionReason": reason}}, ensure_ascii=True)
     try:
         sys.stdout.write(out + "\n")
         sys.stdout.flush()
-    except Exception:  # noqa: BLE001  출력 단계의 어떤 예외도 통과가 되면 안 된다 — 종료 코드 2 로 막는다
+    except Exception:  # noqa: BLE001
         try:
             sys.stderr.write(reason.encode("ascii", "backslashreplace").decode("ascii") + "\n")
-        except Exception:  # noqa: BLE001, S110  표준 오류도 못 쓰면 사유 없이 막는다
+        except Exception:  # noqa: BLE001, S110
             pass
         os._exit(2)
     sys.exit(0)
 
 
 def state_dir() -> Path:
-    """Return the hook state folder (HOME based, so tests can redirect it)."""
     return Path.home() / ".claude" / STATE_MARK
 
 
 def load_config() -> dict:
-    """Load and type-check the fixed-string config; a broken or rule-disabling config is undecidable."""
     try:
         cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
@@ -184,7 +172,7 @@ def load_config() -> dict:
         return isinstance(v, list) and all(isinstance(x, str) and x for x in v)
 
     ok = (isinstance(cfg, dict) and all(isinstance(cfg.get(k), str) and cfg[k] for k in ("confirm_prefix", "wrong_block_label"))
-          and all(strs(cfg.get(k)) for k in (*LIST_KEYS, "bash_exact")))   # bash_exact 는 비어도 된다(정확 일치 통과가 없을 뿐)
+          and all(strs(cfg.get(k)) for k in (*LIST_KEYS, "bash_exact")))
     if not ok:
         raise Undecidable(f"설정 파일 {CONFIG.name} 의 형식이 틀립니다(고정 문자열 목록이어야 합니다)")
     empty = [k for k in NONEMPTY_KEYS if not cfg[k]]
@@ -194,27 +182,22 @@ def load_config() -> dict:
 
 
 def load_external_gate():
-    """Import external-model-gate.py to reuse its user-text and popup criteria (that file is not modified)."""
     spec = importlib.util.spec_from_file_location("external_model_gate", EXTERNAL_GATE)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
-# ---- 경로 ----
 def real(p: str, cwd: str) -> str:
-    """Resolve a tool path to its real absolute path (relative paths against the session cwd)."""
     p = os.path.expanduser(p)
     return os.path.realpath(p if os.path.isabs(p) else os.path.join(cwd, p))
 
 
 def under(p: str, root: str) -> bool:
-    """True if p is root itself or inside it."""
     return p == root or p.startswith(root.rstrip(os.sep) + os.sep)
 
 
 def project_root(cwd: str) -> str | None:
-    """Return the git root above cwd (directory holding .git), or None outside a repository."""
     d = os.path.realpath(cwd)
     while True:
         if os.path.exists(os.path.join(d, ".git")):
@@ -226,17 +209,15 @@ def project_root(cwd: str) -> str | None:
 
 
 def decisions_file() -> str | None:
-    """Return the real path of the decision log (short_term_root/decisions.md from this host's registry), or None."""
     try:
         host = json.loads((HARNESS / f"config/hosts/{socket.gethostname().split('.')[0]}.json").read_text(encoding="utf-8"))
         root = host["paths"]["short_term_root"]
     except (OSError, ValueError, KeyError, TypeError):
-        return None   # 등록부가 없거나 칸이 없는 서버: 메모리 폴더 꼴 판정만 남는다
+        return None
     return os.path.realpath(os.path.join(os.path.expanduser(root), "decisions.md")) if isinstance(root, str) and root else None
 
 
 def _under_pattern(rp: str, base: Path, middle: str) -> bool:
-    """True if rp lies under <base>/<one name>/<middle>/ (path shape, not existing folders)."""
     b = os.path.realpath(base)
     if not under(rp, b) or rp == b:
         return False
@@ -245,9 +226,8 @@ def _under_pattern(rp: str, base: Path, middle: str) -> bool:
 
 
 def is_record_path(rp: str, cwd: str) -> bool:
-    """True if a resolved path is a record location (계획 2.4); any «.git» path element makes it a change."""
     if ".git" in rp.split(os.sep):
-        return False   # 기록용 폴더 안의 git 설정 폴더(hooks · config 실행 항목)는 기록이 아니다(2026-11-11 security 상)
+        return False   # WHY: 기록용 폴더 안의 git 설정 폴더(hooks · config 실행 항목)는 기록이 아니다(2026-11-11 security 상)
     home = Path.home() / ".claude"
     roots = []
     root = project_root(cwd)
@@ -258,16 +238,13 @@ def is_record_path(rp: str, cwd: str) -> bool:
         if os.path.isabs(os.path.expanduser(first)):
             roots.append(os.path.realpath(os.path.expanduser(first)))
     except (OSError, IndexError):
-        pass   # 서버 지정 임시 폴더가 없는 서버
+        pass
     if any(under(rp, r) and rp != r for r in roots):
         return True
-    # rp 는 이미 실제 경로라 경로 꼴이 맞으면 그 폴더들도 실재하는 진짜 폴더다(링크로 밖을 가리키면 rp 가 밖으로 풀려 꼴이 안 맞는다)
     return _under_pattern(rp, home / "projects", "memory") or _under_pattern(rp, home / "jobs", "tmp") or rp == decisions_file()
 
 
-# ---- Bash 정확 일치 (2026-11-11 개정 1: 허용 문법을 걷어 냄, 까닭은 모듈 docstring «바꾸는 도구») ----
 def _record_prefixes(cfg: dict) -> set[str]:
-    """Return the accepted spellings of each record command path: «~/…», «$HOME/…», expanded and real path."""
     home = str(Path.home())
     out = set()
     for c in cfg["record_commands"]:
@@ -279,20 +256,17 @@ def _record_prefixes(cfg: dict) -> set[str]:
 
 
 def shell_kind(cmd: str, cfg: dict) -> str:
-    """Return pass (exact sentence), record (record command with plain args), state or change for a shell command (Bash · Monitor)."""
     s = cmd.strip()
     if s and s in cfg["bash_exact"]:
         return "pass"
     for p in _record_prefixes(cfg):
         rest = s[len(p):] if s.startswith(p) else None
-        # 경로 바로 뒤는 끝이거나 공백이어야 한다(«…append.sh2» 같은 다른 파일 차단). 인자는 따옴표 안까지 금지 문자 검사(풀어 읽지 않는다)
         if rest is not None and (rest == "" or rest[0] in " \t") and not any(ch in RECORD_ARG_FORBIDDEN for ch in rest):
             return "record"
     return "state" if STATE_MARK in cmd else "change"
 
 
 def mcp_readonly(tool: str, cfg: dict) -> bool:
-    """True if an MCP tool is the popup / memory record or its name starts with a read verb."""
     if tool in cfg["mcp_allow_tools"]:
         return True
     parts = tool.split("__")
@@ -301,12 +275,10 @@ def mcp_readonly(tool: str, cfg: dict) -> bool:
     words = [w.lower() for w in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", "__".join(parts[2:]))]
     server = {w.lower() for w in re.findall(r"[A-Za-z]+", parts[1])}
     verbs = set(cfg["mcp_read_verbs"])
-    # «tavily_search» 처럼 서버 이름 낱말이 앞에 붙은 도구는 그 뒤 낱말을 동사로 본다
     return bool(words) and (words[0] in verbs or (len(words) > 1 and words[0] in server and words[1] in verbs))
 
 
 def classify_call(tool: str, ti: dict, cfg: dict, cwd: str) -> str:
-    """Return pass, record, state or change for one tool call (계획 2.3 · 2.4); unknown tools are change."""
     if tool in WRITE_TOOLS:
         p = ti.get("file_path") or ti.get("notebook_path")
         if not isinstance(p, str) or not p:
@@ -319,8 +291,8 @@ def classify_call(tool: str, ti: dict, cfg: dict, cwd: str) -> str:
         return "pass" if ti.get("subagent_type") in cfg["readonly_agents"] and not ti.get("team_name") else "change"
     if tool in SHELL_TOOLS:
         cmd = ti.get("command")
-        return shell_kind(cmd, cfg) if isinstance(cmd, str) else "change"   # Monitor 의 ws(웹소켓)도 바꾸는 것
-    if tool == "Artifact":   # action 이 없으면 게시로 본다
+        return shell_kind(cmd, cfg) if isinstance(cmd, str) else "change"
+    if tool == "Artifact":
         return "pass" if ti.get("action") in cfg["artifact_read_actions"] else "change"
     if tool.startswith("mcp__"):
         return "pass" if mcp_readonly(tool, cfg) else "change"
@@ -329,20 +301,18 @@ def classify_call(tool: str, ti: dict, cfg: dict, cwd: str) -> str:
     return "change"
 
 
-# ---- 전환(등록 전 세션) ----
 def _parse_ts(s) -> datetime | None:
-    """Parse an ISO timestamp (Z allowed) as aware UTC, or None."""
     if not isinstance(s, str) or not s:
         return None
     try:
-        t = datetime.fromisoformat(s.strip().replace("Z", "+00:00"))   # noqa: FURB162  훅은 시스템 python3 3.10 으로 돈다(3.10 은 «Z» 를 못 읽는다)
+        # WHY: 훅은 시스템 python3 3.10 으로 돈다(3.10 은 «Z» 를 못 읽는다)
+        t = datetime.fromisoformat(s.strip().replace("Z", "+00:00"))   # noqa: FURB162
     except ValueError:
         return None
     return t if t.tzinfo else t.replace(tzinfo=UTC)
 
 
 def registered_at() -> datetime | None:
-    """Return the registration time, creating it on first run (None if it cannot be known)."""
     f = state_dir() / "registered-at"
     try:
         return _parse_ts(f.read_text(encoding="utf-8"))
@@ -356,13 +326,12 @@ def registered_at() -> datetime | None:
             fh.write(now.isoformat().replace("+00:00", "Z") + "\n")
         return now
     except FileExistsError:
-        return _parse_ts(f.read_text(encoding="utf-8"))   # 다른 세션이 동시에 만들었다
+        return _parse_ts(f.read_text(encoding="utf-8"))
     except OSError:
         return None
 
 
 def session_started(tp: Path) -> datetime | None:
-    """Return the first entry timestamp of the transcript, or None."""
     with open(tp, "rb") as fh:
         for _ in range(50):
             raw = fh.readline()
@@ -379,7 +348,6 @@ def session_started(tp: Path) -> datetime | None:
 
 
 def warn_pre_registration(sid: str, tool: str, why: str) -> None:
-    """Append one TSV warning line for an unconfirmed change in a pre-registration session (failure is ignored)."""
     def cell(s):
         return re.sub(r"[\t\r\n]", " ", str(s))[:120]
 
@@ -389,13 +357,10 @@ def warn_pre_registration(sid: str, tool: str, why: str) -> None:
         with open(log, "a", encoding="utf-8") as fh:
             fh.write(f"{datetime.now(UTC).isoformat()}\t{cell(sid)}\t{cell(tool)}\t등록 전 시작 세션이라 막지 않음: {cell(why)}\n")
     except OSError:
-        pass   # 경고 기록 실패는 통과를 막지 않는다(전환 규칙: 등록 전 세션은 막지 않는다)
+        pass
 
 
-# ---- 대화 기록 읽기 ----
 class Lines:
-    """Reverse line iterator over a transcript with push-back and a byte limit."""
-
     def __init__(self, path: Path, limit: int = SCAN_LIMIT_BYTES):
         self.truncated = False
         self._back: list[bytes] = []
@@ -410,7 +375,7 @@ class Lines:
     def _reverse(self, path: Path, limit: int, block: int = 1 << 18):
         with open(path, "rb") as fh:
             pos = fh.seek(0, os.SEEK_END)
-            carry: list[bytes] = []   # 아직 줄 머리를 못 찾은 조각들(앞쪽 조각이 앞)
+            carry: list[bytes] = []
             read = 0
             while pos > 0:
                 if read >= limit:
@@ -437,7 +402,6 @@ class Lines:
                 yield head
 
     def bound_to_ask(self, tid: str) -> bool:
-        """Look further back for the AskUserQuestion tool_use with this id; consumed lines are pushed back."""
         needle, taken, found = tid.encode(), [], False
         for _ in range(BIND_LOOKBACK_LINES):
             try:
@@ -460,13 +424,11 @@ class Lines:
 
 
 def _content(d: dict):
-    """Return message.content (str, list or None)."""
     m = d.get("message")
     return m.get("content") if isinstance(m, dict) else None
 
 
 def _texts(c) -> str | None:
-    """Join text blocks; None if the content holds a tool_result or is not text."""
     if isinstance(c, str):
         return c
     if isinstance(c, list):
@@ -477,7 +439,6 @@ def _texts(c) -> str | None:
 
 
 def _clean_human(t: str) -> str | None:
-    """Apply last_user_message()'s text rules: slash commands keep only args, «<» injections are not typed text."""
     t = t.strip()
     if t.startswith("<command-name>"):
         a = re.search(r"<command-args>(.*?)</command-args>", t, re.DOTALL)
@@ -486,7 +447,6 @@ def _clean_human(t: str) -> str | None:
 
 
 def human_text(d: dict, gate) -> str | None:
-    """Return the text a person typed in this entry (user entry or human queued_command attachment)."""
     if d.get("type") == "attachment":
         a = d.get("attachment")
         o = a.get("origin") if isinstance(a, dict) else None
@@ -503,7 +463,6 @@ def human_text(d: dict, gate) -> str | None:
 
 
 def has_final_line(d: dict) -> bool:
-    """True if a main text has a line starting with lowercase result: or failed: (fences and quotes skipped)."""
     c = _content(d)
     blocks = [c] if isinstance(c, str) else [b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text"] if isinstance(c, list) else []
     for text in blocks:
@@ -519,7 +478,6 @@ def has_final_line(d: dict) -> bool:
 
 
 def is_interrupt(d: dict) -> bool:
-    """True for the Esc interrupt marker entry."""
     if d.get("interruptedMessageId"):
         return True
     t = _texts(_content(d))
@@ -527,13 +485,11 @@ def is_interrupt(d: dict) -> bool:
 
 
 def is_scheduled(d: dict) -> bool:
-    """True for a prompt injected by ScheduleWakeup / CronCreate (확인한 꼴은 모듈 docstring)."""
     sid = d.get("scheduledTaskId")
     return d.get("turnOrigin") == "scheduled" and isinstance(sid, str) and bool(sid) and d.get("origin") is None and not d.get("isCompactSummary")
 
 
 def is_turn_start(d: dict, gate) -> bool:
-    """True for an entry that starts a new turn (typed text, popup answer, scheduled, peer, task notification)."""
     if d.get("type") == "attachment":
         return human_text(d, gate) is not None
     if d.get("type") != "user" or _texts(_content(d)) is None:
@@ -544,16 +500,15 @@ def is_turn_start(d: dict, gate) -> bool:
 
 
 def popup_verdict(d: dict, prefix: str, gate):
-    """Return ("grant", "popup"), ("revoke", "direct" | "ambiguous") or None for a decision-popup message."""
     if d.get("origin") != gate.POPUP_ORIGIN or d.get("isMeta"):
         return None
     c = _texts(_content(d))
     if not c:
         return None
-    lines = c.split("\n")   # 엔진 · 팝업이 쓰는 «\n» 에서만 나눈다(popup_answers 와 같은 까닭)
+    lines = c.split("\n")
     head = next((i for i, ln in enumerate(lines) if ln.lstrip().startswith("[결정 팝업 ")), None)
     if head is None or not lines[head].lstrip().startswith(gate.POPUP_MARK):
-        return None   # «[결정 팝업 닫힘]» 등은 답이 아니다
+        return None
     confirmed = False
     for ln in lines[head + 1:]:
         ln = ln.strip()
@@ -561,7 +516,7 @@ def popup_verdict(d: dict, prefix: str, gate):
             continue
         ms = list(ANSWER_PART.finditer(ln))
         if len(ms) != 1:
-            return ("revoke", "ambiguous")   # 답 부분을 가려낼 수 없다(직접 입력을 가렸을 수 있어 막는 쪽)
+            return ("revoke", "ambiguous")
         if ms[0].group(1) == "직접 입력":
             return ("revoke", "direct")
         if ln[ms[0].end():].startswith(prefix):
@@ -570,9 +525,8 @@ def popup_verdict(d: dict, prefix: str, gate):
 
 
 def ask_verdict(tur: dict, prefix: str) -> str | None:
-    """Return grant (only picked labels, one prefixed), revoke (typed answer · response · notes) or None (AFK · followUp · no prefix)."""
     if tur.get("afkTimeoutMs") is not None or tur.get("followUp"):
-        return None   # 사람이 고른 답이 아니거나 질문을 다시 받기로 한 답: 부여도 소멸도 아니다
+        return None
     answers = tur.get("answers")
     if not isinstance(answers, dict):
         return None
@@ -588,18 +542,17 @@ def ask_verdict(tur: dict, prefix: str) -> str | None:
         labels = [o.get("label") for o in q.get("options") or [] if isinstance(o, dict) and isinstance(o.get("label"), str)]
         a = answers.get(q.get("question"))
         if a is None:
-            continue   # 비워 둔 질문은 직접 입력이 아니다
+            continue
         parts = [a] if a in labels else a.split(", ") if isinstance(a, str) and q.get("multiSelect") else None
         if not parts or any(p not in labels for p in parts):
-            return "revoke"   # 선택지 이름이 아닌 답 = 자유 입력
+            return "revoke"
         picked += parts
     return "grant" if any(p.startswith(prefix) for p in picked) else None
 
 
 def has_immediate(text: str, cfg: dict) -> bool:
-    """True if the text holds an immediate-run phrase and no negation phrase."""
     if any(n in text for n in cfg["negation_phrases"]):
-        return False   # «바로 진행하지 말고» 같은 글은 허락이 아니다
+        return False
     if any(p in text for p in cfg["immediate_phrases"]):
         return True
     for p in cfg["immediate_phrases_word_end"]:
@@ -613,7 +566,6 @@ def has_immediate(text: str, cfg: dict) -> bool:
 
 
 def entry_event(d: dict, cfg: dict, gate, later_main: bool, boundary_after: bool):
-    """Return ("grant"|"revoke", code), ("ask", tool_use_id) for a grant awaiting binding, or None for one main-flow entry."""
     kind = d.get("type")
     if kind == "assistant":
         m = d.get("message") if isinstance(d.get("message"), dict) else {}
@@ -637,7 +589,6 @@ def entry_event(d: dict, cfg: dict, gate, later_main: bool, boundary_after: bool
             if not (isinstance(tid, str) and tid):
                 return None
             v = ask_verdict(tur, cfg["confirm_prefix"])
-            # 소멸은 막는 쪽이라 결박 없이 받고, 부여만 AskUserQuestion tool_use 결박을 거친다(latest_event)
             return ("revoke", "direct") if v == "revoke" else ("ask", tid) if v == "grant" else None
         text = human_text(d, gate)
     if text is None:
@@ -648,14 +599,13 @@ def entry_event(d: dict, cfg: dict, gate, later_main: bool, boundary_after: bool
 
 
 def latest_event(tp: Path, cfg: dict, gate):
-    """Scan the main transcript from the end and return the most recent grant/revoke, or ("none", code)."""
     it = Lines(tp)
     parsed = 0
-    later_main = False      # 이 항목 뒤(같은 턴)에 main 글 · 도구 호출이 있었는가
-    boundary_after = False  # 이 항목 뒤에 새 턴의 시작이 있었는가
+    later_main = False
+    boundary_after = False
     for raw in it:
         if b'"tool_use_id":"' in raw and b'"questions"' not in raw:
-            continue   # 도구 결과 줄(대화 기록 용량의 대부분)은 선택 창 답이 아니면 풀지 않는다
+            continue
         try:
             d = json.loads(raw)
         except ValueError:
@@ -684,14 +634,11 @@ def latest_event(tp: Path, cfg: dict, gate):
     return ("none", "none")
 
 
-# ---- 표시 파일 ----
 def marker_path(sid: str) -> Path | None:
-    """Return the wrong-block marker path for a well-formed session id."""
     return state_dir() / "wrong-block" / sid if SESSION_ID_OK.match(sid or "") else None
 
 
 def marker_allows(inp: dict) -> bool:
-    """True if a user-chosen wrong-block marker exists and the call is Write/Edit on the hook's own files."""
     m = marker_path(str(inp.get("session_id") or ""))
     ti = inp.get("tool_input") if isinstance(inp.get("tool_input"), dict) else {}
     p = ti.get("file_path")
@@ -701,16 +648,14 @@ def marker_allows(inp: dict) -> bool:
 
 
 def clear_marker(sid: str) -> None:
-    """Remove a leftover marker once the hook can judge again."""
     m = marker_path(sid)
     try:
         if m:
             m.unlink()
     except OSError:
-        pass   # 없거나 못 지워도 판정에는 영향이 없다(표시는 판정 불가일 때만 본다)
+        pass
 
 
-# ---- 차단 문구 ----
 WHY = {
     "final": "가장 최근 사건이 끝난 턴의 최종 보고(행두 result: · failed: 줄)입니다. 확정은 최종 보고를 낼 때까지만 유효합니다.",
     "esc": "가장 최근 사건이 Esc 중단입니다. 중단하면 확정이 사라집니다.",
@@ -724,7 +669,6 @@ WHY = {
 
 
 def no_grant_message(tool: str, code: str, cfg: dict) -> str:
-    """Korean deny reason for a call without a live confirmation."""
     return (f"{TAG} 계획 확정이 살아 있지 않아 «{tool}» 호출을 막았습니다. 까닭: {WHY.get(code, code)}\n"
             "  푸는 방법: 계획을 보고하고 사용자와 의견을 주고받은 뒤 결정 팝업(mcp__decision-popup__ask, 모바일 모드면 AskUserQuestion)으로 "
             f"확정 항목을 띄우십시오. 확정 선택지 이름은 «{cfg['confirm_prefix']}» 으로 시작해야 하고, 직접 입력이 하나라도 섞인 답은 확정이 아닙니다. "
@@ -734,7 +678,6 @@ def no_grant_message(tool: str, code: str, cfg: dict) -> str:
 
 
 def undecidable_message(tool: str, why: str) -> str:
-    """Korean deny reason for an undecidable call."""
     files = " · ".join(os.path.relpath(f, HARNESS) for f in HOOK_FILES)
     return (f"{TAG} 판정하지 못해 «{tool}» 호출을 막았습니다(까닭: {why}).\n"
             "  사용자에게 잘못된 막힘인지 물으십시오. 모바일 모드면 AskUserQuestion, 아니면 결정 팝업으로 띄우고 선택지 이름은 정확히 «잘못된 막힘» · «정상 막힘» 으로 씁니다.\n"
@@ -743,26 +686,23 @@ def undecidable_message(tool: str, why: str) -> str:
 
 
 def state_message() -> str:
-    """Korean deny reason for writes into the hook state folder."""
     return (f"{TAG} 훅 상태 폴더({state_dir()})는 도구로 쓸 수 없습니다. 등록 시각과 «잘못된 막힘» 표시를 담는 곳이라 "
             "훅과 결정 팝업 mod 만 씁니다(확정 여부와 무관하게 막습니다).")
 
 
-# ---- 진입점 ----
 def judge(inp: dict) -> None:
-    """Apply the 판정 순서; returns to allow, calls deny() to block, raises Undecidable."""
     tool = str(inp.get("tool_name") or "")
     if tool == POPUP_TOOL:
-        return                                                   # 0) 사용자에게 묻는 길은 언제나 연다
+        return
     cfg = load_config()
     if inp.get("agent_id") and inp.get("agent_type") not in cfg["readonly_agents"]:
-        return                                                   # 1) 쓰는 서브에이전트 · teammate
+        return
     gate = load_external_gate()
     ti = inp.get("tool_input") if isinstance(inp.get("tool_input"), dict) else {}
     cwd = str(inp.get("cwd") or os.getcwd())
     kind = classify_call(tool, ti, cfg, cwd)
     if kind in ("pass", "record"):
-        return                                                   # 2) · 3)
+        return
     if kind == "state":
         deny(state_message())
     sid = str(inp.get("session_id") or "")
@@ -770,9 +710,9 @@ def judge(inp: dict) -> None:
     if tp is None:
         raise Undecidable("대화 기록을 찾지 못했습니다")
     reg, started = registered_at(), session_started(tp)
-    pre = bool(reg and started and started < reg)                # 4) 등록 전 시작 세션은 막지 않는다
+    pre = bool(reg and started and started < reg)
     try:
-        ev = latest_event(tp, cfg, gate)                         # 5)
+        ev = latest_event(tp, cfg, gate)
     except Undecidable as e:
         if pre:
             warn_pre_registration(sid, tool, f"판정 불가({e})")
@@ -781,24 +721,22 @@ def judge(inp: dict) -> None:
     clear_marker(sid)
     if ev[0] == "grant":
         return
-    if pre:                                                      # 확정 없이 바꾸는 호출만 기록한다(확정이 살아 있으면 남기지 않는다)
+    if pre:
         warn_pre_registration(sid, tool, f"확정 없이 바꾸는 호출({ev[1]})")
         return
     deny(no_grant_message(tool, ev[1], cfg))
 
 
 def undecidable(inp: dict, why: str) -> None:
-    """6) Block as undecidable unless a wrong-block marker opens the hook's own files."""
     try:
         if marker_allows(inp):
             return
-    except Exception:  # noqa: BLE001, S110  표시 확인 중 오류는 통과가 아니라 아래 차단으로 간다
+    except Exception:  # noqa: BLE001, S110
         pass
     deny(undecidable_message(str(inp.get("tool_name") or "?"), why))
 
 
 def main() -> None:
-    """Read the hook input (bytes → UTF-8) and judge; any failure becomes an undecidable block (never a silent pass)."""
     try:
         inp = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     except ValueError:
@@ -809,12 +747,12 @@ def main() -> None:
         judge(inp)
     except Undecidable as e:
         undecidable(inp, str(e))
-    except Exception as e:  # noqa: BLE001  예외로 죽으면 훅이 비차단 오류가 되어 호출이 그대로 나간다 — 판정 불가로 막는다
+    except Exception as e:  # noqa: BLE001
         undecidable(inp, f"훅 내부 오류 {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
     try:
         main()
-    except Exception as e:  # noqa: BLE001  마지막 안전망: 어떤 예외든 차단으로 떨어뜨린다(deny 의 SystemExit 는 여기 잡히지 않는다)
+    except Exception as e:  # noqa: BLE001
         deny(f"{TAG} 판정하지 못해 막았습니다(훅 내부 오류 {type(e).__name__}). 사용자에게 잘못된 막힘인지 물으십시오.")

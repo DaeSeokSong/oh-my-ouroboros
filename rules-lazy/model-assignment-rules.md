@@ -13,6 +13,7 @@
 
 > 모델별 역할 정의(메인 세션 직접 처리 / Sonnet / Haiku 조건)는 상위 파일 `rules/model-assignment.md` §1~§3 단일 출처. 여기서 중복 정의하지 않는다.
 > 운영 원칙: 불확실 시 **opus subagent 위임**(분리 컨텍스트, 2026-09-08 사용자 결정), 작업 중 부적합 판단 시 즉시 재배정. 회색 지대는 판단이 걸린 일이라 값싼 모델의 기본값 자리가 아니다.
+> planner·researcher는 opus 동급 subagent라서 "하위 모델" 위임이 아니라 **분리 컨텍스트 위임**이 목적이다(`rules/model-assignment.md` 머리의 핵심 원칙에서 이관).
 > 실측 근거: 14일 482건 중 sonnet 66%·opus 14% — 판단이 걸린 회색지대까지 값싼 모델의 기본값으로 흘렀다.
 
 > **역할 경계**: `rules/model-assignment.md`(always-on) = "어떤 모델을 쓸지" 판단 기준 / 이 파일(lazy) = "어떻게 위임·분리할지" 집행 상세. 상보 관계 — 병합하지 않는다.
@@ -165,3 +166,10 @@ Haiku 역할: 파일 탐색 → 단순 수정 → 로그 분석
   - URL: code.claude.com/docs/en/model-config , platform.claude.com/docs/en/build-with-claude/effort , platform.claude.com/docs/en/about-claude/models/choosing-a-model , code.claude.com/docs/en/sub-agents
 - 남는 한계: opus 의 medium 대 high 와 sonnet 의 medium 대 high 는 재지 않았다. scout 의 high 는 문서에 직접 근거가 없는 사용자 선택이다. coder 를 high 로 올린 근거 가운데 하나인 실패 기록(최근 30일 «구현 정확성» 15건)은 원인 분석이 안 되어 있다.
 - 경위 상세: `docs/superpowers/plans/2026-11-11-model-effort-evaluation.md` «개정 4».
+
+### FAIL 뒤 올리는 기준 (2026-11-24 사용자 결정, 의뢰서 W8)
+
+- 정본은 `rules-lazy/qa-process.md` § 계획-대비 검수의 «FAIL 원인별 격상 순서» 다. 요약: 1) 지시문 기록으로 맥락 누락부터 점검하고 누락이면 지시문을 보완해 같은 모델로 다시 맡긴다 2) 누락이 아닌데 결과가 틀렸으면 모델을 올린다 3) 누락이 아닌데 단계를 건너뛰었으면 effort 를 올린다.
+- 올릴 때는 위 예외 표와 같이 Agent 호출 인자 `model` · `effort` 로 넘기고 `name` 은 붙이지 않는다. 두 번 뒤에도 FAIL 이면 사용자에게 보고한다.
+- 원인 분류는 판단이라 기계로 집행하지 않는다.
+- 근거: Anthropic 공식 글 «모델과 effort 선택»(2026-07-07)의 정독 요약(2026-11-24 하네스 점검 때 searcher 가 읽고 돌려준 요약: «틀리면 더 큰 모델, 건너뛰거나 중도 포기면 effort, 그 전에 맥락부터 점검»). 외부 글의 요약이라 참고 자료다.

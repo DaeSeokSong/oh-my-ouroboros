@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# t41-mask.sh — T41 신호 가림 함수 `mask_cut` 의 정본 (2026-11-12, t41-subagent-stop.sh 에서 분리)
-#
-# 왜: T41 신호는 추적 파일 `_audit/history.md` 로 간다. 동기 경로(agent-spawn-log.sh)와 비동기 경로(t41-subagent-stop.sh)가
-#   같은 가림을 거쳐야 소집 설명·RESULT 줄의 토큰·UID 형태가 어느 경로로도 새지 않는다. 두 벌 복제하면 한쪽만 고쳐지므로 한 곳에 둔다.
+# t41-mask.sh — T41 신호 가림 함수 `mask_cut` 의 정본. 동기 경로(agent-spawn-log.sh)와 비동기 경로(t41-subagent-stop.sh)가 함께 쓴다.
 # 사용: `. scripts/t41-mask.sh; printf '%s' "$문장" | mask_cut <최대 코드포인트 수>`
 # 마스킹 종류는 scripts/claude-notify.sh 의 MASK_SED 와 같다(고칠 땐 함께). 절단 전에 가려야 반으로 잘린 토큰이 새지 않는다.
 # 부수효과 없음: 옵션을 바꾸지 않고 파일을 쓰지 않는다. jq 가 없으면 빈 문자열을 낸다(호출부가 빈 값을 처리한다).
-mask_cut() {  # $1=최대 코드포인트 수, stdin=문장
+# REF: knowledge/harness/code-history/scripts__t41-mask.sh.md
+mask_cut() {
     tr '\t\n\r' '   ' | sed -E \
     -e 's/(^|[^A-Za-z0-9])(sk|tvly)-[A-Za-z0-9_-]{8,}/\1<masked>/g' \
     -e 's/(^|[^A-Za-z0-9])m0-[A-Za-z0-9]{16,}/\1<masked>/g' \

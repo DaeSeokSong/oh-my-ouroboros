@@ -24,7 +24,7 @@ def wrongs(text):
 
 @pytest.mark.parametrize("wrong,right", WRONG_RIGHT)
 def test_every_dictionary_entry_is_caught(wrong, right):
-    sample = {"읍니다": "있읍니다"}.get(wrong, wrong)  # «읍니다» 는 ㅅ · ㅆ · ㅄ 받침 뒤에서만 틀린 꼴(2026-10-28)
+    sample = {"읍니다": "있읍니다"}.get(wrong, wrong)  # WHY: «읍니다» 는 ㅅ · ㅆ · ㅄ 받침 뒤에서만 틀린 꼴(2026-10-28)
     assert (wrong, right) in wrongs(f"이 문장에 {sample} 가 들어 있습니다.")
 
 
@@ -39,7 +39,7 @@ def test_eup_after_s_batchim_is_a_typo(bad):
 
 
 def test_dictionary_size_is_pinned():
-    assert len(ksc.TYPO_DICT) == 29  # 사전을 넓히지 않기로 한 지시(2026-10-23)를 깨면 여기서 걸린다
+    assert len(ksc.TYPO_DICT) == 29  # WHY: 사전을 넓히지 않기로 한 지시(2026-10-23)를 깨면 여기서 걸린다
 
 
 @pytest.mark.parametrize("ok", [
@@ -140,7 +140,6 @@ def test_report_ignores_quotes_code_and_clean_text():
 def test_report_check_fails_open_when_typo_check_breaks(monkeypatch):
     monkeypatch.setattr(krc, "find_typo_pairs", lambda t: 1 / 0)
     assert krc.find_english("정상입니다.")[0] == []
-    # main() swallows the error inside its own try block and keeps the English check working
     import io
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"hook_event_name": "Stop", "last_assistant_message": "정상 됬습니다."})))
     krc.main()

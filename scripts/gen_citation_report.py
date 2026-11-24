@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """citation-verifier 검증 이력 PDF 리포트 생성 (rules-lazy/citation-verification-log.md §5 스펙 구현).
 
 데이터 소스 (병합 — DOI+날짜 중복 시 상세 로그 우선, evidence를 보존하는 쪽이 canonical):
@@ -27,10 +26,7 @@ from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-# ---------------------------------------------------------------------------
-# 테스트 fixture (citation-verifier verdict 구조 예시)
-# --test-data 플래그 명시 시에만 사용 — 실데이터 소스의 silent 대체 금지
-# ---------------------------------------------------------------------------
+# NEVER: 실데이터 소스를 이 테스트 fixture 로 조용히 대체하지 않는다(--test-data 명시 시에만 사용).
 CITATION_VERIFICATIONS = [
     {
         "idx": 1,
@@ -138,7 +134,6 @@ DEFAULT_LOG_PATH = Path("docs/citation-verifications.md")
 
 
 def _read_secrets_env() -> dict[str, str]:
-    """mcp-secrets.env(KEY=value, 선택적 export 접두·따옴표) 파싱. 파일 없으면 빈 dict."""
     secrets: dict[str, str] = {}
     try:
         for line in MCP_SECRETS_ENV.read_text(encoding="utf-8").splitlines():
@@ -153,16 +148,12 @@ def _read_secrets_env() -> dict[str, str]:
 
 
 def read_secret_key(name: str) -> str | None:
-    """API 키를 env var 우선, 없으면 mcp-secrets.env에서 읽는다 (MCP 런처와 동일 소스).
-
-    settings.json에는 mcpServers 키가 존재하지 않으므로 참조하지 않는다 —
-    MCP 서버 정의는 ~/.claude.json, 시크릿은 mcp-secrets.env(600)로 분리 운영.
-    """
+    # NEVER: settings.json 을 참조하지 않는다(mcpServers 키가 존재하지 않는다 —
+    # MCP 서버 정의는 ~/.claude.json, 시크릿은 mcp-secrets.env(600)로 분리 운영).
     return os.environ.get(name) or _read_secrets_env().get(name)
 
 
 def fetch_tavily_usage(api_key: str) -> dict | None:
-    """Tavily /usage 엔드포인트 호출. 실패 시 None."""
     req = urllib.request.Request(
         TAVILY_USAGE_URL,
         headers={"Authorization": f"Bearer {api_key}"},
@@ -175,10 +166,7 @@ def fetch_tavily_usage(api_key: str) -> dict | None:
         return None
 
 
-# ---------------------------------------------------------------------------
-# 실데이터 로더 — 상세 로그(citation-verification-log.md §1) + Mem0 T21 요약
-# ---------------------------------------------------------------------------
-
+# REF: rules-lazy/citation-verification-log.md §1 (상세 로그 append 스키마)
 LOG_HEADER_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2})\]\s*(.+?)\s*\(([^()]+)\)\s*$")
 
 RECORD_DEFAULTS = {
@@ -192,10 +180,8 @@ RECORD_DEFAULTS = {
 
 
 def load_log_records(log_path: Path) -> list[dict]:
-    """docs/citation-verifications.md(§1 append 스키마) 파싱 → 레코드 리스트."""
     if not log_path.is_file():
         return []
-    # 프로젝트 라벨: <project>/docs/citation-verifications.md 구조에서 docs의 부모 디렉토리명
     parent = log_path.resolve().parent
     project = parent.parent.name if parent.name == "docs" else parent.name
 
@@ -234,7 +220,6 @@ def load_log_records(log_path: Path) -> list[dict]:
                 if not row.startswith("|"):
                     continue
                 cells = [c.strip() for c in row.strip("|").split("|")]
-                # 헤더 행("stance"...)과 구분선 행("---")은 제외
                 if len(cells) >= 4 and cells[0] != "stance" and not set(cells[0]) <= set("-: "):
                     evidence.append({
                         "stance": cells[0], "citing": cells[1],
@@ -245,7 +230,7 @@ def load_log_records(log_path: Path) -> list[dict]:
     return records
 
 
-# T21 텍스트 서식(mem0-templates.md): "citation-verifier 검증 YYYY-MM-DD [프로젝트]
+# REF: rules-lazy/mem0-templates.md T21 텍스트 서식: "citation-verifier 검증 YYYY-MM-DD [프로젝트]
 # invoker=X: 제목='...' (저자=..., DOI=...). 목적=... verdict=... supporting=N, ..."
 T21_FIELD_RE = {
     "verdict": re.compile(r"verdict=([^\s.,;]+)"),
@@ -263,7 +248,6 @@ T21_FIELD_RE = {
 
 
 def parse_t21_text(text: str) -> dict | None:
-    """Mem0 T21/T25 요약 텍스트(key=value 서식)에서 레코드 필드 추출. verdict 없으면 None."""
     rec: dict = {"_source": "mem0"}
     for field, pattern in T21_FIELD_RE.items():
         m = pattern.search(text)
@@ -300,10 +284,6 @@ def parse_t21_text(text: str) -> dict | None:
 
 
 def load_mem0_records() -> list[dict]:
-    """Mem0 플랫폼 REST 검색으로 T21(source=citation-verifier) 요약 로드.
-
-    키·네트워크 부재 시 경고 후 빈 리스트 반환 — 다른 소스로 리포트 생성은 계속.
-    """
     api_key = read_secret_key("MEM0_API_KEY")
     if not api_key:
         print("[경고] MEM0_API_KEY 미확보(env·mcp-secrets.env) — Mem0 소스 생략", file=sys.stderr)
@@ -337,7 +317,6 @@ def load_mem0_records() -> list[dict]:
 
 
 def merge_records(log_records: list[dict], mem0_records: list[dict]) -> list[dict]:
-    """(DOI, 날짜) 중복 시 상세 로그 우선 — evidence를 보존하는 쪽이 canonical (§1 2층 구조)."""
     seen = {(r["doi"].lower(), r["date"]) for r in log_records}
     merged = list(log_records)
     merged.extend(
@@ -348,7 +327,6 @@ def merge_records(log_records: list[dict], mem0_records: list[dict]) -> list[dic
 
 
 def normalize_records(records: list[dict]) -> list[dict]:
-    """렌더러가 기대하는 전체 필드를 기본값으로 채우고 날짜순 정렬 + idx 부여."""
     out = []
     for rec in records:
         merged = {**RECORD_DEFAULTS, **rec}
@@ -361,13 +339,12 @@ def normalize_records(records: list[dict]) -> list[dict]:
 
 
 def register_font() -> str:
-    """CID 기반 한국어 폰트 등록. PDF 뷰어가 CID 폰트를 내장한 경우 한글 렌더링 가능."""
     try:
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.cidfonts import UnicodeCIDFont
         pdfmetrics.registerFont(UnicodeCIDFont(KOREAN_CID_FONT))
         return KOREAN_CID_FONT
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"[경고] 한글 CID 폰트 등록 실패({exc}) — Helvetica fallback", file=sys.stderr)
         return "Helvetica"
 
@@ -386,10 +363,9 @@ def build_styles(font_name: str):
 
 
 def mcp_usage_section(styles: dict) -> list:
-    """3개 MCP(Tavily/Mem0/citation-verifier) 사용 현황 표. Tavily만 자동 조회."""
     from reportlab.lib import colors
     from reportlab.lib.units import mm
-    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle, PageBreak
+    from reportlab.platypus import PageBreak, Paragraph, Spacer, Table, TableStyle
 
     api_key = read_secret_key("TAVILY_API_KEY")
     tavily_row = ["Tavily", "조회 실패", "-", "API 키 미확보 또는 네트워크 오류"]
@@ -466,7 +442,7 @@ def mcp_usage_section(styles: dict) -> list:
 def cover_page(styles: dict, verifications: list, source_desc: str) -> list:
     from reportlab.lib import colors
     from reportlab.lib.units import mm
-    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle, PageBreak
+    from reportlab.platypus import PageBreak, Paragraph, Spacer, Table, TableStyle
 
     total = len(verifications)
     projects = sorted({r["project"] for r in verifications})
@@ -523,13 +499,12 @@ def cover_page(styles: dict, verifications: list, source_desc: str) -> list:
 
 
 def _verdict_color(verdict: str):
-    """verdict 값에 따라 배경색 반환."""
     from reportlab.lib import colors
     if verdict == "허용":
         return colors.HexColor("#d6f0d0")
     if verdict == "금지":
         return colors.HexColor("#f8d7da")
-    return colors.HexColor("#fff3cd")  # 경고 및 기타
+    return colors.HexColor("#fff3cd")
 
 
 def verification_card(record: dict, styles: dict) -> list:
@@ -543,7 +518,6 @@ def verification_card(record: dict, styles: dict) -> list:
     retracted_str = "YES (철회됨)" if record.get("retracted", False) else "NO"
     confidence_map = {"high": "높음", "med": "중간", "low": "낮음"}
     confidence_str = confidence_map.get(record.get("confidence", ""), record.get("confidence", "-"))
-    # fixture는 bool, 상세 로그/T21은 high|partial|abstract-only 문자열 — 양쪽 렌더 지원
     ftc = record.get("fulltext_coverage", "-")
     fulltext_str = ("Yes" if ftc else "No") if isinstance(ftc, bool) else str(ftc)
 
@@ -569,7 +543,6 @@ def verification_card(record: dict, styles: dict) -> list:
         ["요약", cell(record["summary"])],
     ]
 
-    # 3열 또는 4열 레이아웃 처리: 4열 행은 그대로, 2열 행은 병합 셀로 확장
     normalized = []
     for row in rows:
         if len(row) == 2:
@@ -595,14 +568,12 @@ def verification_card(record: dict, styles: dict) -> list:
         ("TOPPADDING", (0, 0), (-1, -1), 4),
     ]
 
-    # verdict 행 배경 강조 (normalized에서 verdict 위치 탐색)
     for ridx, row in enumerate(rows):
         if len(row) == 4 and row[2] == "verdict":
             style_cmds.append(("BACKGROUND", (3, ridx), (3, ridx), _verdict_color(record["verdict"])))
         if len(row) == 4 and row[0] == "retracted" and record.get("retracted", False):
             style_cmds.append(("BACKGROUND", (1, ridx), (1, ridx), colors.HexColor("#f8d7da")))
 
-    # 2열 행(병합)의 인덱스 찾기
     merge_indices = [i for i, r in enumerate(rows) if len(r) == 2]
     for ridx in merge_indices:
         style_cmds.append(("SPAN", (1, ridx), (3, ridx)))
@@ -615,7 +586,6 @@ def verification_card(record: dict, styles: dict) -> list:
         table,
     ]
 
-    # evidence 상세 섹션
     evidence_list = record.get("evidence", [])
     if evidence_list:
         result.append(Spacer(1, 2 * mm))
@@ -646,10 +616,9 @@ def verification_card(record: dict, styles: dict) -> list:
 
 
 def summary_table_section(styles: dict, verifications: list) -> list:
-    """전체 검증 이력 요약 테이블: 논문 / verdict / supporting / contrasting / retracted / confidence / 날짜."""
     from reportlab.lib import colors
     from reportlab.lib.units import mm
-    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle, PageBreak
+    from reportlab.platypus import PageBreak, Paragraph, Spacer, Table, TableStyle
 
     def cell(text: str) -> Paragraph:
         return Paragraph(str(text), styles["cell"])
@@ -680,7 +649,6 @@ def summary_table_section(styles: dict, verifications: list) -> list:
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
     ]
-    # verdict 컬럼 (col 1) 배경 강조
     for ridx, r in enumerate(verifications, start=1):
         style_cmds.append(("BACKGROUND", (1, ridx), (1, ridx), _verdict_color(r["verdict"])))
         if r.get("retracted", False):
@@ -698,7 +666,7 @@ def summary_table_section(styles: dict, verifications: list) -> list:
 
 def project_section(styles: dict, verifications: list) -> list:
     from reportlab.lib.units import mm
-    from reportlab.platypus import Paragraph, Spacer, PageBreak
+    from reportlab.platypus import PageBreak, Paragraph, Spacer
 
     by_project = {}
     for r in verifications:
@@ -768,8 +736,8 @@ def tail_section(styles: dict, verifications: list) -> list:
 
 def generate_pdf(output_path: Path, verifications: list, source_desc: str) -> None:
     from reportlab.lib.pagesizes import A4
-    from reportlab.platypus import SimpleDocTemplate
     from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     font_name = register_font()
@@ -795,7 +763,6 @@ def generate_pdf(output_path: Path, verifications: list, source_desc: str) -> No
 
 
 def generate_csv(output_path: Path, verifications: list) -> None:
-    """CSV fallback: --output 인자가 .csv로 끝날 경우 사용."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "idx", "date", "invoker", "project", "paper", "doi",
@@ -857,7 +824,6 @@ def main() -> int:
 
     output_path = Path(args.output).expanduser().resolve()
 
-    # CSV fallback
     if output_path.suffix.lower() == ".csv":
         try:
             generate_csv(output_path, verifications)
@@ -876,7 +842,7 @@ def main() -> int:
     except PermissionError as exc:
         print(f"[오류] 경로 권한 부족: {exc}\n복구: 경로 쓰기 권한 확인 또는 다른 경로 지정", file=sys.stderr)
         return 4
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"[오류] PDF 생성 실패: {exc}", file=sys.stderr)
         print("복구 체크리스트:", file=sys.stderr)
         print("  1. reportlab 설치: uv pip install --system reportlab", file=sys.stderr)

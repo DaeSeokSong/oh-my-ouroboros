@@ -74,6 +74,8 @@ npx skills add anthropics/skills --skill skill-creator
 ```
 
 #### agent 유형
+> 신설 전에 `rules-lazy/agent-routing-mcp.md` § 에이전트를 따로 두는 기준 의 네 가지(맥락 격리 · 도구 권한 분리 · 병렬 실행 · 모델 단가) 가운데 어느 것에 해당하는지 적는다. 해당이 없으면 스킬로 만든다.
+
 ```
 새 에이전트 생성을 위해 아래 정보를 알려주세요:
 
@@ -93,6 +95,8 @@ npx skills add anthropics/skills --skill skill-creator
 수집된 정보로 파일 초안 생성 (현행 구조 기준 — 구세대 `rules/`·`commands/` 직행 금지):
 
 > **작성 스타일 게이트 (2026-07-09, Fable 5 공식 가이드 이식)**: **원칙형 1줄 우선** — "무엇을 왜"를 담은 짧은 원칙으로 쓰고, 동작별 열거·금지 목록은 **실제 실패 사례가 있을 때만** 그 사례와 함께 추가한다. 열거가 3항목을 넘으면 "이걸 원칙 1줄로 못 줄이는 이유"를 자문할 것 — 최신 모델은 짧은 의도 지시를 더 잘 따르며, 과잉 열거는 출력 품질을 떨어뜨린다.
+
+> **재현 절차는 스크립트로 (2026-11-24 사용자 지시)**: 같은 입력이면 같은 결과가 나와야 하는 절차(점검표 · 형식 검사 · 대조 · 집계 · 커밋 절차)는 스킬 본문에 글로만 적지 않고 스크립트로 만든다. 스킬 본문에는 그 스크립트를 부르는 명령과 «출력 원문을 인용한다» 는 의무만 적는다. 판단이 필요한 절차는 글로 둔다. 예: `scripts/ontology-commit.sh`.
 
 - **rule**: `~/.claude/rules-lazy/{name}.md` **기본** — `# 제목` + `> **로드 시점**: ...` 형식. always-on(`rules/`)은 매 턴 적용이 필수인 경우만 — 상시 로드 예산(CLAUDE.md·`rules/*.md` 합계 75,000B)은 커밋 시 `scripts/ci-gate-commit.sh` 가 검사하며 초과는 경고만 하고 커밋은 막지 않는다(2026-10-01 사용자 지시, learner.md § Zero-Sum)
 - **skill**: `~/.claude/skills/{name}/SKILL.md` **표준** — frontmatter(`description`, `model`) + 본문. **스킬 자체가 `/{name}` 슬래시 진입점 제공 — 동명 `commands/` wrapper 추가 금지** (중복 등재 재발 방지, 2026-07-15 전수 제거)

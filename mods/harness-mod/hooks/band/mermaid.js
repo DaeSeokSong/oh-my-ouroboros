@@ -1,19 +1,19 @@
 // Mermaid → ASCII 도해 변환기(순수 함수 모듈: $ 없음, 외부 패키지 없음). 배선은 register.js 쪽 몫이다.
-// 판단 근거: 모델이 보는 원문은 바꾸지 않고 화면만 바꾼다.
+// WHY: 모델이 보는 원문은 바꾸지 않고 화면만 바꾼다.
 //   못 읽는 문법은 원문 그대로가 안전하다(그래서 지원 밖이면 null 을 돌려 호출자가 원문을 둔다).
 //   외부 설치 없이 자체 구현, 2026-10-23 사용자 결정(intent/2026-10-23-mods-jira-mermaid-mask-typo.md).
 // 지원: flowchart/graph(TD·TB·LR, BT·RL 은 TD·LR 로 취급)와 sequenceDiagram 기본 문법. 노드 모양은 모두 상자로 그린다.
+// REF: knowledge/harness/code-history/mods__harness-mod__hooks__band__mermaid.js.md
 import { cellWidth } from './width.js'
 
 const MAX_NODES = 60
 const MAX_EDGES = 120
-const MAX_SRC = 20000 // 원문 글자 수 상한
-const MAX_LINE = 500 // 한 줄 글자 수 상한
-const SHORT_LABEL = 12 // 이 칸 수 이하의 간선 라벨만 선 옆에 붙이고, 더 길면 아래 목록으로 보낸다
-const P = 1, N = 2, A = 4, B = 8 // 층축 앞·뒤, 교차축 낮은·높은 쪽(TD 에서는 위·아래·왼·오른)
-const GLYPH = [' ', '│', '│', '│', '─', '┘', '┐', '┤', '─', '└', '┌', '├', '─', '┴', '┬', '┼'] // 방향 마스크 U1 D2 L4 R8 → 선 글자
+const MAX_SRC = 20000
+const MAX_LINE = 500
+const SHORT_LABEL = 12
+const P = 1, N = 2, A = 4, B = 8
+const GLYPH = [' ', '│', '│', '│', '─', '┘', '┐', '┤', '─', '└', '┌', '├', '─', '┴', '┬', '┼']
 
-// ---- 글자판: 글자(리터럴)와 선 마스크를 따로 두고, 그릴 때 리터럴이 마스크를 이긴다 ----
 function makeCanvas() {
   const ch = [], mk = []
   return {
@@ -25,7 +25,7 @@ function makeCanvas() {
       for (const g of s) { r[c] = g; if (cellWidth(g) === 2) { r[c + 1] = ''; c += 2 } else c += 1 }
     },
     at(x, y) { return (ch[y] || [])[x] },
-    free(x, y, len) { // 라벨 둘레 한 칸까지 비었는지
+    free(x, y, len) {
       if (x < 0 || y < 0) return false
       for (let i = Math.max(0, x - 1); i <= x + len; i++) if ((ch[y] && ch[y][i] !== undefined) || (mk[y] && mk[y][i])) return false
       return true
@@ -44,7 +44,6 @@ function makeCanvas() {
   }
 }
 
-// ---- 글 정리 ----
 function cleanLabel(t) {
   return String(t).trim().replace(/^"([\s\S]*)"$/, '$1').replace(/^`([\s\S]*)`$/, '$1')
     .replace(/<br\s*\/?>/gi, ' ').replace(/<\/?(b|i|u|em|strong|span|small|sub|sup|code|p|div)\b[^>]*>/gi, '')
@@ -52,13 +51,11 @@ function cleanLabel(t) {
     .replace(/\s+/g, ' ').trim()
 }
 
-// 줄 앞 %% 주석 제거. 따옴표 안의 %% 는 거의 없으므로 단순 처리한다.
 function stripComment(line) {
   const i = line.indexOf('%%')
   return (i >= 0 ? line.slice(0, i) : line).trim()
 }
 
-// 따옴표·괄호 밖의 ; 에서만 나눈다.
 function splitStatements(line) {
   const out = []
   let depth = 0, q = false, cur = ''
@@ -82,7 +79,6 @@ function wrapItems(prefix, items, max) {
   return out
 }
 
-// ---- flowchart 파서 ----
 const ID = /[\p{L}\p{N}_]+/uy
 const OPEN = [['([', '])'], ['[(', ')]'], ['[[', ']]'], ['((', '))'], ['{{', '}}'], ['[', ']'], ['(', ')'], ['{', '}'], ['>', ']']]
 const FLOW_IGNORE = /^(subgraph|direction|classDef|class|style|linkStyle|click|accTitle|accDescr)\b|^end$/i
@@ -130,7 +126,7 @@ function parseGroup(s, i, g) {
   const ids = []
   for (;;) {
     const r = parseNode(s, i, g)
-    if (!r || g.nodes.size > MAX_NODES) return null // 노드 수 상한은 만들면서 바로 센다
+    if (!r || g.nodes.size > MAX_NODES) return null
     ids.push(r.id)
     i = r.i
     let j = i
@@ -172,14 +168,13 @@ function parseStatement(s, g) {
     while (s[i] === ' ') i++
     r = parseGroup(s, i, g)
     if (!r) return false
-    if (g.edges.length + prev.length * r.ids.length > MAX_EDGES) return false // 간선 곱이 상한을 넘으면 만들기 전에 중단
+    if (g.edges.length + prev.length * r.ids.length > MAX_EDGES) return false
     for (const a of prev) for (const b of r.ids) g.edges.push({ from: a, to: b, label: e.label, head: e.head })
     prev = r.ids
     i = r.i
   }
 }
 
-// ---- flowchart 분석: 순환 간선 떼기 → 가장 긴 경로 층 → 층 안 순서(교차 줄이기) ----
 function analyzeFlow(g) {
   const ids = [...g.nodes.keys()]
   const n = ids.length
@@ -242,12 +237,11 @@ function analyzeFlow(g) {
   return { n, text, edges, layers, lay, up, down }
 }
 
-// ---- flowchart 그리기: 층축(main)과 교차축(cross)으로 계산하고 TD·LR 에 맞춰 글자판 좌표로 옮긴다 ----
 function drawFlow(a, TD) {
   const { n, text, edges, layers, lay, up, down } = a
   const Ln = layers.length
   const tw = text.map(cellWidth)
-  const cs = text.map((_, v) => (TD ? (tw[v] + 4) | 1 : 3)) // 교차축 크기(홀수라 가운데 칸이 정확히 있다)
+  const cs = text.map((_, v) => (TD ? (tw[v] + 4) | 1 : 3))
   const half = v => (cs[v] - 1) / 2
   const gap = TD ? 3 : 1
   const mainSize = layers.map(ls => (TD ? 3 : Math.max(...ls.map(v => tw[v] + 4))))
@@ -275,7 +269,6 @@ function drawFlow(a, TD) {
   const minLo = Math.min(...cc.map((c, v) => c - half(v)))
   for (let v = 0; v < n; v++) cc[v] -= minLo
 
-  // 이웃 층 사이: 출발 노드별 묶음에 모선(bus) 줄을 배정하고, 라벨 자리(extra)를 잡아 간격을 정한다
   const gapInfo = []
   for (let l = 0; l < Ln - 1; l++) {
     const es = edges.filter(e => e.kind === 'draw' && lay[e.f] === l)
@@ -387,7 +380,6 @@ function renderFlow(stmts, header, maxWidth) {
   return lines.join('\n')
 }
 
-// ---- sequenceDiagram ----
 const ARROWS = {
   '->>': { dash: false, head: '►' }, '-->>': { dash: true, head: '►' }, '->': { dash: false, head: '' }, '-->': { dash: true, head: '' },
   '-x': { dash: false, head: 'x' }, '--x': { dash: true, head: 'x' }, '-)': { dash: false, head: ')' }, '--)': { dash: true, head: ')' },
@@ -521,17 +513,15 @@ function renderSeq(stmts, maxWidth) {
   return lines.join('\n')
 }
 
-// ---- 공개 함수 ----
 
-/** Mermaid 원문 → ASCII 도해 문자열. 지원 밖 문법·오류·크기 초과면 null. */
 export function renderMermaid(src, maxWidth = 100) {
   try {
-    if (typeof src !== 'string' || src.length > MAX_SRC) return null // 입력 상한: 큰 글은 변환하지 않고 원문을 둔다
+    if (typeof src !== 'string' || src.length > MAX_SRC) return null
     const max = Number.isFinite(maxWidth) && maxWidth > 0 ? maxWidth : 100
     let raw = src.split(/\r?\n/)
     if (raw.some(l => l.length > MAX_LINE)) return null
     const first = raw.findIndex(l => l.trim())
-    if (first >= 0 && raw[first].trim() === '---') { // 앞머리(front matter) 건너뛰기
+    if (first >= 0 && raw[first].trim() === '---') {
       const end = raw.findIndex((l, i) => i > first && l.trim() === '---')
       if (end < 0) return null
       raw = raw.slice(end + 1)
@@ -547,7 +537,6 @@ export function renderMermaid(src, maxWidth = 100) {
   }
 }
 
-/** 마크다운 속 ```mermaid 펜스를 ```text 도해 펜스로 바꾼다. 못 바꾼 블록과 나머지 글은 그대로, 바뀐 게 없으면 같은 문자열을 돌려준다. */
 export function replaceMermaidBlocks(markdown, maxWidth = 100) {
   if (typeof markdown !== 'string' || !markdown.includes('mermaid')) return markdown
   const lines = markdown.split('\n')

@@ -38,7 +38,7 @@ Three principles sit above individual rule files and gate every turn. Their full
 | File | Load Point | Core Principle | Key Sections |
 |------|-----------|----------------|--------------|
 | `agent-routing.md` | Always | Route first match from priority table | Agent table, routing priority, spawn guards |
-| `mem0-auto.md` | Always | Mem0 triggers are automatic — no user prompt needed | §1 metadata, §2 trigger table T01~T41, §4 infer strategy |
+| `mem0-auto.md` | Always | Mem0 triggers are automatic — no user prompt needed | §1 metadata, §2 trigger table T01~T41, infer default (§1.1) |
 | `model-assignment.md` | Always | Non-Opus work → subagent by default | §1 Opus conditions, §2 Sonnet, §3 Haiku, §4 delegation rules |
 | `prompt-routing.md` | Always | Clarify before execute | Step 0~3: CLAUDE.md check, ground truth, clarification, model dispatch |
 | `code-execution.md` | Always | Write to file; user runs | Execution prohibition, auto-allow (read-only), closed list of 7 AI-execution exceptions |

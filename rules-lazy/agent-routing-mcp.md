@@ -14,6 +14,15 @@
 - **1.9 행 위치 경위**: 2행(코드 리뷰/검증)보다 좁은 트리거라 위에 둔다(2026-11-10 상시 칸에서 이관).
 - **표 밖 타입 차단 훅 (2026-11-09 에이전트 정리 4단계 채택)**: 표 밖 타입 소집은 PreToolUse 훅 `scripts/agent-type-gate.py` 가 막는다. 훅 등록은 사용자가 한다. graphify 예외는 내용이 active 인 30분 안의 표지 파일과 `graphify extract` 설명이 함께 있을 때만 통과한다. 이 예외는 표 밖 타입 전반을 허용하지 않는다. 훅 허용 목록에는 표의 12종 외에 Codex 위임 경로, code-simplifier, claude-security 접두의 플러그인 에이전트가 더 있다(2026-11-10 상시 «라우팅 적용 방식» 에서 이관).
 
+## 에이전트를 따로 두는 기준 (2026-11-24 사용자 결정, 의뢰서 `intent/2026-11-24-harness-review-six-items.md` W15)
+
+에이전트는 맥락 격리 · 도구 권한 분리 · 병렬 실행 · 모델 단가 차이 가운데 하나 이상이 필요할 때만 따로 둔다. 직무 이름(기획자 · 개발자 · 디자이너 같은 조직도)을 본떠 늘리지 않는다. 절차와 지식만 다르면 스킬로 만든다.
+
+- **근거 글**: «Building agents: When to fold subagents into your main agent loop»(claude.com 공식 글 · 2026-10-22 · `https://claude.com/blog/building-agents-when-to-fold-subagents-into-your-main-agent-loop`). 글이 드는 까닭은 세 가지다. 1) 단일 루프에서 맥락이 불어 품질이 측정될 만큼 떨어질 때 2) 버려도 되는 새 맥락으로 병렬 실행할 때 3) 도구 선택이 어렵거나 지시가 충돌할 때. 글은 팀이나 문제 유형별로 나누면 조직도를 복제하게 된다고(콘웨이 법칙) 경고한다.
+- **하네스 자체 기준**: 글에 없고 하네스가 더한 두 까닭이다. 도구 권한 분리는 외부 글을 읽는 쪽에 쓰기를 주지 않기 위함이고 모델 단가 차이는 일의 난이도에 맞춰 모델을 달리 쓰기 위함이다.
+- **신설 절차**: 에이전트를 새로 만들기 전에 위 네 가지(맥락 격리 · 도구 권한 분리 · 병렬 실행 · 모델 단가) 가운데 어느 것에 해당하는지 적는다. 해당이 없으면 스킬로 만든다.
+- **현황**: 2026-11-24 기준 기존 에이전트의 통합 후보 조사가 진행 중이다.
+
 ## 새 세션 금지 실측·예외 범위 (agent-routing.md 이관)
 
 `rules/agent-routing.md` «새 세션에 일 맡기기 금지» 의 지시일·실측·예외 범위 원문이다(2026-11-10 상시 다이어트로 이관). main 이 `claude --bg` 로 측정 세션을 만들기 직전에 이 절을 열어 범위를 대조한다. 아래 두 예외는 모두 종료됐고 2026-11-12 현재 열린 예외는 없다(절은 이력으로 남긴다).
@@ -32,13 +41,13 @@ sub-agent를 spawn하기 전, main은 두 **사고 기능**으로 작업을 점�
 | **R (심문)** | 요구의 맹점·모호성은? 과거 결정과 충돌하는가? 용어가 모호한가? | `prompt-routing.md` Step 1 (구체화·다중해석·단순대안) |
 | **L (검증)** | 현재 코드·공식문서·메모리와 대조 — 환각 API·낡은 가정·불가능 설계 없는가? | scout 정찰 + `mem0-auto.md §1.5`(advisory) + qa |
 
-→ 두 렌즈 통과 후 **정확한 분해 + 4요소 spawn prompt** 작성 → 라우팅. 목적: 잘못된 분해로 인한 sub-agent 재작업 감소 (앞단에서 더 생각 → 뒤 루프 축소).
+→ 두 렌즈 통과 후 **정확한 분해 + 5요소 spawn prompt** 작성 → 라우팅. 목적: 잘못된 분해로 인한 sub-agent 재작업 감소 (앞단에서 더 생각 → 뒤 루프 축소).
 
 **적용 범위 (over-application 가드)**: 아키텍처·모호한 리팩토링·낯선 API/SDK·과거결정 충돌 가능·다중에이전트 작업에만. 변수명 변경·한 줄 수정·명확한 boilerplate엔 생략 (Dual-Brain DON'T).
 
-## Spawn prompt 4요소 강제 (agent-routing.md 이관 — MANDATORY — Anthropic 공식)
+## Spawn prompt 5요소 강제 (agent-routing.md 이관 · MANDATORY · Anthropic 공식)
 
-모든 subagent/teammate spawn prompt에 아래 4요소를 반드시 명시한다:
+모든 subagent/teammate spawn prompt에 아래 5요소를 반드시 명시한다:
 
 | 요소 | 내용 |
 |------|------|
@@ -46,8 +55,35 @@ sub-agent를 spawn하기 전, main은 두 **사고 기능**으로 작업을 점�
 | output_format | 응답 형식 (글자수, 섹션, 표 등) |
 | tools / sources | 사용 가능 도구·MCP·검색 범위 |
 | task_boundary | 무엇을 하지 않을 것인가 (수정 금지/탐색만/...). 표준 문구 1개는 항상 포함: 다른 저장소는 읽기만, 수정 금지(프로젝트 경계 — `rules/code-execution.md`) |
+| user_request | 사용자 지시 원문: 사용자가 실제로 쓴 문장의 인용(해당 부분) 또는 원문이 든 파일 경로. main 의 요약 · 해석만 넘기지 않는다 |
 
 근거: Anthropic "Building effective agents" — 누락 시 작업 중복·누락 빈발.
+
+**다섯째 요소(사용자 지시 원문)를 두는 까닭 (2026-11-24 사용자 결정, 의뢰서 `intent/2026-11-24-harness-review-six-items.md` W4)**: main 이 지시를 요약하는 단계에서 제약과 «하지 말 것» 이 빠지기 쉽다. 서브에이전트는 요약만 보고 다른 방향으로 일하고, 검수자도 요약과만 대조해 어긋남을 못 잡는다. 원문 한 토막이나 파일 경로를 함께 넘기면 받는 쪽이 직접 대조할 수 있다.
+
+- **면제**: 조회 전용 에이전트(scout · searcher · citation-verifier)는 «사용자 지시 원문» 요소가 없어도 된다(사용자 결정 R3). 나머지 네 요소는 그대로 필요하다.
+- **외부 글을 읽는 에이전트**: 원문 가운데 그 작업에 필요한 부분만 넘긴다(사용자 지시 전체를 외부 조회 맥락에 싣지 않는다).
+- **서두**: `[SKILL_DEPTH: N]` 은 기존 규칙대로 서두에 둔다(§ 에이전트 spawn prompt 서두에 포함할 2가지). 검사 훅은 이것을 기록 항목으로만 본다.
+
+### 표지 문자열 (검사 훅 `scripts/agent-prompt-gate.py` 와 글자까지 같다)
+
+검사 훅은 지시문 안에 아래 문자열이 이름표 자리에 있는지만 본다(설정 정본 `config/agent-prompt-gate.json` 의 `markers`). 한글 표지나 영문 키 가운데 하나만 있으면 그 요소는 있는 것으로 본다.
+
+| 요소 | 한글 표지 | 영문 키만 쓴 꼴 |
+|------|-----------|-----------------|
+| objective | `목표(objective)` | `objective` |
+| user_request | `사용자 지시 원문` | `user_request` |
+| tools / sources | `도구 · 자료(tools/sources)` | `tools/sources` |
+| output_format | `출력 형식(output_format)` | `output_format` |
+| task_boundary | `경계(task_boundary)` | `task_boundary` |
+
+**이름표 자리 규칙 (2026-11-24 qa 재현 뒤 개정)**: 표지는 줄 머리에서 시작해야 한다. 표지 앞에는 공백(탭 · 전각 공백 · NBSP 포함) · `#` · `-` · `*` · `>` · `[` · 백틱과, 뒤에 공백이 붙은 번호(`1.` · `2)`)만 올 수 있다. 표지 바로 뒤에는 닫는 백틱 하나를 건너뛴 다음 줄 끝 · `:` · `)` · `]` · `**` · 공백+`(` 가운데 하나가 와야 한다(대소문자 무시, 한글 표지 · 영문 키 모두 같다). 그래서 `1. 목표(objective):` 와 백틱으로 감싼 키도 통과한다. 본문 문장 속 낱말은 세지 않는다. 종전의 단순 포함 판정에서는 `implement the objective function; tools: use ruff` 가 두 요소를 채웠고, 낱말 다섯 개만 한 줄에 늘어놓아도 통과했다. 영문 단독 `tools` 는 이 때문에 표지에서 뺐다.
+
+- 통과: `## 목표(objective)` 처럼 줄 머리의 제목 / `- **task_boundary**: 쓰기 금지` 처럼 글머리표 이름표
+- 불통과: `implement the objective function` 처럼 문장 속 낱말 / `objective user_request tools/sources output_format task_boundary` 처럼 한 줄에 늘어놓은 낱말(첫 낱말 뒤가 공백이라 이름표가 아니다)
+
+검사 대상은 `rules/agent-routing.md` 에이전트 표의 이름이다(표 밖 타입 · 플러그인 타입 · `fork` 는 통과). 처음에는 기록만 하고(observe, `_audit/agent-prompt-gate.tsv`) 7일째 오탐 표(`agent-prompt-gate.py --report --days 7`)를 사용자에게 보고한 뒤 사용자 확인으로 거부(enforce)로 바꾼다(자동 전환 없음, 사용자 결정 R4).
+- 기한 알림: main 이 등록할 때 `config/agent-prompt-gate.json` 의 `registered` 에 등록일(YYYY-MM-DD)을 적는다. 그날부터 7일이 지나면 하네스 저장소 세션의 시작 점검에 `AGENT_PROMPT_GATE_REPORT_DUE` 가 뜬다(`scripts/harness-usage-check.sh`). 표를 보고한 뒤 같은 파일의 `report_7d_done` 을 true 로 바꾸면 꺼진다. enforce 로 바꿔도 꺼진다.
 
 > **output_format 표준 문구 (MANDATORY)**: 모든 spawn prompt의 output_format에 "최종 보고의 마지막 text 블록 안에 행두 `RESULT: <값>` 한 줄"을 포함한다. 값은 `PASS|DONE|DONE_WITH_CONCERNS|FAIL|BLOCKED|NEEDS_CONTEXT|REJECT` 중 첫 토큰, 굵게·따옴표·코드펜스·번호 항목 안 금지 — 상세: `agents/coder.md` § 수정 완료 후.
 
@@ -76,7 +112,7 @@ TeamCreate 호출 전 체크리스트:
 - **판단 근거**: SendMessage는 이름 문자열로 대상을 특정하는 도구라 이름이 조금이라도 어긋나면(리네임·중복 접미사·세션 재시작으로 실제 활성 이름이 바뀐 경우) 조용히 오발신되거나 실패한다. ListAgents 선행이 이 실패 모드를 원천 차단한다.
 - **연계**: `rules/agent-routing.md` § Teammate 중복 생성 방지(TeamCreate 전 팀 확인)와 같은 계열의 "발신 전 실재 확인" 원칙 — 팀은 TeamCreate 전에, 개별 대상은 SendMessage 전에 확인한다.
 
-## Spawn prompt 추가 지침 (Fable 5 공식 프롬프팅 가이드 이식, 2026-07-09 — 4요소에 더해)
+## Spawn prompt 추가 지침 (Fable 5 공식 프롬프팅 가이드 이식, 2026-07-09: 5요소에 더해)
 
 - **조기중단 방지**: spawn prompt에 "가역·저위험 단계는 중간 확인 질문("~할까요?")으로 블로킹하지 말고 완주하라" 포함 — 진짜 막힘·합의 필요 시에만 BLOCKED/NEEDS_CONTEXT로 main 반환 (기존 규약 유지).
 - **시각화 산출물은 소집 전에 그릴 주체부터 (2026-11-10 사용자 결정)**: 그림 · 그림 스크립트 · html · svg · Artifact 페이지를 만들게 될 서브에이전트를 부르기 **전에** main 이 그릴 주체를 결정 팝업으로 먼저 묻는다. 답이 없으면 decision-popup mod 가 서브에이전트의 그 쓰기 · 실행 · 게시를 막아 main 으로 되돌아오는 왕복이 생긴다(정본 `skills/figure/SKILL.md` § 그릴 주체 선택).

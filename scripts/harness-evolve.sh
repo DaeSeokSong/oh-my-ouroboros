@@ -7,13 +7,6 @@
 #   ci-gate-commit.sh 인라인 예산 체크(AO_BUDGET)로 이미 흡수됨 — 이 서브커맨드는 미사용 중복.
 #   regression-blind.sh와 동일 Phase-3 자가개선 계열 — 활성화 전 재설계 필요.
 #
-#   2026-07-17 수정 완료: verdict 시맨틱(INCONCLUSIVE 제외·pair 단위 n_comparable), word-split,
-#   중복 case_id 감지, --model 무한루프, 개행 없는 마지막 줄(compare·killswitch), zerosum budget
-#   숫자검증·10# base(leading-zero octal 방지).
-#   활성화 전 잔여 하드닝(미배선이라 현 영향 0, 구조적 재설계 대상): verdict 토큰 엄격 검증,
-#   suite 파일명 self-truncation 가드. (2026-07-18 Codex 추가 지적분 중 개행누락·무한루프는 수정됨)
-#   가드, killswitch 지표(win_rate/reg_count) 숫자 검증, zerosum 대형 budget overflow.
-#
 # 서브커맨드:
 #   killswitch <history_tsv>                                          G5 롤백 판정 (결정론)
 #   zerosum <budget_tokens> <candidate_file> <rule_file...>           토큰 예산 점검 (결정론)
@@ -26,25 +19,13 @@
 #   zerosum:           0=예산 이하  1=예산 초과(eviction 필요)
 #   slowupdate-compare: 0=회귀 없음  1=회귀 발견  2=파일 불일치/빈파일
 #   slowupdate-run:    0=완료(compare 결과 참조)  1=입력 오류  2=실행 불가
+# REF: knowledge/harness/code-history/scripts__harness-evolve.sh.md
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACTION="${1:-help}"
 
-# ── [killswitch] G5 롤백 판정 ─────────────────────────────────────────────────
-# 사용법: harness-evolve.sh killswitch <history_tsv>
-#
-# history_tsv 형식 (헤더 허용, 이후 TSV):
-#   week<TAB>blind_win_rate<TAB>regression_count
-#
-# 판정 규칙 (결정론 — 모델 호출 없음):
-#   - 최신 주 regression_count >= 1  → ROLLBACK (exit 1)
-#   - 최신 2주 연속 blind_win_rate < 0.55 → ROLLBACK (exit 1)
-#   - 그 외 → OK (exit 0)
-#   - 유효 데이터 2주 미만 + 회귀 없음 → INSUFFICIENT (exit 2)
-#
-# 롤백 판정 시: 판정/제안만 출력. 자동 적용 없음 (불변식 1).
 cmd_killswitch() {
     local history_tsv="${1:-}"
     if [[ -z "$history_tsv" ]]; then
@@ -56,10 +37,8 @@ cmd_killswitch() {
         exit 2
     fi
 
-    # 헤더 스킵 후 데이터 행 파싱 (week 컬럼이 숫자가 아닌 행 = 헤더로 간주)
     local rows=()
-    while IFS=$'\t' read -r week win_rate reg_count || [[ -n "$week" ]]; do   # 개행 없는 마지막 행 누락 방지 (2026-07-17 Codex)
-        # 헤더 행 스킵 (week가 숫자가 아닌 경우)
+    while IFS=$'\t' read -r week win_rate reg_count || [[ -n "$week" ]]; do   # WHY: 개행 없는 마지막 행 누락 방지 (2026-07-17 Codex)
         if ! [[ "$week" =~ ^[0-9] ]]; then
             continue
         fi
@@ -85,14 +64,11 @@ cmd_killswitch() {
         exit 2
     fi
 
-    # 최신 주 (배열 마지막)
     IFS='|' read -r latest_week latest_wr latest_rc <<< "${rows[$((n-1))]}"
 
-    # 회귀 수 정수화 (소수점 버림)
     local rc_int
     rc_int=$(echo "$latest_rc" | awk '{printf "%d", $1}')
 
-    # 규칙 1: 최신 주 regression_count >= 1 → ROLLBACK
     if [[ "$rc_int" -ge 1 ]]; then
         echo "판정: ROLLBACK (exit 1)"
         echo "사유: 최신 주($latest_week) regression_count=${latest_rc} >= 1"
@@ -103,12 +79,10 @@ cmd_killswitch() {
         exit 1
     fi
 
-    # 최신 2주 데이터 확인 (규칙 2)
     if [[ $n -ge 2 ]]; then
         IFS='|' read -r prev_week prev_wr _prev_rc <<< "${rows[$((n-2))]}"
 
-        # Python3로 float 비교 (bash 산술 불가)
-        # 값은 argv로 전달 — 문자열 보간 금지 (특수문자 포함 시 파싱 깨짐 방지)
+        # NEVER: 값을 문자열 보간으로 넘기지 않는다(argv 로 전달). 특수문자 포함 시 파싱이 깨진다.
         local cond2
         cond2=$(python3 -c '
 import sys
@@ -137,20 +111,12 @@ print("ROLLBACK" if prev_v < 0.55 and latest_v < 0.55 else "OK")
         echo "사유: regression_count=0, blind_win_rate 연속 < 0.55 미충족"
         exit 0
     else
-        # 데이터 1주 + 회귀 없음
         echo "판정: INSUFFICIENT (exit 2)"
         echo "사유: 유효 데이터 ${n}주 < 2주 (회귀는 없음)"
         exit 2
     fi
 }
 
-# ── [zerosum] 토큰 예산 점검 ──────────────────────────────────────────────────
-# 사용법: harness-evolve.sh zerosum <budget_tokens> <candidate_file> <rule_file...>
-#
-# 토큰 추정: wc -m(문자수) / 4 (결정론 — 모델 호출 없음)
-# budget_tokens 초과 → exit 1 + 초과량·제거 권장량 출력
-# 이하 → exit 0
-# 제거 대상 자동 선정 금지 — "초과 N토큰 → 제거/병합 후보 사용자 제시" 안내만 (불변식 1)
 cmd_zerosum() {
     local budget_tokens="${1:-}"
     local candidate_file="${2:-}"
@@ -160,12 +126,12 @@ cmd_zerosum() {
         echo "사용법: harness-evolve.sh zerosum <budget_tokens> <candidate_file> <rule_file...>" >&2
         exit 1
     fi
-    # budget_tokens 숫자 검증 (2026-07-17 Codex): 미검증 시 [[ -gt ]]·$(( ))가 임의 입력을 bash 산술로 평가
+    # WHY: budget_tokens 숫자 검증 (2026-07-17 Codex): 미검증 시 [[ -gt ]]·$(( ))가 임의 입력을 bash 산술로 평가
     if ! [[ "$budget_tokens" =~ ^[0-9]+$ ]]; then
         echo "budget_tokens는 음이 아닌 정수여야 함: $budget_tokens" >&2
         exit 1
     fi
-    budget_tokens=$(( 10#$budget_tokens ))   # base-10 강제 — leading-zero(070000) octal 오류 방지 (2026-07-17 Codex)
+    budget_tokens=$(( 10#$budget_tokens ))   # WHY: base-10 강제 — leading-zero(070000) octal 오류 방지 (2026-07-17 Codex)
     if [[ ! -f "$candidate_file" ]]; then
         echo "candidate_file 미존재: $candidate_file" >&2
         exit 1
@@ -175,7 +141,6 @@ cmd_zerosum() {
     local total_rule_chars=0
     local rule_details=()
 
-    # 각 rule_file 문자수 합산
     for rf in "${rule_files[@]}"; do
         if [[ ! -f "$rf" ]]; then
             echo "경고: rule_file 미존재(건너뜀): $rf" >&2
@@ -232,12 +197,6 @@ cmd_zerosum() {
     fi
 }
 
-# ── [slowupdate-compare] 이전 vs 현재 결과 회귀 비교 ──────────────────────────
-# 사용법: harness-evolve.sh slowupdate-compare <prev_results_tsv> <curr_results_tsv>
-#
-# 각 TSV 형식: case_id<TAB>PASS|FAIL|INCONCLUSIVE  (INCONCLUSIVE는 비교에서 제외)
-# 회귀 = prev PASS → curr FAIL
-# exit: 0=회귀 없음  1=회귀 발견  2=파일 불일치/빈파일 (결정론)
 cmd_slowupdate_compare() {
     local prev_tsv="${1:-}"
     local curr_tsv="${2:-}"
@@ -257,13 +216,12 @@ cmd_slowupdate_compare() {
         fi
     done
 
-    # TSV 파싱 → associative array
     declare -A prev_map curr_map
     local prev_pass=0 prev_fail=0 curr_pass=0 curr_fail=0
 
-    while IFS=$'\t' read -r case_id verdict || [[ -n "$case_id" ]]; do   # 개행 없는 마지막 줄 누락 방지 (2026-07-17 Codex)
+    while IFS=$'\t' read -r case_id verdict || [[ -n "$case_id" ]]; do   # WHY: 개행 없는 마지막 줄 누락 방지 (2026-07-17 Codex)
         [[ -z "$case_id" ]] && continue
-        if [[ -n "${prev_map[$case_id]+x}" ]]; then   # 중복 case_id는 회귀 은폐 위험 → INCONCLUSIVE (2026-07-17 Codex)
+        if [[ -n "${prev_map[$case_id]+x}" ]]; then   # WHY: 중복 case_id는 회귀 은폐 위험 → INCONCLUSIVE (2026-07-17 Codex)
             echo "판정: INCONCLUSIVE (exit 2)"; echo "사유: prev TSV 중복 case_id ($case_id)"; exit 2
         fi
         prev_map["$case_id"]="$verdict"
@@ -271,12 +229,12 @@ cmd_slowupdate_compare() {
             ((prev_pass++)) || true
         elif [[ "$verdict" == "FAIL" ]]; then
             ((prev_fail++)) || true
-        fi   # INCONCLUSIVE는 pass/fail 어느 쪽도 카운트 안 함 (제외 — map엔 남아 set-match 유지)
+        fi   # NEVER: INCONCLUSIVE 를 map 에서 빼지 않는다. 카운트에서만 제외하고 map 은 아래 집합 일치 검사가 쓴다
     done < "$prev_tsv"
 
-    while IFS=$'\t' read -r case_id verdict || [[ -n "$case_id" ]]; do   # 개행 없는 마지막 줄 누락 방지 (prev와 대칭)
+    while IFS=$'\t' read -r case_id verdict || [[ -n "$case_id" ]]; do
         [[ -z "$case_id" ]] && continue
-        if [[ -n "${curr_map[$case_id]+x}" ]]; then   # 중복 case_id → INCONCLUSIVE (prev와 대칭, 2026-07-17 Codex)
+        if [[ -n "${curr_map[$case_id]+x}" ]]; then   # WHY: 중복 case_id → INCONCLUSIVE (prev와 대칭, 2026-07-17 Codex)
             echo "판정: INCONCLUSIVE (exit 2)"; echo "사유: curr TSV 중복 case_id ($case_id)"; exit 2
         fi
         curr_map["$case_id"]="$verdict"
@@ -284,10 +242,9 @@ cmd_slowupdate_compare() {
             ((curr_pass++)) || true
         elif [[ "$verdict" == "FAIL" ]]; then
             ((curr_fail++)) || true
-        fi   # INCONCLUSIVE 제외 (prev와 대칭)
+        fi
     done < "$curr_tsv"
 
-    # case_id 집합 일치 확인
     local prev_ids curr_ids
     prev_ids=$(printf '%s\n' "${!prev_map[@]}" | sort)
     curr_ids=$(printf '%s\n' "${!curr_map[@]}" | sort)
@@ -307,7 +264,7 @@ cmd_slowupdate_compare() {
     printf "  %-30s %-8s %-8s %-10s\n" "-------" "----" "----" "----"
 
     local regression_cases=()
-    while IFS= read -r case_id; do   # word-split 방지 (2026-07-17 Codex): 공백 포함 case_id도 안전
+    while IFS= read -r case_id; do   # WHY: word-split 방지 (2026-07-17 Codex): 공백 포함 case_id도 안전
         local pv="${prev_map[$case_id]}"
         local cv="${curr_map[$case_id]:-MISSING}"
         local label=""
@@ -327,7 +284,7 @@ cmd_slowupdate_compare() {
     echo "curr PASS: ${curr_pass} / FAIL: ${curr_fail}"
     echo ""
 
-    # 비교 가능 = prev·curr 양쪽 다 PASS/FAIL인 pair (2026-07-17 Codex: prev-only 카운트는 오류 —
+    # WHY: 비교 가능 = prev·curr 양쪽 다 PASS/FAIL인 pair (2026-07-17 Codex: prev-only 카운트는 오류 —
     # prev=PASS,curr=INCONCLUSIVE 쌍이 "회귀 없음"으로 새는 것 방지). 0이면 INCONCLUSIVE.
     local n_comparable=0
     for case_id in "${!prev_map[@]}"; do
@@ -356,29 +313,18 @@ cmd_slowupdate_compare() {
     fi
 }
 
-# ── [slowupdate-run] 회귀 테스트 실행 → prev/curr 결과 TSV 생성 ───────────────
-# 사용법: harness-evolve.sh slowupdate-run <prev_ruleset_dir> <curr_ruleset_dir> <suite_file> [--model M]
-#
-# suite_file 형식: 각 행 = case_id<TAB>rubric_file (헤더 불허)
-# 각 case에 대해 regression-judge.sh를 prev/curr ruleset_dir로 각각 호출
-# → prev_results.tsv, curr_results.tsv 생성 (suite_file과 같은 디렉토리)
-#
-# ※ claude 호출 포함 — 작성만, 실행 금지.
-# ※ prev_ruleset_dir 구성 참고(주석):
-#   git -C ~/.claude archive <sha> | tar -x -C <prev_ruleset_dir>
-#
-# exit: 0=완료(결과 파일 생성, compare로 회귀 확인)  1=입력 오류  2=실행 불가
+# NEVER: claude 호출 포함이라 작성만 하고 실행하지 않는다. suite_file 헤더는 불허한다.
 cmd_slowupdate_run() {
     local prev_ruleset_dir="${1:-}"
     local curr_ruleset_dir="${2:-}"
     local suite_file="${3:-}"
-    local model="haiku"  # 별칭 — 특정 버전 하드코딩 금지
+    local model="haiku"  # NEVER: 특정 버전을 하드코딩하지 않는다(별칭)
 
     shift 3 2>/dev/null || true
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --model)
-                [[ -z "${2:-}" ]] && { echo "--model 값 필요" >&2; exit 1; }  # 값 없으면 shift 2 실패로 무한루프 (2026-07-17 Codex)
+                [[ -z "${2:-}" ]] && { echo "--model 값 필요" >&2; exit 1; }  # WHY: 값 없으면 shift 2 실패로 무한루프 (2026-07-17 Codex)
                 model="$2"; shift 2 ;;
             *) echo "알 수 없는 옵션: $1" >&2; exit 1 ;;
         esac
@@ -399,7 +345,6 @@ cmd_slowupdate_run() {
         exit 1
     fi
 
-    # experiment-gate 가드 (불변식 — 실험 활성 중 실행 금지)
     if [[ -f "$HOME/.claude/_bench/.experiment_active" ]]; then
         echo "실험 활성 — slowupdate-run 보류 (experiment-gate)"
         exit 0
@@ -416,11 +361,9 @@ cmd_slowupdate_run() {
     local prev_out="$suite_dir/prev_results.tsv"
     local curr_out="$suite_dir/curr_results.tsv"
 
-    # 결과 파일 초기화
     : > "$prev_out"
     : > "$curr_out"
 
-    # judge_script 출력 캡처용 임시 파일 (PID 재사용/충돌 방지 — mktemp)
     local prev_log curr_log
     prev_log="$(mktemp)" || { echo "임시 파일 생성 실패" >&2; exit 2; }
     curr_log="$(mktemp)" || { echo "임시 파일 생성 실패" >&2; exit 2; }
@@ -437,14 +380,13 @@ cmd_slowupdate_run() {
     echo ""
 
     local case_num=0
-    while IFS=$'\t' read -r case_id rubric_file || [[ -n "$case_id" ]]; do   # 개행 없는 마지막 행 누락 방지 (2026-07-18 Codex)
+    while IFS=$'\t' read -r case_id rubric_file || [[ -n "$case_id" ]]; do   # WHY: 개행 없는 마지막 행 누락 방지 (2026-07-18 Codex)
         [[ -z "$case_id" ]] && continue
         ((case_num++)) || true
 
         echo "[case $case_num] $case_id"
         echo "  rubric: $rubric_file"
 
-        # rubric_file이 상대경로인 경우 suite_dir 기준 해석
         if [[ ! "$rubric_file" = /* ]]; then
             rubric_file="$suite_dir/$rubric_file"
         fi
@@ -455,35 +397,32 @@ cmd_slowupdate_run() {
             continue
         fi
 
-        # prev ruleset 실행
         local prev_exit=0
         bash "$judge_script" "$rubric_file" "$prev_ruleset_dir" --model "$model" \
             > "$prev_log" 2>&1 || prev_exit=$?
-        local prev_verdict="INCONCLUSIVE"   # 기본 = INCONCLUSIVE — 예상 못한 exit(인프라 오류)가 허위 회귀로 둔갑하지 않게 (2026-07-17 Codex C3)
+        local prev_verdict="INCONCLUSIVE"   # WHY: 기본 = INCONCLUSIVE — 예상 못한 exit(인프라 오류)가 허위 회귀로 둔갑하지 않게 (2026-07-17 Codex C3)
         if [[ $prev_exit -eq 0 ]]; then
             prev_verdict="PASS"
         elif [[ $prev_exit -eq 1 ]]; then
             prev_verdict="FAIL"
-        fi   # exit 2 및 그 외 = INCONCLUSIVE(기본값 유지) → 비교에서 제외
+        fi
         printf '%s\t%s\n' "$case_id" "$prev_verdict" >> "$prev_out"
         echo "  prev → $prev_verdict (exit $prev_exit)"
 
-        # curr ruleset 실행
         local curr_exit=0
         bash "$judge_script" "$rubric_file" "$curr_ruleset_dir" --model "$model" \
             > "$curr_log" 2>&1 || curr_exit=$?
-        local curr_verdict="INCONCLUSIVE"   # 기본 = INCONCLUSIVE (prev와 대칭 — 2026-07-17 Codex C3)
+        local curr_verdict="INCONCLUSIVE"   # WHY: 기본 = INCONCLUSIVE (prev와 대칭 — 2026-07-17 Codex C3)
         if [[ $curr_exit -eq 0 ]]; then
             curr_verdict="PASS"
         elif [[ $curr_exit -eq 1 ]]; then
             curr_verdict="FAIL"
-        fi   # exit 2 및 그 외 = INCONCLUSIVE → 비교에서 제외
+        fi
         printf '%s\t%s\n' "$case_id" "$curr_verdict" >> "$curr_out"
         echo "  curr → $curr_verdict (exit $curr_exit)"
         echo ""
     done < "$suite_file"
 
-    # 임시 파일 정리
     rm -f "$prev_log" "$curr_log"
 
     if [[ $case_num -eq 0 ]]; then
@@ -501,7 +440,6 @@ cmd_slowupdate_run() {
     exit 0
 }
 
-# ── 서브커맨드 라우팅 ─────────────────────────────────────────────────────────
 case "$ACTION" in
     killswitch)
         shift

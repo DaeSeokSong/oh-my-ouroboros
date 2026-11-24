@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""external_send_preflight.py 패턴 회귀 테스트 (2026-09-08 검수 반영분).
+"""external_send_preflight.py 패턴 회귀 테스트.
 
 실행: python3 ~/.claude/scripts/tests/test_external_send_preflight.py → 실패 0 이면 exit 0
 
@@ -15,6 +14,7 @@
 ■ 케이스
   차단: JSON password · 무따옴표 PASSWORD · token="…" · sk- 키 · ghp_ 키
   통과: `--env TOKEN="$TOKEN"`(변수 참조) · password=example · token=xxx · 일반 텍스트
+REF: knowledge/harness/code-history/scripts__tests__test_external_send_preflight.py.md
 """
 import os
 import subprocess
@@ -25,7 +25,7 @@ from pathlib import Path
 
 SCRIPT = Path.home() / ".claude/scripts/external_send_preflight.py"
 
-# 가짜 비밀 값은 런타임에 조립한다. 소스 파일에 키 모양 리터럴이 있으면
+# WHY: 가짜 비밀 값은 런타임에 조립한다. 소스 파일에 키 모양 리터럴이 있으면
 # ci-gate-commit 의 시크릿 탐지가 이 테스트 파일 자체를 막는다(2026-09-08 실측).
 _FAKE_VAL = "Sk9w" + "Q2vL" + "p7"
 _FAKE_KEY_BODY = "A1b2C3d4" + "E5f6G7h8" + "I9j0K1l2" + "M3n4"
@@ -50,10 +50,9 @@ PASS_CASES = [
 
 
 def verdict(content: str, filename: str) -> tuple[int, str]:
-    """임시 폴더에 파일 하나를 만들고 프리플라이트를 돌린다 → (rc, 판정 줄)."""
     with tempfile.TemporaryDirectory() as td:
         (Path(td) / filename).write_text(content, encoding="utf-8")
-        r = subprocess.run([sys.executable, str(SCRIPT), td], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, str(SCRIPT), td], capture_output=True, text=True, check=False)
     line = next((ln for ln in r.stdout.splitlines() if ln.startswith("판정:")), "(판정 줄 없음)")
     return r.returncode, line
 
@@ -72,10 +71,7 @@ for name, fn, content in PASS_CASES:
     fail += 0 if ok else 1
     print(f"{'OK ' if ok else 'FAIL'} [통과] {name}{'' if ok else f' (rc={rc} {line})'}")
 
-# ── 2026-10-01 감사: 확장자 목록 밖·한도 초과·이진·읽기 실패·이름 대조 ──
-# 수정 전에는 전부 «통과» 였다(목록 밖 확장자는 내용 검사 없이 건너뜀, 8MiB 너머는 말없이 잘림, 이름은 대조 안 함).
 def verdict_tree(files: dict[str, bytes], chmod_zero: tuple[str, ...] = ()) -> tuple[int, str, str]:
-    """{상대경로: 바이트} 로 트리를 만들고 프리플라이트를 돌린다 → (rc, 판정 줄, 전체 출력)."""
     with tempfile.TemporaryDirectory() as td:
         for rel, data in files.items():
             p = Path(td) / rel
@@ -83,7 +79,7 @@ def verdict_tree(files: dict[str, bytes], chmod_zero: tuple[str, ...] = ()) -> t
             p.write_bytes(data)
         for rel in chmod_zero:
             (Path(td) / rel).chmod(0)
-        r = subprocess.run([sys.executable, str(SCRIPT), td], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, str(SCRIPT), td], capture_output=True, text=True, check=False)
         for rel in chmod_zero:
             (Path(td) / rel).chmod(0o600)
     line = next((ln for ln in r.stdout.splitlines() if ln.startswith("판정:")), "(판정 줄 없음)")
@@ -108,22 +104,21 @@ for name, files, chm, want, must in EXTRA:
     fail += 0 if ok else 1
     print(f"{'OK ' if ok else 'FAIL'} [{'차단' if want == 'block' else '통과'}] {name}{'' if ok else f' (rc={rc} {line})'}")
 
-# 2026-10-01 P6 검수: 폴더 심볼릭 링크는 도구가 따라가는데 훑지 못하므로 «미검사» 차단(수정 전에는 통과였다)
 with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as other:
     (Path(other) / "secret.txt").write_text("ok\n", encoding="utf-8")
     (Path(td) / "n.txt").write_text("ok\n", encoding="utf-8")
     os.symlink(other, Path(td) / "linked")
-    r = subprocess.run([sys.executable, str(SCRIPT), td], capture_output=True, text=True)
+    r = subprocess.run([sys.executable, str(SCRIPT), td], capture_output=True, text=True, check=False)
     ok = r.returncode == 1 and "폴더 심볼릭 링크" in r.stdout
     fail += 0 if ok else 1
     print(f"{'OK ' if ok else 'FAIL'} [차단] 폴더 심볼릭 링크 → 미검사 차단{'' if ok else f' (rc={r.returncode})'}")
     (Path(td) / "linked").unlink()
-    r = subprocess.run([sys.executable, str(SCRIPT), td], capture_output=True, text=True)
+    r = subprocess.run([sys.executable, str(SCRIPT), td], capture_output=True, text=True, check=False)
     ok = r.returncode == 0
     fail += 0 if ok else 1
     print(f"{'OK ' if ok else 'FAIL'} [통과] 링크 없는 같은 트리 → 통과{'' if ok else f' (rc={r.returncode})'}")
 
-# 성능: 수백 파일·2~3MB 꾸러미는 수 초 안에 끝나야 한다(게이트 마감 50초 공유)
+# WHY: 성능: 수백 파일·2~3MB 꾸러미는 수 초 안에 끝나야 한다(게이트 마감 50초 공유)
 t0 = time.monotonic()
 rc, line, out = verdict_tree({f"d{i % 10}/f{i}.md": ("본문 줄입니다.\n" * 60).encode() for i in range(300)})
 dt = time.monotonic() - t0

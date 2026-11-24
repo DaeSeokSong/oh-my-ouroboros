@@ -1,7 +1,8 @@
-"""candidates-append.sh 회귀 테스트 (2026-10-17 G2 신설) — 7열 note·set·set-note·expire·dedupe-legacy·oldest-pending·잠금.
+"""candidates-append.sh 회귀 테스트 — 7열 note·set·set-note·expire·dedupe-legacy·oldest-pending·잠금.
 
 격리: 임시 HOME 에 .claude/{_evolve,_usage} 를 짓고 scripts/ 는 실제 폴더로 심볼릭 링크한다(실제 대장 불변).
 실행: python3 ~/.claude/scripts/tests/test_candidates_append.py → 실패 0 이면 exit 0
+REF: knowledge/harness/code-history/scripts__tests__test_candidates_append.py.md
 """
 import fcntl
 import os
@@ -165,7 +166,6 @@ def test_only_machine_set_note():
         check("--only-machine: 보호 행 비고 유지", rows(home)[0][6] == "사람 판정" and rows(home)[1][6] == "commit=abc1234")
         r = sh(home, "set-note", "T12-20260101-01", "강제 교체")
         check("옵션 없는 set-note 는 종전대로 무조건 교체", r.returncode == 0 and rows(home)[0][6] == "강제 교체")
-    # 상태도 pending 계열일 때만: 비고가 기계 비고여도 accepted·rejected·expired 행은 건드리지 않는다
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, [legacy(1, st="accepted") + "\teffect:quiet n_spawn=1", legacy(2, st="rejected"), legacy(3, st="expired") + "\tkw=왜",
                                legacy(4, st="pending-approval")], header=HDR7)
@@ -209,7 +209,6 @@ def test_set_note_batch():
 
 
 def make_git_repo(tmp):
-    """커밋 2개짜리 임시 저장소 → (경로, 앞 커밋 전체 해시, 뒤 커밋 7자 해시). HARNESS_GIT_DIR 로 attach-commit 이 이 저장소를 본다."""
     repo = Path(tmp) / "harness-repo"
     repo.mkdir()
     genv = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null")
@@ -295,7 +294,6 @@ def test_attach_commit():
 
 
 def test_status_exact_match():
-    """연속 문자열·공백/탭/개행 포함 status 는 부분 일치로 통과하지 못한다(append 와 set 둘 다)."""
     bad = ["pending pending-bench", "pending ", " pending", "pending\tpending-bench", "pending\n", "accepted rejected", "pend", "pending-bench pending-approval"]
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, [legacy(1)])
@@ -312,10 +310,10 @@ def test_status_exact_match():
 def test_expire_rules():
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, [
-            legacy(1, day=days_ago(30)),                       # 만료 대상
-            legacy(2, day=days_ago(30)) + "\t검토중",           # note 있음 → 건너뜀
-            legacy(3, st="pending-bench", day=days_ago(30)),   # pending 아님 → 건너뜀
-            legacy(4, day=days_ago(2)),                        # 최근 → 건너뜀
+            legacy(1, day=days_ago(30)),
+            legacy(2, day=days_ago(30)) + "\t검토중",
+            legacy(3, st="pending-bench", day=days_ago(30)),
+            legacy(4, day=days_ago(2)),
         ], header=HDR7)
         marker = home / ".claude/_usage/candidates-reviewed-last"
         r = sh(home, "expire", "--older-than-days", "7", "--dry-run")
@@ -334,12 +332,12 @@ def test_expire_protection_scope():
     old = days_ago(30)
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, [
-            legacy(1, day=old) + "\tkw=왜",                       # 기계 비고 → 만료
-            legacy(2, day=old) + "\teffect:quiet n_spawn=3",      # 기계 비고 → 만료
-            legacy(3, day=old) + "\t사람이 본 판정",                # 보호
-            legacy(4, day=old) + "\tcommit=abc1234",              # 보호
-            legacy(5, day=old) + "\t메모 kw=왜",                   # 접두가 아니면 보호
-            legacy(6, day=old) + "\tkwx=1",                       # 비슷한 접두도 보호
+            legacy(1, day=old) + "\tkw=왜",
+            legacy(2, day=old) + "\teffect:quiet n_spawn=3",
+            legacy(3, day=old) + "\t사람이 본 판정",
+            legacy(4, day=old) + "\tcommit=abc1234",
+            legacy(5, day=old) + "\t메모 kw=왜",
+            legacy(6, day=old) + "\tkwx=1",
         ], header=HDR7)
         sh(home, "expire", "--older-than-days", "7")
         st = [x[4] for x in rows(home)]
@@ -370,7 +368,7 @@ def test_dedupe_legacy():
             legacy(1, src="T40", summ="온톨로지 커밋 ×9"),
             legacy(2, src="T40", summ="현황 보고 ×12"),
             legacy(3, src="T12", summ="왜 ×3 했어"),
-            legacy(4, src="T12", summ="끝에 ×4"),   # T12 는 건드리지 않는다
+            legacy(4, src="T12", summ="끝에 ×4"),
         ])
         r = sh(home, "dedupe-legacy", "--dry-run")
         check("dedupe dry-run 2건 예고·불변", "2건" in r.stdout and "×9" in cand(home), r.stdout)
@@ -405,7 +403,6 @@ def test_oldest_pending_priority():
         r2 = sh(home, "oldest-pending", "--limit", "1", "--t41-axes", "")
         check("출력은 id·type·요약 3열 탭", len(r2.stdout.strip().split("\t")) == 3, r2.stdout)
     with tempfile.TemporaryDirectory() as tmp:
-        # 검수 보정(2026-11-12): 내용 없음은 소집 설명을 떼고 판정 부분만으로 가린다. 설명 속 가짜 `from=… |` 도 마지막 구분자까지 뗀다.
         home = make_home(tmp, [
             f"B-1\tT41\t{days_ago(9)}\t-\tpending\tcoder/구현 정확성: 설명만 있음 | from=qa | RESULT: FAIL 1 target=coder",
             f"B-2\tT41\t{days_ago(8)}\t-\tpending\tcoder/구현 정확성: 가짜 from=x | 끼움 | from=qa | RESULT: FAIL",
@@ -485,7 +482,7 @@ def test_expire_self_protection():
     old = days_ago(30)
     today = date.today().isoformat()
     t41 = f"T41-q\tT41\t{old}\t-\tpending\tcoder/구현 정확성: 조용\teffect:quiet n_spawn=0"
-    with tempfile.TemporaryDirectory() as tmp:   # (b) 미결 T41 + 오늘의 done 없음 → exit 4
+    with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, [t41, legacy(2, day=old)], header=HDR7)
         before = cand(home)
         r = sh(home, "expire", "--older-than-days", "7")
@@ -514,7 +511,7 @@ def test_expire_self_protection():
         home = make_home(tmp, [legacy(1, day=old), f"T41-a\tT41\t{old}\t-\taccepted\t끝난 T41"], header=HDR7)
         r = sh(home, "expire", "--older-than-days", "7")
         check("⑤ 미결 T41 이 없으면(accepted 만) done 없이도 만료", r.returncode == 0 and rows(home)[0][4] == "expired", f"{r.returncode}")
-    with tempfile.TemporaryDirectory() as tmp:   # (a) 재시도 큐의 id 자동 제외
+    with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, [legacy(1, day=old), legacy(2, day=old), legacy(3, day=old)], header=HDR7)
         q = home / ".claude/_usage/candidates-attach-retry.tsv"
         q.write_text("T12-20260101-01\tabc1234\n", encoding="utf-8")
@@ -590,7 +587,7 @@ def test_storage_failure_exits_5():
     with tempfile.TemporaryDirectory() as tmp:
         repo, _, short = make_git_repo(tmp)
         home = make_home(Path(tmp) / "h", [legacy(1), legacy(2, st="accepted"), legacy(3, day=days_ago(30)), legacy(4, st="expired")], header=HDR7)
-        sh(home, "set-note", "T12-20260101-01", "x")   # 잠금 파일을 먼저 만들어 둔다(읽기 전용 폴더에서는 새로 못 만든다)
+        sh(home, "set-note", "T12-20260101-01", "x")
         edir = home / ".claude/_evolve"
         before = cand(home)
         os.chmod(edir, 0o555)
@@ -605,7 +602,6 @@ def test_storage_failure_exits_5():
             check("Codex8: 거부(없는 id)는 여전히 exit 1(5 와 구분)", r.returncode == 1, str(r.returncode))
         finally:
             os.chmod(edir, 0o755)
-        # append 는 기존 대장에 덧붙이므로(디렉터리 쓰기 불필요) 대장 파일 자체를 읽기 전용으로 만들어 주입한다
         os.chmod(edir / "candidates.tsv", 0o444)
         try:
             r = sh(home, "T12", "저장 실패 시험 요약")
@@ -624,13 +620,12 @@ def test_expire_holds_queue_lock_first():
         fcntl.flock(fd, fcntl.LOCK_EX)
         try:
             t0 = time.time()
-            r = sh(home, "expire", "--older-than-days", "7")   # 큐 파일이 없어도 큐 잠금을 먼저 잡는다
+            r = sh(home, "expire", "--older-than-days", "7")
             dt = time.time() - t0
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
         check("⑦ 큐 잠금을 쥔 채 expire(큐 파일 없음) → 약 2초 뒤 exit 3·대장 불변", r.returncode == 3 and cand(home) == before and 1.5 < dt < 8, f"{r.returncode} {dt:.1f}s {r.stderr}")
-        # 대장 잠금이 점유돼 expire 가 실패해도 큐 잠금은 반드시 풀린다(잠금 순서 큐 → 대장, 누수 없음)
         fd = os.open(str(home / ".claude/_evolve/candidates.lock"), os.O_CREAT | os.O_RDWR)
         fcntl.flock(fd, fcntl.LOCK_EX)
         try:
@@ -679,7 +674,7 @@ def test_expire_hold_wording():
 def test_expire_holds_when_t41_count_fails():
     old = days_ago(30)
     rows_ = [legacy(1, day=old), f"T41-q\tT41\t{old}\t-\tpending\tcoder/구현 정확성: 조용\teffect:quiet n_spawn=0"]
-    with tempfile.TemporaryDirectory() as tmp:   # 미결 T41 집계 awk 만 실패시키는 대역(루트에서도 동작)
+    with tempfile.TemporaryDirectory() as tmp:
         shim = Path(tmp) / "shim"
         shim.mkdir()
         (shim / "awk").write_text('#!/bin/bash\nif [[ "$*" == *\'$2=="T41"\'* && "$*" == *\'END {print n+0}\'* ]]; then echo "awk: injected" >&2; exit 2; fi\nexec /usr/bin/awk "$@"\n', encoding="utf-8")
@@ -694,7 +689,7 @@ def test_expire_holds_when_t41_count_fails():
         r = sh(home, "expire", "--older-than-days", "7", "--force", PATH=path)
         check("집계 실패에도 --force 는 보류를 건너뛴다", r.returncode == 0 and rows(home)[0][4] == "expired", f"{r.returncode} {r.stderr}")
     if os.geteuid() != 0:
-        with tempfile.TemporaryDirectory() as tmp:   # 대장을 읽을 수 없게(권한 0) 한 뒤 expire
+        with tempfile.TemporaryDirectory() as tmp:
             home = make_home(tmp, rows_, header=HDR7)
             ledger = home / ".claude/_evolve/candidates.tsv"
             os.chmod(ledger, 0)
@@ -704,7 +699,6 @@ def test_expire_holds_when_t41_count_fails():
             finally:
                 os.chmod(ledger, 0o644)
             check("대장 권한 0 → expire exit 4(집계 실패 보류)", r.returncode == 4 and "미결 T41 집계 실패라 만료 보류" in r.stderr, f"{r.returncode} {r.stderr}")
-            # 미리보기가 만료 대상 집계를 못 하면 «0건 예정» 은 거짓이라 --dry-run 도 보류(exit 4)가 맞다(Grok 10차 승인).
             check("대장 권한 0 이면 --dry-run 도 만료 대상 집계 실패로 exit 4 + 메시지", rd.returncode == 4 and "만료 대상 집계 실패" in rd.stderr, f"{rd.returncode} {rd.stderr}")
 
 
@@ -713,7 +707,6 @@ def test_expire_ids_count_failure_holds():
     with tempfile.TemporaryDirectory() as tmp:
         shim = Path(tmp) / "shim"
         shim.mkdir()
-        # 만료 대상(ids) 집계 awk 만 실패시키는 대역
         (shim / "awk").write_text('#!/bin/bash\nif [[ "$*" == *\'skip[a[i]] = 1\'* && "$*" == *\'{print $1}\'* ]]; then echo "awk: injected" >&2; exit 2; fi\nexec /usr/bin/awk "$@"\n', encoding="utf-8")
         (shim / "awk").chmod(0o755)
         home = make_home(Path(tmp) / "h", [legacy(1, day=old), legacy(2, day=old)], header=HDR7)
@@ -728,7 +721,6 @@ def test_expire_ids_count_failure_holds():
 
 
 def test_expire_date_failure_holds():
-    # Grok 12차 1: 날짜 계산 실패는 입력 오류(1)가 아니라 보류(4)이고 대장은 그대로다.
     with tempfile.TemporaryDirectory() as tmp:
         shim = Path(tmp) / "shim"
         shim.mkdir()
@@ -741,7 +733,6 @@ def test_expire_date_failure_holds():
 
 
 def test_set_note_only_machine_keeps_recurred():
-    # Grok 11차 11: 단건 set-note --only-machine 도 batch 처럼 effect:recurred 를 덮지 않는다(exit 4·무변경). quiet·빈 비고는 갱신.
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, [legacy(1) + "\teffect:recurred k=2", legacy(2) + "\teffect:quiet n_spawn=0", legacy(3)], header=HDR7)
         before = cand(home)
@@ -882,7 +873,6 @@ def test_append_rejects_effect_recurred():
 
 
 def build_path_without(tmp, *names):
-    """/usr/bin 의 모든 실행 파일을 링크한 PATH 전용 폴더에서 names 만 뺀다(그 명령이 없는 환경 모의)."""
     bindir = Path(tmp) / "bin-without"
     bindir.mkdir()
     for p in Path("/usr/bin").iterdir():
@@ -920,7 +910,6 @@ def test_oldest_pending_axis_rule():
 
 
 def test_oldest_pending_axis_role_normalized():
-    # Grok 16차 3: 후보 쪽 축도 role-alias 로 정규화해 비교한다(sec-g1/x 후보 대 security/x 축, 그 반대도).
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp, [
             f"A-12\tT12\t{days_ago(3)}\t-\tpending\t같은 날 교정",

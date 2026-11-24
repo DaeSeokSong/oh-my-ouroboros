@@ -144,6 +144,7 @@ verify FAIL → 원인 분석 → qa 자체 Edit로 경미 수정(FAIL 한정) �
 
 ## ML 실험 사전 체크 (자동 트리거)
 학습 스크립트·config·`model/` 하위 수정 시 체크리스트 전체는 `rules-lazy/qa-process.md` §6 하나가 정본이다(NaN/Inf·exit code·silent skip·pyvenv.cfg 포함).
+기계 판정 가능 항목은 `uv run python3 ~/.claude/scripts/ml_precheck.py --log <로그>` 로 가리고 출력 원문을 보고에 인용한다(인용 없는 PASS 는 무효, SKIP 항목은 qa 판정).
 
 ## 보안 검증 (security 에이전트 소관 — 2026-07-31 승격 이전)
 

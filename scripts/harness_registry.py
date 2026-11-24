@@ -31,12 +31,11 @@ class RegistryError(Exception):
 
 
 def current_host() -> str:
-    """Return the host name as `hostname` prints it."""
     return socket.gethostname()
 
 
 def current_project(cwd=None) -> str:
-    """Return the project name for cwd (rules-lazy/mem0-conventions.md §A, git top level as doc-formats uses)."""
+    # REF: rules-lazy/mem0-conventions.md §A (git top level, as doc-formats uses)
     real = os.path.realpath(cwd or os.getcwd())
     if real == str(ROOT) or real.startswith(str(ROOT) + os.sep):
         return "claude-global"
@@ -47,7 +46,6 @@ def current_project(cwd=None) -> str:
 
 
 def lookup(kind, key, name=None, default=MISSING, root=None):
-    """Return the value at dot path `key` in config/<kind>s/<name>.json, or default, or raise RegistryError."""
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {sorted(KINDS)}: {kind}")
     name = name or (current_host() if kind == "host" else current_project())
@@ -73,7 +71,6 @@ def lookup(kind, key, name=None, default=MISSING, root=None):
 
 
 def main(argv=None) -> int:
-    """CLI entry: print one registry value or a guidance message on stderr."""
     ap = argparse.ArgumentParser(description="Print one value from the harness registry.")
     ap.add_argument("kind", choices=sorted(KINDS))
     ap.add_argument("key")

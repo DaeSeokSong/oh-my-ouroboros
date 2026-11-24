@@ -21,11 +21,6 @@ MAIN_MIN_HEIGHT=15
 MIN_PANE_HEIGHT=4
 OVERFLOW_PREFIX="tm"
 
-# ============================================================================
-# _place_row: 한 행에 N개 패널을 가로 균등 배치
-#   인자: base_pane_id, row_height, "name1:role1" "name2:role2" ...
-#   반환: 없음 (패널 생성 + 라벨 + 배너)
-# ============================================================================
 _place_row() {
     local base_pane="$1"
     local row_h="$2"
@@ -38,7 +33,6 @@ _place_row() {
     local total_w
     total_w=$(tmux display-message -p '#{window_width}')
 
-    # 1) 수직 분할로 행 생성 — -P 플래그로 새 pane_id를 정확히 포착
     local first_pid
     first_pid=$(tmux split-window -v -l "$row_h" -t "$base_pane" \
         -P -F '#{pane_id}' "bash --norc --noprofile")
@@ -50,7 +44,6 @@ _place_row() {
 
     local pids=("$first_pid")
 
-    # 2) 가로 분할로 나머지 패널 생성
     for (( i=1; i<n; i++ )); do
         local new_pid
         new_pid=$(tmux split-window -h -t "${pids[$((i-1))]}" \
@@ -63,17 +56,12 @@ _place_row() {
         pids+=("$new_pid")
     done
 
-    # 3) 폭 균등화
     local pane_w=$(( total_w / n ))
     for pid in "${pids[@]}"; do
         tmux resize-pane -t "$pid" -x "$pane_w" 2>/dev/null || true
     done
 }
 
-# ============================================================================
-# _place_panes: 메인 윈도우에 N명 배치 (다행 지원)
-#   인자: main_pane_id, "name1:role1" ...
-# ============================================================================
 _place_panes() {
     local base_pane="$1"
     shift
@@ -86,7 +74,6 @@ _place_panes() {
 
     local rows=$(( (count + MAX_PER_ROW - 1) / MAX_PER_ROW ))
 
-    # 하단 영역 비율
     local bottom_pct
     case $rows in
         1) bottom_pct=35 ;;
@@ -112,10 +99,6 @@ _place_panes() {
     done
 }
 
-# ============================================================================
-# _place_overflow: 오버플로우 윈도우에 배치 (메인 패널 없음, 전체 높이 사용)
-#   인자: window_name, "name1:role1" ...
-# ============================================================================
 _place_overflow() {
     local win_name="$1"
     shift
@@ -123,12 +106,10 @@ _place_overflow() {
     local count=${#entries[@]}
     [ "$count" -eq 0 ] && return
 
-    # 새 윈도우 생성
     tmux new-window -n "$win_name" "bash --norc --noprofile"
     tmux set-option -w pane-border-status top 2>/dev/null || true
     tmux set-option -w pane-border-format " #{pane_title} " 2>/dev/null || true
 
-    # 첫 번째 패널은 new-window가 생성한 것
     local base_pid
     base_pid=$(tmux display-message -p '#{pane_id}')
 
@@ -146,7 +127,6 @@ _place_overflow() {
     local row_h=$(( total_h / rows ))
     [ "$row_h" -lt "$MIN_PANE_HEIGHT" ] && row_h=$MIN_PANE_HEIGHT
 
-    # 첫 번째 행의 나머지 가로 분할
     local in_first_row=$MAX_PER_ROW
     [ "$count" -lt "$MAX_PER_ROW" ] && in_first_row=$count
 
@@ -166,13 +146,11 @@ _place_overflow() {
         pids+=("$new_pid")
     done
 
-    # 첫 행 폭 균등화
     local pane_w=$(( total_w / in_first_row ))
     for pid in "${pids[@]}"; do
         tmux resize-pane -t "$pid" -x "$pane_w" 2>/dev/null || true
     done
 
-    # 나머지 행
     local placed=$in_first_row
     for (( r=1; r<rows; r++ )); do
         local in_row=$MAX_PER_ROW
@@ -184,17 +162,12 @@ _place_overflow() {
     done
 }
 
-# ============================================================================
-# cleanup
-# ============================================================================
-# ----------------------------------------------------------------------------
-# 파괴 전 자기 대상 확인 (2026-10-01 감사 — purge·cleanup 이 제목 규칙만으로 pane 을 지우고
-# main 을 «창의 첫 pane» 으로 가정해, 첫 pane 이 아닌 곳에서 돌리면 자기 pane 을 죽였다)
-#   · 자기 pane($TMUX_PANE)과 그 창은 절대 지우지 않는다.
+# WHY: purge·cleanup 이 제목 규칙만으로 pane 을 지우고 main 을 «창의 첫 pane» 으로 가정해,
+# 첫 pane 이 아닌 곳에서 돌리면 자기 pane 을 죽였다(2026-10-01 감사).
+# NEVER: 자기 pane($TMUX_PANE)과 그 창은 절대 지우지 않는다.
 #   · 지울 대상은 자동 생성 pane(✳ 제목)과, cleanup 에서만 setup 이 만든 "name [role]" pane.
 #   · 학습 세션(프로젝트 .claude/train.env 의 TRAIN_TMUX_PREFIX 로 시작하는 세션·창)은 대상에서 뺀다.
 #   · 지우기 전에 대상 목록을 먼저 출력한다.
-# ----------------------------------------------------------------------------
 _train_prefixes() {
     local d="$PWD"
     if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$CLAUDE_PROJECT_DIR/.claude/train.env" ]; then
@@ -220,8 +193,7 @@ _is_train_name() {
 
 _self_pane() { printf '%s' "${TMUX_PANE:-$(tmux list-panes -F '#{pane_id}' | head -1)}"; }
 
-# 지울 pane 을 "pane_id<TAB>title" 줄로 낸다. $1 = purge | cleanup
-# (제목이 비어도 필드가 밀리지 않게 제목을 마지막 필드로 둔다)
+# NEVER: 제목을 마지막 필드가 아닌 자리로 옮기지 않는다. 제목이 비면 필드가 밀린다.
 _pane_targets() {
     local mode="$1" self pid sess win title
     self=$(_self_pane)
@@ -238,14 +210,13 @@ _pane_targets() {
 
 cmd_cleanup() {
     local self line idx wname sess n
-    # 2026-10-01 P6 검수: tmux 밖($TMUX_PANE 없음)에서는 «내 pane» 을 알 수 없다 — 첫 pane 을 자기로 가정해 지우거나(set -e 로) exit 127 로 죽지 않고 안내 후 정상 종료한다.
+    # WHY: 2026-10-01 P6 검수: tmux 밖($TMUX_PANE 없음)에서는 «내 pane» 을 알 수 없다 — 첫 pane 을 자기로 가정해 지우거나(set -e 로) exit 127 로 죽지 않고 안내 후 정상 종료한다.
     if [ -z "${TMUX_PANE:-}" ]; then
         echo "tmux 밖에서 실행됐습니다(TMUX_PANE 없음). 자기 pane 을 알 수 없어 아무것도 지우지 않습니다. tmux 창 안에서 다시 실행하십시오."
         return 0
     fi
     self=$(_self_pane)
 
-    # 1) 오버플로우 윈도우 제거 (자기 pane 이 든 창·학습 세션 창 제외)
     local wins=()
     while IFS=$'\t' read -r idx sess wname; do
         [[ "$wname" == "${OVERFLOW_PREFIX}-"* ]] || continue
@@ -255,7 +226,6 @@ cmd_cleanup() {
         wins+=("$idx")
     done < <(tmux list-windows -F $'#{window_index}\t#{session_name}\t#{window_name}')
 
-    # 2) 자동 생성·setup 패널 제거 (자기 pane 제외)
     local targets=()
     while IFS= read -r line; do
         if [ -n "$line" ]; then targets+=("$line"); fi
@@ -268,7 +238,7 @@ cmd_cleanup() {
         echo "  - pane ${line%%$'\t'*} [${line#*$'\t'}]"
     done
 
-    for (( n=${#wins[@]}-1; n>=0; n-- )); do   # 큰 번호부터 지워 인덱스가 밀리지 않게
+    for (( n=${#wins[@]}-1; n>=0; n-- )); do   # NEVER: 작은 번호부터 지우지 않는다. 인덱스가 밀린다
         tmux kill-window -t ":${wins[$n]}" 2>/dev/null || true
     done
     for (( n=0; n<${#targets[@]}; n++ )); do
@@ -280,9 +250,6 @@ cmd_cleanup() {
     echo "✅ Cleanup complete."
 }
 
-# ============================================================================
-# setup
-# ============================================================================
 cmd_setup() {
     local args=("$@")
     local count=${#args[@]}
@@ -290,18 +257,16 @@ cmd_setup() {
 
     cmd_cleanup
 
-    # 패널 테두리 활성화
     tmux set-option -w pane-border-status top 2>/dev/null || true
     tmux set-option -w pane-border-format " #{pane_title} " 2>/dev/null || true
 
     local main_id
-    main_id=$(_self_pane)   # 창의 첫 pane 이 아니라 이 스크립트를 돌리는 pane 이 main
+    main_id=$(_self_pane)   # NEVER: 창의 첫 pane 을 main 으로 가정하지 않는다. 이 스크립트를 돌리는 pane 이 main
     tmux select-pane -t "$main_id" -T "Main (Team Lead)"
 
     local main_win_idx
     main_win_idx=$(tmux display-message -p '#{window_index}')
 
-    # 수용량 계산
     local total_h
     total_h=$(tmux display-message -p '#{window_height}')
     local available_h=$(( total_h - MAIN_MIN_HEIGHT ))
@@ -315,12 +280,9 @@ cmd_setup() {
     [ "$in_main" -gt "$capacity" ] && in_main=$capacity
     local overflow_total=$(( count - in_main ))
 
-    # 메인 윈도우 배치
     _place_panes "$main_id" "${args[@]:0:$in_main}"
 
-    # 오버플로우 처리
     if [ "$overflow_total" -gt 0 ]; then
-        # 오버플로우 윈도우 수용량 (메인 패널 없음 → 전체 높이 사용)
         local ov_max_rows=$(( total_h / MIN_PANE_HEIGHT ))
         [ "$ov_max_rows" -gt 6 ] && ov_max_rows=6
         [ "$ov_max_rows" -lt 1 ] && ov_max_rows=1
@@ -352,9 +314,6 @@ cmd_setup() {
     fi
 }
 
-# ============================================================================
-# monitor: 특정 패널에서 출력 파일 모니터링
-# ============================================================================
 cmd_monitor() {
     local target_name="$1"
     local output_file="$2"
@@ -383,9 +342,6 @@ cmd_monitor() {
     echo "✅ Monitoring '$output_file' → '$target_name'."
 }
 
-# ============================================================================
-# label / status
-# ============================================================================
 cmd_label() {
     tmux select-pane -t "$1" -T "$2"
     echo "✅ '$1' → '$2'"
@@ -412,7 +368,7 @@ cmd_status() {
 
 _show_banner() {
     local pid="$1" name="$2" role="$3"
-    # send-keys 문자열은 대상 셸이 그대로 해석한다. 작은따옴표로만 감싸면 name·role 안의 `'; …; #`
+    # NEVER: send-keys 문자열을 작은따옴표로만 감싸지 않는다. 대상 셸이 그대로 해석해 name·role 안의 `'; …; #`
     # 로 임의 명령이 실행된다. printf %q 로 셸 인용을 붙여 넣는다(한글 role 도 그대로 통과한다).
     local q_name q_role
     q_name=$(printf '%q' "$name")
@@ -421,13 +377,6 @@ _show_banner() {
         "clear && printf '\\n  \\033[1;36m%s\\033[0m\\n  Role: %s\\n  Status: Waiting...\\n' $q_name $q_role" Enter
 }
 
-# ============================================================================
-# purge: Task 도구가 자동 생성한 불필요 pane만 선별 제거
-#   - Main pane($TMUX_PANE) 보존
-#   - setup으로 생성한 패널 ("name [role]" 형식 타이틀) 보존
-#   - "✳" 접두사 등 Claude Code 자동 생성 pane만 제거 (그 밖의 pane 은 지우지 않는다)
-#   - 학습 세션(train.env 접두) 보존, 지우기 전에 대상 목록 출력
-# ============================================================================
 cmd_purge() {
     local line n killed=0
     local targets=()
@@ -453,9 +402,6 @@ cmd_purge() {
     fi
 }
 
-# ============================================================================
-# Dispatcher
-# ============================================================================
 case "${1:-help}" in
     cleanup)  cmd_cleanup ;;
     setup)    shift; cmd_setup "$@" ;;

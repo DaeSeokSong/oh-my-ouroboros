@@ -22,7 +22,7 @@ Bash 명령이 hook(bash-write-check.sh 등)에 차단되면 **"터미널에서 
 ## 기본 원칙
 모든 처리 작업(분석·변환·시각화·전처리 등)은 반드시 **코드 파일로 작성 후 저장**한다. AI가 직접 연산하거나 결과를 즉석으로 생성하는 것은 금지한다.
 
-## 프로젝트 경계 (MANDATORY — 2026-09-07 사용자 지시, 예외 없음)
+## 프로젝트 경계 (MANDATORY — 사용자 지시, 예외 없음)
 
 - **쓰기는 cwd 가 속한 저장소 안에서만**. 다른 프로젝트 저장소는 **Read·Grep·Glob 만** 허용한다(Write·Edit·생성·삭제·`git checkout`·`git stash`·설정 변경 전부 금지). 다른 저장소를 고쳐야 풀리는 일이면 쓰지 않고, 필요한 변경을 보고에 적어 **사용자에게 알린다**. 기준은 세션을 시작한 cwd 이며 `cd` 로 다른 저장소에 들어가도 쓰기 대상은 바뀌지 않는다. 예외는 아래 항의 세 곳(memory·하네스 홈·허용 목록)뿐이다.
 - **cwd 가 git 저장소 밖이면 Write·Edit 를 전부 막는다**. 예외는 프로젝트 memory 폴더, 하네스 홈(`~/.claude` 의 knowledge·doc-formats·learner 퀴즈 기록(`_evolve/quiz/`)·`.scratch/`·자기 scope 파일), `config/scope-allow.txt` 에 사용자가 적은 절대 경로 접두 아래뿐이다.
@@ -33,7 +33,7 @@ Bash 명령이 hook(bash-write-check.sh 등)에 차단되면 **"터미널에서 
 ## 코드 저장 규칙
 
 - **임시 코드**: 서버 지정 파일 `~/.claude/config/scratch-root` 가 있으면 `<지정>/<프로젝트 이름>/<세션·잡 id>/`, 없으면 `<현재 프로젝트>/.scratch/<세션·잡 id>/` (MANDATORY). 하네스 `jobs/<잡>/tmp/`·`outputs/_scratch/` 에는 쓰지 않는다. 사용자 지정이 있으면 그것이 우선이다.
-- **최종 코드**: 재실행 가능한 산출물은 지정된 목표 폴더에 저장한다. 폴더 미지정이면 작업 전 목표 폴더를 반드시 질문한다.
+- **최종 코드**: 재실행 가능한 산출물은 지정된 목표 폴더에 저장한다. 폴더 미지정이면 작업 전 목표 폴더를 반드시 질문한다(임시 폴더는 묻지 않음 · 지시에 명시된 목표 폴더는 재질문 금지 · T14 기억, 상세: `rules-lazy/code-execution-detail.md` § 폴더 사전 지정).
 - 정본(자리·`.gitignore`·승격·정리·파일명): `rules-lazy/code-execution-detail.md` § 코드 저장 규칙
 
 ## 탐색성 실행 자동 허용
@@ -42,10 +42,7 @@ Bash 명령이 hook(bash-write-check.sh 등)에 차단되면 **"터미널에서 
 도구 종류(echo, python, bash 등)는 무관 — **효과가 read-only인지**가 기준이다. 단 인라인 실행은 조회(목록·검색·상태 출력)까지다. **수치 계산은 read-only 여도 인라인으로 하지 않고 코드 파일로 저장해 돌린다**(기본 원칙). 저장한 파일의 read-only 실행은 자동 허용에 든다.
 
 ### 자동 허용 금지 (사용자 확인 필요)
-- 파일 쓰기/삭제/이동을 수반하는 명령 (리다이렉션 `>`, `rm`, `mv`, `cp` 등)
-- `ruff check --fix` (파일 수정 수반 — 명시적 사용자 요청 시만)
-- `pip install`, `uv add` 등 환경 변경
-- 학습/훈련 스크립트 실행 (main 의 tmux 발사는 아래 예외)
+- 파일 쓰기·삭제·이동 명령(리다이렉션 `>`, `rm`, `mv`, `cp` 등), 환경 변경(`pip install`, `uv add` 등), 학습·훈련 스크립트 실행(main 의 tmux 발사는 아래 예외). `ruff check --fix` 는 명시적 사용자 요청 시만(coder 가 이번 작업에서 새로 만든 파일은 예외)
 
 ## 코드 실행 규칙
 1. 코드 작성 완료 후 **즉시 실행 금지** (AI·teammate 모두 해당)
@@ -77,9 +74,6 @@ Bash 명령이 hook(bash-write-check.sh 등)에 차단되면 **"터미널에서 
 - **대상·조건**: `docs/paper/figures/scripts/` 하위 `gen_*.py`(논문·Confluence 삽입 이미지 생성용, 학습·데이터처리·일반분석 코드는 이 예외 적용 불가)를 `uv run python` 으로 실행
 - **TeX**: `latexmk -norc -pdf`·pdflatex 로 `docs/paper/figures/`·`docs/analysis/*.tex` 컴파일(shell-escape 금지)
 - **Codex 이미지 생성 (MANDATORY)**: 그릴 주체 결정 팝업에서 사용자가 Codex 이미지 생성을 고른 그림만 main 이 `scripts/gen_gptimg.sh --model --effort` 로 실행한다(모델 · effort 는 사이클당 1회 결정 팝업이고 고르는 것이 비용 승인이다. 서브에이전트 실행 금지. 근거: `skills/figure/SKILL.md`)
-
-## 폴더 사전 지정 (재질문 금지 조건)
-임시 폴더는 기본값이라 **질문하지 않는다**. 목표 폴더는 작업 지시에 명시된 경우 재질문하지 않는다. 프로젝트별 폴더 경로는 Mem0 T14로 기억해 재질문 없이 적용한다(`rules-lazy/mem0-templates.md`). 상세: `rules-lazy/code-execution-detail.md` § 폴더 사전 지정
 
 ## Teammate 적용
 - 위 규칙(저장 폴더·실행 금지)은 teammate 에도 그대로다(프롬프트에 전달). 실행 명령서는 team-lead 에게 SendMessage 로 넘기고 실행은 사용자 직접이다(teammate 금지). teammate 는 탐색성 명령만 실행한다. 예외는 qa 가 리더인 재검증 팀의 qa 하나가 위 «검증 목적 실행»(테스트·dry-run·lint)까지 하는 것이다(토론 팀의 qa·coder 는 해당 없음)

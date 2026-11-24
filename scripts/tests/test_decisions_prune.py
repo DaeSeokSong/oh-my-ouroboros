@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
-"""decisions-prune.sh 회귀 테스트 (2026-10-17 G2·G5-1 신설) — 항목 경계·7일 컷·아카이브 append·하루 1회·잠금.
+"""decisions-prune.sh 회귀 테스트 — 항목 경계·7일 컷·아카이브 append·하루 1회·잠금.
 
 격리: 임시 HOME(폴더별 마커 `_usage/decisions-prune-last-<프로젝트 폴더명>`) + 임시 memory 폴더. 실제 decisions.md 는 건드리지 않는다.
 실행: python3 ~/.claude/scripts/tests/test_decisions_prune.py → 실패 0 이면 exit 0
+REF: knowledge/harness/code-history/scripts__tests__test_decisions_prune.py.md
 """
 import fcntl
 import os
@@ -34,13 +34,12 @@ def make(tmp, body):
 
 
 def marker_of(home, mem):
-    """폴더별 하루 마커: `_usage/decisions-prune-last-<프로젝트 폴더명>` (프로젝트 폴더 = memory 의 부모)."""
     return home / ".claude/_usage" / ("decisions-prune-last-" + mem.parent.name)
 
 
 def run(home, mem):
     env = dict(os.environ, HOME=str(home))
-    return subprocess.run(["bash", SH, str(mem)], capture_output=True, text=True, env=env)
+    return subprocess.run(["bash", SH, str(mem)], capture_output=True, text=True, env=env, check=False)
 
 
 def test_boundaries_and_cut():
@@ -76,7 +75,6 @@ def test_archive_append_and_daily_marker():
         check("기존 아카이브 뒤에 append(덮어쓰기 아님)", arc.startswith("# 기존 아카이브") and "옛 항목" in arc and "항목 X" in arc, arc)
         marker = marker_of(home, mem)
         check("마커에 날짜 기록", marker.exists() and marker.read_text().startswith(date.today().isoformat()))
-        # 같은 날 다시 — 새 오래된 항목이 생겨도 건너뜀
         p = mem / "short-term/decisions.md"
         p.write_text(p.read_text(encoding="utf-8") + f"- {d(40)} 항목 Y\n", encoding="utf-8")
         r = run(home, mem)
@@ -123,7 +121,6 @@ def test_lock_busy_and_missing():
 
 
 def test_bold_date_entries():
-    """memory-write.md 작성 예시 꼴 `- **YYYY-MM-DD …**` 도 항목으로 인식한다(일반 날짜와 혼재 포함)."""
     body = (
         "# 머리\n\n"
         f"- **{d(30)} 굵은 오래된 항목 B1**\n  B1 계속 행\n"
@@ -148,10 +145,9 @@ def test_bold_date_entries():
 
 
 def test_stderr_not_swallowed():
-    """lock 열기용 `exec 9>… 2>/dev/null` 이 스크립트 전체 stderr 를 닫던 결함(2026-10-17 검수) 회귀."""
     with tempfile.TemporaryDirectory() as tmp:
         home, mem = make(tmp, f"# 머리\n\n- {d(30)} 오래됨\n")
-        (mem / "short-term/decisions-archive.md").mkdir()   # 아카이브 경로가 디렉터리라 이동이 실패한다
+        (mem / "short-term/decisions-archive.md").mkdir()
         before = (mem / "short-term/decisions.md").read_text(encoding="utf-8")
         r = run(home, mem)
         check("이동 실패 메시지가 stderr 로 나옴(exit 0)", r.returncode == 0 and "이동 실패" in r.stderr, f"{r.returncode} {r.stderr!r}")
@@ -160,7 +156,6 @@ def test_stderr_not_swallowed():
 
 
 def test_concurrent_write_aborts():
-    """읽은 뒤 교체 전에 decisions.md 가 바뀌면(append 중) 중단하고 그 줄을 보존한다."""
     with tempfile.TemporaryDirectory() as tmp:
         home, mem = make(tmp, f"# 머리\n\n- {d(30)} 오래됨\n")
         dec = mem / "short-term/decisions.md"

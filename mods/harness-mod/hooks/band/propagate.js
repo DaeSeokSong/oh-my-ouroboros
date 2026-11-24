@@ -4,13 +4,13 @@
 // (scripts/propagate-gate.sh)이 그 기록으로 전달 여부를 판정한다.
 // 방식: mod(알림을 넣음) · self(이 세션이 만든 커밋이라 알리지 않음) · baseline(이 세션이 뜨기 전 커밋이라 쏟아 넣지 않음).
 // 같은 피드백 대조 고리 Q1(훅이 대장에 쓴 새 후보를 매니저 세션이 받음)도 이 파일의 읽기·받음 기록 부분을 같이 쓴다(intent G2).
+// REF: knowledge/harness/code-history/mods__harness-mod__hooks__band__propagate.js.md
 
 const HASH_RE = /^[0-9a-f]{7,40}$/
 const SID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const KEEP = 500
 
-// 제어·양방향 제어 글자와 보이지 않는 글자(폭 없는 문자 U+200B~200F · U+2060~2064 · BOM U+FEFF · 태그 문자 U+E0000~E007F)를 지운다.
-// 대기 파일은 커밋 제목에서 오고 알림은 세션 입력 자리로 들어가므로 신뢰하지 않는다(보이지 않는 지시 숨김 차단, security 검수 2026-10-21).
+// WHY: 대기 파일은 커밋 제목에서 오고 알림은 세션 입력 자리로 들어가므로 신뢰하지 않는다(보이지 않는 지시 숨김 차단, security 검수 2026-10-21).
 const stripped = c => c < 0x20 || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029 ||
   (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069) || (c >= 0x200b && c <= 0x200f) ||
   (c >= 0x2060 && c <= 0x2064) || c === 0xfeff || (c >= 0xe0000 && c <= 0xe007f)
@@ -24,7 +24,6 @@ function clean(s, max = 160) {
   return out
 }
 
-// pending.jsonl 한 줄씩: 형식이 맞는 줄만 { ts, hash, subject, author } 로. 깨진 줄은 버린다.
 export function parsePending(text) {
   const out = []
   for (const line of String(text || '').split('\n')) {
@@ -39,12 +38,10 @@ export function parsePending(text) {
   return out
 }
 
-// ack 파일에서 받은 해시 집합.
 export function ackedSet(text) {
   return new Set(String(text || '').split('\n').map(l => l.split('\t')[0]).filter(h => HASH_RE.test(h)))
 }
 
-// 받지 않은 줄을 셋으로 가른다. self: 이 세션이 만든 커밋, baseline: 이 세션이 뜨기 전(startTs) 커밋, deliver: 알림을 넣을 커밋.
 export function plan(entries, acked, selfSid, startTs) {
   const out = { deliver: [], self: [], baseline: [] }
   const seen = new Set()
@@ -58,19 +55,17 @@ export function plan(entries, acked, selfSid, startTs) {
   return out
 }
 
-// 세션에 넣을 알림 한 덩어리. 받은 세션은 반영만 하고 회신·사용자 보고를 하지 않는다(rules-lazy/peer-session-messages.md).
+// REF: rules-lazy/peer-session-messages.md (받은 세션은 반영만 하고 회신·사용자 보고를 하지 않는다)
 export function noticeText(entries) {
   const lines = entries.map(e => `- ${e.hash} ${e.subject}`)
   return ['[하네스 변경 알림 · 회신 불요] 하네스 저장소에 새 커밋이 생겼습니다.', ...lines,
     '필요하면 바뀐 규칙·스킬 파일을 다시 읽어 반영만 하십시오. 회신하거나 사용자에게 따로 보고하지 마십시오.'].join('\n')
 }
 
-// 이 mod 가 넣은 알림인가(깨어 있음 판정에서 뺀다): 출처가 이 플러그인이거나 글이 알림 머리로 시작한다.
 export function isOwnNotice(origin, text) {
   return (origin && origin.kind === 'plugin' && origin.name === 'harness-mod') || String(text == null ? '' : text).trimStart().startsWith('[하네스 변경 알림')
 }
 
-// ack 파일의 새 내용: 앞 내용에 «해시 TAB 시각 TAB 방식» 줄을 더하고 마지막 500줄만 남긴다.
 export function ackText(prev, groups, now) {
   const add = []
   for (const [mode, list] of groups) for (const e of list) add.push(`${e.hash}\t${now}\t${mode}`)

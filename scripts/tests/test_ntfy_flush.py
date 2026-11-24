@@ -1,7 +1,8 @@
-"""ntfy-flush.sh 와 claude-notify.sh 큐 배송 전용 모드 회귀 테스트 (2026-10-01 신설).
+"""ntfy-flush.sh 와 claude-notify.sh 큐 배송 전용 모드 회귀 테스트.
 
 실제 네트워크·실제 ~/.claude 를 쓰지 않는다: HOME 을 임시 폴더로 바꾸고 PATH 앞에 가짜 curl 을 둔다.
 실행: python3 scripts/tests/test_ntfy_flush.py (pytest 로도 수집된다).
+REF: knowledge/harness/code-history/scripts__tests__test_ntfy_flush.py.md
 """
 
 import fcntl
@@ -20,7 +21,6 @@ DAY = "20261001"
 
 
 def make_root(tmp):
-    """가짜 curl 이 든 임시 HOME 과 그 환경을 돌려준다."""
     root = Path(tmp)
     bindir = root / "bin"
     bindir.mkdir()
@@ -36,7 +36,6 @@ def make_root(tmp):
         '    *) shift ;;\n'
         '  esac\n'
         'done\n'
-        # 본문은 표준입력 설정(-K -)의 data-raw 줄에서 꺼낸다(인자에는 없다)
         'data=$(printf "%s\\n" "$cfg" | sed -n \'s/^data-raw = "\\(.*\\)"$/\\1/p\' | sed \'s/\\\\\\(.\\)/\\1/g\')\n'
         'sleep "${FAKE_CURL_SLEEP:-0}"\n'
         'printf "%s\\n" "$data" >> "$FAKE_CURL_DATA"\n'
@@ -103,7 +102,6 @@ def test_flush_only_sends_one_without_current_or_bell():
         env = with_topic(dict(env, CLAUDE_NOTIFY_FLUSH_ONLY="1"))
         for i in range(3):
             add_queue(root, f"m{i}", ts=f"2026-09-30T00:00:0{i}Z")
-        # 열린 채 비어 있는 표준입력: 읽으려 들면 timeout 2 로 2초가 걸린다.
         proc = subprocess.Popen(["bash", str(NOTIFY), "Proj", "현재 알림"], env=env,
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, cwd="/")
@@ -261,7 +259,6 @@ def test_backoff_after_stall_and_cleared_on_success():
 
 
 def fake_scripts(root, body):
-    """ntfy-flush.sh 사본 옆에 가짜 claude-notify.sh 를 둔다(호출 횟수 = calls 파일 줄 수)."""
     scripts = root / "scripts"
     scripts.mkdir()
     shutil.copy(FLUSH, scripts / "ntfy-flush.sh")
@@ -310,7 +307,6 @@ def test_flusher_own_halt_check():
         root, env = make_root(tmp)
         for i in range(3):
             add_queue(root, f"m{i}")
-        # 첫 호출이 줄을 하나 비우고 halt 를 만든다: 루프 안 검사가 두 번째 호출을 막아야 한다.
         script = fake_scripts(
             root, f'sed -i 1d "$HOME/.claude/_usage/ntfy-queue.tsv"\n: > "$HOME/.claude/_usage/ntfy-{DAY}.halt"\nexit 0\n')
         run_fake(script, env)
@@ -329,8 +325,6 @@ def test_flusher_own_lock():
 
 
 def test_hook_path_keeps_line_during_outage():
-    # 2026-10-01 감사 D5: 훅 경로도 배송 전용과 같은 기준(재시도 가능 실패는 tries 미증가)이라
-    # 장애 중 훅이 여러 번 실패해도 큐 줄이 버려지지 않는다. 수정 전에는 두 번째 실패에 retry_drop.
     with tempfile.TemporaryDirectory() as tmp:
         root, env = make_root(tmp)
         env = with_topic(dict(env, FAKE_CURL_HTTP="503"))
@@ -351,8 +345,6 @@ def test_hook_path_keeps_line_during_outage():
 
 
 def test_flush_ignores_4xx_discard_as_sent():
-    # 2026-10-01 감사 D6: 4xx 로 줄이 폐기돼 큐가 줄어도 «발송»이 아니다(발송 로그에 flush_sent 없음).
-    # 수정 전에는 줄 수 감소만 봐서 폐기를 발송으로 세고 backoff 파일을 지웠다.
     with tempfile.TemporaryDirectory() as tmp:
         root, env = make_root(tmp)
         for i in range(2):
@@ -368,7 +360,6 @@ def test_flush_ignores_4xx_discard_as_sent():
 
 
 def test_flush_counts_spill_lines():
-    # 2026-10-01 감사 D4: 잠금 실패분(.spill)이 큐 파일과 별도라도 배송기가 비우고 합쳐 보낸다.
     with tempfile.TemporaryDirectory() as tmp:
         root, env = make_root(tmp)
         row = "2026-09-30T00:00:00Z\ts\tfinal\tdefault\ttag\t[t: P]\tspilled\t0"
@@ -386,7 +377,6 @@ def halt_path(root):
 
 
 def age_halt(root, seconds):
-    """halt 파일을 만들고 수정 시각을 seconds 초 전으로 돌린다."""
     halt = halt_path(root)
     halt.write_text("")
     old = time.time() - seconds
@@ -425,7 +415,7 @@ def test_halt_expiry_expired_halt_hit_again_refreshes_and_logs_rate_halt():
         assert halt.exists() and time.time() - halt.stat().st_mtime < 60, "halt 갱신"
         rows = [r for r in send_log(root).read_text(encoding="utf-8").splitlines()]
         assert rows[-1].split("\t")[-1] == "rate_halt" and rows[-1].split("\t")[3] == "429"
-        run_hook(with_topic(env))  # 갱신된 halt 는 다시 유효: 보내지 않는다
+        run_hook(with_topic(env))
         assert len(sent_msgs(root)) == 1
 
 
@@ -446,7 +436,6 @@ def test_halt_expiry_invalid_value_defaults_to_3600():
 
 
 def test_halt_trial_claim_blocks_second_hook():
-    # 만료 직후 훅이 겹쳐도 첫 훅이 시험 권리를 선점해 두 번째는 보내지 않는다(같은 IP 에서 N건 방지).
     with tempfile.TemporaryDirectory() as tmp:
         root, env = make_root(tmp)
         age_halt(root, 3601)
@@ -467,7 +456,7 @@ def test_halt_trial_failure_backdates_halt_for_five_minute_retry():
         run_hook(with_topic(dict(env, FAKE_CURL_HTTP="000")))
         assert len(sent_msgs(root)) == 1 and halt.exists()
         age = time.time() - halt.stat().st_mtime
-        assert 3600 - 300 - 60 < age < 3600 - 300 + 60, age  # 약 5분 뒤 재시험 꼴
+        assert 3600 - 300 - 60 < age < 3600 - 300 + 60, age
         run_hook(with_topic(dict(env, FAKE_CURL_HTTP="000")))
         assert len(sent_msgs(root)) == 1, "되돌린 시각이 아직 유효라 재시도하지 않는다"
         os.utime(halt, (time.time() - 3601, time.time() - 3601))
@@ -505,7 +494,7 @@ if __name__ == "__main__":
         try:
             fn()
             print(f"OK   {fn.__name__}")
-        except Exception as exc:  # noqa: BLE001 — 실패 사유를 그대로 보여 준다
+        except Exception as exc:  # noqa: BLE001
             failed += 1
             print(f"FAIL {fn.__name__}: {type(exc).__name__}: {exc}")
     print(f"\n{'ALL PASS' if failed == 0 else f'FAIL {failed}'} ({len(TESTS)} cases)")

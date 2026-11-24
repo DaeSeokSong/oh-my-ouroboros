@@ -23,6 +23,7 @@
 #   시험용 틈: MEMGUARD_TEST_ROOT=<폴더> 가 있으면 그 아래 cgroup/ 나무를 대신 읽는다(경고 줄을 표준에러에 낸다).
 #
 # 설치(자동 등록 안 함 — 보고서의 설치 명령 참조): cron 매분 실행 권장.
+# REF: knowledge/harness/code-history/tools__mem-guard__mem-watch.sh.md
 
 set -u
 
@@ -55,22 +56,18 @@ if [ "$AVAIL_GB" -lt "$CRIT_AVAIL_GB" ]; then
 elif [ "$AVAIL_GB" -lt "$WARN_AVAIL_GB" ]; then
     LEVEL="WARN"; REASONS="MemAvailable ${AVAIL_GB}GiB < ${WARN_AVAIL_GB}GiB"
 fi
-# Swap 점유율은 경보 레벨을 올리지 않는다 (2026-09-29 사용자 지시 «swap 경고는 ntfy 에서 빼라»).
-# 판마다 MemorySwapMax 상한이 걸리고(memguard --swap-max) 만석 자체는 종료가 아니라서,
-# 알림은 «swap 초과로 실제 프로세스가 죽었을 때»만 의미가 있다. 점유율은 아래 MSG 에 숫자로만
-# 남고 로그에 기록된다. 종전: 사용률 ≥ SWAP_WARN_PCT 이고 가용 < 96GiB 면 WARN 이었다.
-# 커널 OOM 은 레벨로 올리지 않는다. 실제 종료는 oom-watch.py 가 💀 알림으로 따로 낸다(아래).
+# WHY: Swap 점유율은 경보 레벨을 올리지 않는다(2026-09-29 사용자 지시 «swap 경고는 ntfy 에서 빼라»).
 
-# 직접 curl 대신 claude-notify.sh 의 direct 경로로 보낸다(2026-10-01 감사 D5): 같은 마스킹·일일 예산 장부·큐를
-# 지나고, 알림 주제(URL)가 cron 환경변수·curl 인자에 남지 않는다. 주제는 claude-notify 가 env-config 에서 읽는다.
+# WHY: 직접 curl 대신 scripts/claude-notify.sh 의 direct 경로로 보내 같은 마스킹 · 일일 예산 장부 · 큐를
+# 지나고, 알림 주제(URL)가 cron 환경변수 · curl 인자에 남지 않는다(2026-10-01 감사 D5).
 NOTIFY="$DIR/../../scripts/claude-notify.sh"
-send() {  # $1=본문 — 표준입력을 비워 direct 로 판별되게 하고 벨·표준출력은 버린다
+# WHY: 표준입력을 비워야 scripts/claude-notify.sh 가 direct 로 판별한다.
+send() {
     [ -f "$NOTIFY" ] || { echo "$TS [mem-watch] claude-notify.sh 없음 — 알림 생략" >> "$LOG" 2>/dev/null; return 0; }
     bash "$NOTIFY" "mem-watch" "$1" </dev/null >/dev/null 2>&1 || true
 }
 
-# 메모리 압력: 사용자 서비스 cgroup 의 full avg10·avg60 (%). 못 읽으면 P10/P60 이 비고 표시는 `?`.
-read_full_psi() {  # $1=memory.pressure 경로 → "<avg10> <avg60>" 또는 빈 출력
+read_full_psi() {
     awk '$1=="full"{for(i=2;i<=NF;i++){split($i,a,"=");if(a[1]=="avg10")x=a[2];if(a[1]=="avg60")y=a[2]}} END{if(x!=""&&y!="")print x, y}' "$1" 2>/dev/null
 }
 P10=""; P60=""
@@ -78,18 +75,14 @@ read -r P10 P60 < <(read_full_psi "$CG_ROOT/memory.pressure") || true
 case "$P10$P60" in ''|*[!0-9.]*) P10=""; P60="" ;; esac
 PRESS_TXT="?"; [ -n "$P60" ] && PRESS_TXT="${P10}/${P60}%"
 
-# 알림 맨 앞 이모지 (2026-09-29 사용자 지시: CRIT 과 실제 종료를 구별) — 🚨 CRIT · ✅ CRIT 해제 · 💀 실제 종료(oom-watch)
 EMOJI=""
 [ "$LEVEL" = "CRIT" ] && EMOJI="🚨 "
 MSG="${EMOJI}[mem-watch $(hostname)] $LEVEL: MemAvailable=${AVAIL_GB}GiB Swap=${SWAP_PCT}% Pressure=${PRESS_TXT}${REASONS:+ — $REASONS}"
 
-# 상태 로드 → 알림 여부 결정
 LAST_LEVEL="OK"; LAST_ALERT=0
 [ -f "$STATE" ] && read -r LAST_LEVEL LAST_ALERT < "$STATE" 2>/dev/null || true
 case "$LAST_ALERT" in *[!0-9]*|"") LAST_ALERT=0 ;; esac
 
-# ntfy 는 CRIT 만 (2026-09-29 사용자 결정 2-3). WARN 은 로그에만 남는다.
-#   CRIT 진입 즉시 1회 + CRIT 지속 시 REALERT_SEC 마다 1회 + CRIT 에서 벗어날 때 해제 알림 1회.
 SEND=0
 if [ "$LEVEL" = "CRIT" ]; then
     if [ "$LAST_LEVEL" != "CRIT" ] || [ $(( NOW - LAST_ALERT )) -ge "$REALERT_SEC" ]; then SEND=1; fi
@@ -106,11 +99,10 @@ else
     echo "$LEVEL $LAST_ALERT" > "$STATE" 2>/dev/null || true
 fi
 
-# ── 메모리 압력 기록 (알림 없음) ─────────────────────────────────────────────
-short_scope() {  # memguard-<이름>-<pid>.scope → <이름>
+short_scope() {
     local s="${1#memguard-}"; s="${s%.scope}"; echo "${s%-[0-9]*}"
 }
-top_scopes() {  # 압력(full avg10) 내림차순 상위 5개: "<avg10> <current GiB> <이름>" 한 줄씩
+top_scopes() {
     local sc a cu
     while IFS= read -r -d '' sc; do
         a=$(read_full_psi "$sc/memory.pressure" | awk '{print $1}'); cu=""
@@ -119,7 +111,7 @@ top_scopes() {  # 압력(full avg10) 내림차순 상위 5개: "<avg10> <current
         echo "${a:-0} $(( cu / 1073741824 )) $(short_scope "$(basename "$sc")")"
     done < <(find "$CG_ROOT" -type d -name 'memguard-*.scope' -prune -print0 2>/dev/null) | LC_ALL=C sort -k1,1nr -k2,2nr | head -n 5
 }
-if [ -n "$P60" ] && awk -v p="$P60" -v t="$PRESSURE_LOG_PCT" 'BEGIN{exit !(p+0>=t+0)}'; then   # 기록 전용: 알림·상태 파일 없음
+if [ -n "$P60" ] && awk -v p="$P60" -v t="$PRESSURE_LOG_PCT" 'BEGIN{exit !(p+0>=t+0)}'; then
     N=0
     while IFS= read -r L; do
         [ -n "$L" ] || continue
@@ -129,17 +121,15 @@ if [ -n "$P60" ] && awk -v p="$P60" -v t="$PRESSURE_LOG_PCT" 'BEGIN{exit !(p+0>=
     done <<< "$(top_scopes)"
 fi
 
-# 실제 종료 알림 — oom-watch.py 가 새 사건마다 💀 줄을 낸다(없으면 출력 없음). 판정 근거는 그 파일 헤더.
 while IFS= read -r KILL_MSG; do
     [ -n "$KILL_MSG" ] || continue
     echo "$TS $KILL_MSG [alert]" >> "$LOG" 2>/dev/null || true
     send "$KILL_MSG"
 done < <(timeout 40 python3 "$DIR/oom-watch.py" 2>>"$LOG")
 
-# 로그 무한 성장 방지 (10,000줄 초과 시 최근 4,000줄 유지)
 LINES=$(wc -l < "$LOG" 2>/dev/null || echo 0)
 if [ "$LINES" -gt 10000 ]; then
     TMP="$LOG.tmp.$$"
-    tail -n 4000 "$LOG" > "$TMP" 2>/dev/null && mv "$TMP" "$LOG" 2>/dev/null || rm -f "$TMP" 2>/dev/null
+    if ! { tail -n 4000 "$LOG" > "$TMP" 2>/dev/null && mv "$TMP" "$LOG" 2>/dev/null; }; then rm -f "$TMP" 2>/dev/null; fi
 fi
 exit 0

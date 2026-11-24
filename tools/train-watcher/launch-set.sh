@@ -59,52 +59,52 @@
 #            (train-watcher.sh 헤더의 실사고 3건과 동일 이유). PID 판정은 /proc/PID 직접 읽기.
 set -u
 umask 077
+# REF: knowledge/harness/code-history/tools__train-watcher__launch-set.sh.md
 
 TW="$HOME/.claude/tools/train-watcher/train-watcher.sh"
 MG="$HOME/.claude/tools/mem-guard/memguard-run.sh"
 
 usage() { sed -n '2,49p' "$0" >&2; exit 64; }
-proc_cmdline() { { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null; }   # 리다이렉션 실패 메시지까지 억제(죽은 PID)
-argv_token_match() {   # $1=PID $2=ERE — NUL 단위 argv 의 **한 토큰 전체**(경로 접두 제외)가 패턴과 일치해야 참.
-    # 4라운드 검수: 결합 문자열 부분 일치는 `env FAKE=train.py sleep 999999` 로 통과됐다. 토큰 전체 일치면
-    # 'FAKE=train.py'·'sleep' 어느 토큰도 'train\.py' 에 맞지 않는다. (bash -c "..." 처럼 한 토큰에 명령이 든 경우는 그 토큰 전체를 패턴으로)
+proc_cmdline() { { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null; }
+argv_token_match() {
+    # WHY: 결합 문자열 부분 일치는 `env FAKE=train.py sleep 999999` 로 통과됐다(4라운드 검수). 그래서 한 토큰 전체와 맞춘다.
     tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null | grep -qE -- "^(.*/)?($2)$"
 }
-has_secret_shape() { [ "$(mask "$1")" != "$1" ]; }   # 값이 마스킹 규칙에 걸리면 시크릿 형태
+has_secret_shape() { [ "$(mask "$1")" != "$1" ]; }
 proc_scope() { grep -o 'memguard-[^/]*\.scope' "/proc/$1/cgroup" 2>/dev/null | head -1; }
 proc_cgpath() { sed -n 's/^0::\(.*\)$/\1/p' "/proc/$1/cgroup" 2>/dev/null | head -1; }
-cg_limit() { cat "/sys/fs/cgroup$1/$2" 2>/dev/null; }   # $1=cgroup path $2=memory.max|memory.high
-watcher_pid_arg() {   # NUL 단위 argv 에서 --pid 값들을 줄바꿈으로 (정확히 1개여야 함)
-    tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null | awk 'p{print; p=0; next} $0=="--pid"{p=1; next} /^--pid=/{sub(/^--pid=/,""); print}'   # `--pid=N` 형도 셈 (4라운드)
+cg_limit() { cat "/sys/fs/cgroup$1/$2" 2>/dev/null; }
+watcher_pid_arg() {
+    tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null | awk 'p{print; p=0; next} $0=="--pid"{p=1; next} /^--pid=/{sub(/^--pid=/,""); print}'
 }
 proc_start() { awk '{print $22}' "/proc/$1/stat" 2>/dev/null; }
 boot_id() { cat /proc/sys/kernel/random/boot_id 2>/dev/null; }
 alive() { [ -d "/proc/$1" ] && [ -r "/proc/$1/cmdline" ]; }
 sha() { printf '%s' "$1" | sha256sum | cut -c1-64; }
-mask() {   # key=value 형태와 공백 구분 플래그(--api-key VALUE) 둘 다 마스킹 (3라운드 검수 반영)
+mask() {
     printf '%s' "$1" | sed -E \
         -e 's/((token|key|password|passwd|secret|api[_-]?key)=)[^ ]+/\1***/Ig' \
         -e 's/(--?[A-Za-z_-]*(key|token|password|passwd|secret)[A-Za-z_-]*)[[:space:]]+[^[:space:]]+/\1 ***/Ig' \
         -e 's/((Authorization|Cookie|X-Api-Key|Proxy-Authorization):[[:space:]]*)[^"'"'"']+/\1***/Ig' \
         -e 's/(Bearer|Basic)[[:space:]]+[^[:space:]"'"'"']+/\1 ***/Ig' \
-        -e 's#(://[^/:[:space:]]+:)[^@[:space:]]+@#\1***@#g'   # 표준 인증 헤더·URI 자격증명도 (5라운드 Codex)
+        -e 's#(://[^/:[:space:]]+:)[^@[:space:]]+@#\1***@#g'
 }
 json_escape() { printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'; }
 refuse_symlink() { [ -L "$1" ] && { echo "FAIL: 심볼릭 링크 경로는 거부: $1" >&2; exit 64; }; return 0; }
 read_field() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); v=d.get(sys.argv[2],""); print(v)' "$1" "$2"; }
 
-lock_state() {   # $1=STATE — 같은 state 에 대한 동시 launch·reattach 를 직렬화한다(2026-10-01: 두 명령이 같은 state 를 서로 덮어쓰고 학습·와쳐가 둘 뜰 수 있었다)
-    # 잠금은 fd 9(flock). 학습·와쳐 같은 오래 사는 자식에는 `9>&-` 로 넘기지 않는다 — 넘기면 자식이 사는 동안 잠금이 안 풀린다.
-    # 이미 다른 쪽이 잡고 있으면 기다리지 않고 거부(exit 67). flock 이 없으면 경고만 하고 잠금 없이 간다(옛 동작).
+lock_state() {
+    # WHY: 잠금 없이는 같은 state 에 대한 두 명령이 state 를 서로 덮어쓰고 학습 · 와쳐가 둘 뜰 수 있었다(2026-10-01).
+    # NEVER: 학습 · 와쳐 같은 오래 사는 자식에 잠금 fd 9 를 넘기지 않는다(`9>&-`). 넘기면 자식이 사는 동안 잠금이 안 풀린다.
     command -v flock >/dev/null 2>&1 || { echo "⚠️  flock 없음 — 같은 state 의 동시 발사·재부착 잠금을 건너뜁니다" >&2; return 0; }
     refuse_symlink "$1.lock"
     { exec 9>"$1.lock"; } 2>/dev/null || { echo "FAIL: 잠금 파일을 만들 수 없음: $1.lock" >&2; exit 64; }
     flock -n 9 || { echo "FAIL: 같은 state($1)에 대한 다른 launch·reattach 가 진행 중입니다 — 끝난 뒤 다시 실행하세요" >&2; exit 67; }
 }
 
-write_state() {   # $1=STATE  나머지는 전역 변수 사용
+write_state() {
     local tmp="$1.tmp.$$"
-    {
+    if ! { {
         printf '{\n'
         printf '  "schema": 3,\n'
         printf '  "nonce": %s,\n' "$(json_escape "$NONCE")"
@@ -136,7 +136,7 @@ write_state() {   # $1=STATE  나머지는 전역 변수 사용
         printf '  "intent_sha256": %s,\n' "$(json_escape "${INTENT_SHA:-}")"
         printf '  "design_review": %s,\n' "$(json_escape "${DESIGN_REVIEW:-}")"
         printf '  "design_review_sha256": %s,\n' "$(json_escape "${DESIGN_REVIEW_SHA:-}")"
-        if [ -n "${QUEUE:-}" ]; then   # 대기 목록 판만 — 없으면 state 모양이 종전과 같다
+        if [ -n "${QUEUE:-}" ]; then
             printf '  "queue": %s,\n' "$(json_escape "$QUEUE")"
             printf '  "queue_item": %s,\n' "$(json_escape "$QUEUE_ITEM")"
             printf '  "queue_gpu": %s,\n' "$(json_escape "$QUEUE_GPU")"
@@ -144,17 +144,16 @@ write_state() {   # $1=STATE  나머지는 전역 변수 사용
         fi
         printf '  "status": %s\n' "$(json_escape "$STATUS")"
         printf '}\n'
-    } > "$tmp" && mv -f "$tmp" "$1" || {   # 기록 실패는 조용히 넘기지 않는다 (5라운드 Codex: 실패해도 "기록했습니다" 보고)
+    } > "$tmp" && mv -f "$tmp" "$1"; }; then   # NEVER: 기록 실패를 조용히 넘기지 않는다(5라운드 Codex: 실패해도 "기록했습니다" 보고)
         rm -f "$tmp" 2>/dev/null
         echo "FAIL: state 기록 실패 — $1 (디렉터리 권한·존재 확인). 학습 PID ${TRAIN_PID:-?} 는 계속 돌고 있음, 증거 없음" >&2
         exit 70
-    }
+    fi
 }
 
-refuse_protected_tw_args() {   # $1=와쳐 추가 인자 문자열 $2=출처 라벨(메시지용)
-    # 와쳐 추가 인자에서 보호 옵션 재지정 금지 (3라운드 검수: 뒤쪽 --pid 999 가 파서에서 우선되면 감시 대상이 바뀐다. 4라운드: `--pid=N` 형도 거부)
-    # launch 와 reattach 가 같은 검사를 쓴다 (2026-09-08 검수: reattach 는 state 의 watcher_extra 를 그대로
-    # 전개해 뒤에 붙은 --eval-cmd 가 --confirm-eval 로 승인한 값을 덮어썼다 — train-watcher.sh:43 은 마지막 값이 이긴다)
+refuse_protected_tw_args() {
+    # WHY: 뒤쪽 --pid 999 가 파서에서 우선되면 감시 대상이 바뀐다(3라운드 검수). reattach 도 같은 검사를 쓴다: state 의
+    # watcher_extra 뒤에 붙은 --eval-cmd 가 --confirm-eval 로 승인한 값을 덮어썼다(2026-09-08 검수, train-watcher.sh 는 마지막 값이 이긴다).
     local src="${2:---watcher-args}"
     for tok in $1; do
         case "$tok" in --on-exit|--on-exit=*)
@@ -164,15 +163,15 @@ refuse_protected_tw_args() {   # $1=와쳐 추가 인자 문자열 $2=출처 라
     done
 }
 
-queue_on_exit() {   # $1=대기 목록 $2=판 id $3=GPU [$4=시도 번호] — 와쳐 --on-exit 명령 문자열. 인자는 %q 로 인용하고 "$WATCH_EXIT" 는 와쳐가 실행 시점에 채운다
+queue_on_exit() {
     printf '/usr/bin/python3 %q next --queue %q --item %q --gpu %q' "$(dirname "$TW")/launch_queue.py" "$1" "$2" "$3"
-    if [ -n "${4:-}" ]; then printf ' --attempt %q' "$4"; fi   # 시도 번호 결박 — 없으면(옛 state·옛 호출) 인자를 붙이지 않아 옛 동작
+    if [ -n "${4:-}" ]; then printf ' --attempt %q' "$4"; fi
+    # shellcheck disable=SC2016
     printf ' --exit "$WATCH_EXIT"'
 }
 
-start_watcher() {   # 전역: TW WLOG NONCE TRAIN_PID STARTED LOG DONE_RX DONE_LOG EVAL_CMD TITLE TW_ARGS ON_EXIT
-    # 와쳐 로그: 첫 줄에 이 발사의 nonce 가 이미 있으면(재부착) 비우지 않고 이어 쓴다 — 예전에는 `>` 로 비워 이전 와쳐의 종료·실패 기록이 사라졌다.
-    # 첫 줄 nonce 는 verify 가 «옛 로그가 아님»을 보는 근거라 이어 써도 그대로 유지된다. 새 발사(또는 다른 nonce 의 옛 로그)는 종전처럼 새로 만든다.
+start_watcher() {
+    # NEVER: 같은 nonce 의 재부착에서 와쳐 로그를 `>` 로 비우지 않는다. 이전 와쳐의 종료 · 실패 기록이 사라진다.
     if head -1 "$WLOG" 2>/dev/null | grep -qF "nonce=$NONCE"; then
         printf '[launch-set] reattach nonce=%s train_pid=%s at=%s\n' "$NONCE" "$TRAIN_PID" "$(date -Is)" >> "$WLOG"
     else
@@ -180,10 +179,11 @@ start_watcher() {   # 전역: TW WLOG NONCE TRAIN_PID STARTED LOG DONE_RX DONE_L
     fi
     local dl=() oe=()
     [ -n "${DONE_LOG:-}" ] && dl=(--done-log "$DONE_LOG")
-    [ -n "${ON_EXIT:-}" ] && oe=(--on-exit "$ON_EXIT")   # TW_ARGS 는 단어 분리로 전개되니 공백·따옴표가 든 on-exit 은 배열로 따로 넘긴다
+    # NEVER: on-exit 를 TW_ARGS 에 섞지 않는다. TW_ARGS 는 단어 분리로 전개돼 공백 · 따옴표가 든 on-exit 이 깨진다.
+    [ -n "${ON_EXIT:-}" ] && oe=(--on-exit "$ON_EXIT")
     # shellcheck disable=SC2086
     nohup bash "$TW" --pid "$TRAIN_PID" --log "$LOG" --done-regex "$DONE_RX" \
-        --eval-cmd "$EVAL_CMD" --title "$TITLE" ${dl[@]+"${dl[@]}"} ${oe[@]+"${oe[@]}"} $TW_ARGS >> "$WLOG" 2>&1 9>&- &   # 9>&-: state 잠금을 오래 사는 와쳐가 물고 있지 않게
+        --eval-cmd "$EVAL_CMD" --title "$TITLE" ${dl[@]+"${dl[@]}"} ${oe[@]+"${oe[@]}"} $TW_ARGS >> "$WLOG" 2>&1 9>&- &
     WATCHER_PID=$!
     local i=0
     while [ $i -lt 5 ]; do
@@ -195,7 +195,7 @@ start_watcher() {   # 전역: TW WLOG NONCE TRAIN_PID STARTED LOG DONE_RX DONE_L
     return 0
 }
 
-refuse_fake_preflight() {   # GPU_PREFLIGHT_FAKE(gpu_preflight.py 시험 전용 가짜 GPU 상태)가 켜진 채 발사하면 사전검사가 가짜 값으로 통과한다 — 조용히 지우지 않고 거부
+refuse_fake_preflight() {
     [ -z "${GPU_PREFLIGHT_FAKE:-}" ] || { echo "FAIL: GPU_PREFLIGHT_FAKE 가 설정돼 있음 — 시험 전용 변수라 실제 발사·재부착에서는 거부합니다(unset 후 다시 실행)" >&2; exit 64; }
 }
 
@@ -238,30 +238,26 @@ cmd_launch() {
     done
     case "$NAME" in *[!A-Za-z0-9._-]*) echo "--name 은 [A-Za-z0-9._-]만: $NAME" >&2; exit 64 ;; esac
     case "$SETTLE" in ''|*[!0-9]*) echo "--settle-sec 는 정수: $SETTLE" >&2; exit 64 ;; esac
-    # 시크릿 형태 값 거부 (4라운드 검수): eval_cmd·title·done_regex·watcher_extra 는 state 에 평문 저장·와쳐 argv 로 노출되므로
-    # 마스킹 대상 형태(token=|--api-key VALUE 등)가 있으면 발사 자체를 거부한다 — 자격증명은 env 파일·헬퍼로.
+    # WHY: eval_cmd · title · done_regex · watcher_extra 는 state 에 평문 저장 · 와쳐 argv 로 노출된다(4라운드 검수).
     for v in EVAL_CMD TITLE DONE_RX TW_ARGS; do
         if has_secret_shape "${!v}"; then
             echo "FAIL: --$(echo "$v" | tr 'A-Z_' 'a-z-') 값에 시크릿 형태(token=|key=|password=|--api-key VALUE …)가 있음 — state·와쳐 argv 에 평문으로 남으므로 거부. 자격증명은 환경 파일·헬퍼로 옮기라" >&2; exit 64
         fi
     done
     refuse_protected_tw_args "$TW_ARGS"
-    # 사전검사의 정본 인자(--gpu·--vram-gb·--cpu-cores)는 전용 옵션으로만 준다(2026-10-01). preflight-args 로 같은 키를 주면 정본을 덮어써 검사 대상·한도가 바뀐다.
+    # WHY: preflight-args 로 같은 키를 주면 정본을 덮어써 검사 대상 · 한도가 바뀐다(2026-10-01).
     for tok in $PF_ARGS; do
         case "$tok" in --gpu|--vram-gb|--cpu-cores|--gpu=*|--vram-gb=*|--cpu-cores=*)
             echo "--preflight-args 에 $tok 를 줄 수 없음 — 전용 인자(--gpu·--vram-gb·--cpu-cores)를 쓰라" >&2; exit 64 ;; esac
     done
     if [ -n "$QUEUE_ATTEMPT" ]; then case "$QUEUE_ATTEMPT" in *[!0-9]*) echo "--queue-attempt 는 정수: $QUEUE_ATTEMPT" >&2; exit 64 ;; esac; fi
-    if [ -n "$QUEUE$QUEUE_ITEM" ]; then   # 대기 목록 판: 인자 단계에서 전부 거부해 발사·파일 생성 전에 끝낸다
+    if [ -n "$QUEUE$QUEUE_ITEM" ]; then
         [ -n "$QUEUE" ] && [ -n "$QUEUE_ITEM" ] || { echo "--queue 와 --queue-item 은 함께 줘야 합니다" >&2; exit 64; }
         [ -f "$QUEUE" ] && [ ! -L "$QUEUE" ] || { echo "--queue 파일이 없거나 링크임: $QUEUE" >&2; exit 64; }
         case "$GPU_SEL" in ''|*[!0-9]*) echo "--queue 는 --gpu <정수 한 장> 이 필요합니다(다음 판이 이 GPU 에 올라갑니다): '${GPU_SEL}'" >&2; exit 64 ;; esac
-        QUEUE="$(readlink -f "$QUEUE")"; QUEUE_GPU="$GPU_SEL"   # 와쳐는 다른 cwd 에서도 부르니 절대 경로로 박는다
+        QUEUE="$(readlink -f "$QUEUE")"; QUEUE_GPU="$GPU_SEL"
         ON_EXIT="$(queue_on_exit "$QUEUE" "$QUEUE_ITEM" "$QUEUE_GPU" "$QUEUE_ATTEMPT")"
     fi
-    # 기본 출력 위치(2026-10-06 사용자 지시): --state·--watcher-log 를 안 주면 프로젝트 최상위(cwd)를 어지럽히지 않도록
-    # <뿌리>/.scratch/launch/ 아래에 만든다. 뿌리 = git 최상위, git 저장소가 아니면 $PWD. .json.lock 은 state 옆이라 따라온다.
-    # 폴더를 못 만들면 발사 전 거부(아래 state 사전 검사와 같은 방식). --log(학습 로그)는 필수 인자라 기본값이 없고 준 경로를 그대로 쓴다.
     if [ -z "$WLOG" ] || [ -z "$STATE" ]; then
         LROOT="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)" || LROOT="$PWD"
         [ -n "$LROOT" ] || LROOT="$PWD"
@@ -270,14 +266,14 @@ cmd_launch() {
         [ -n "$WLOG" ] || WLOG="$LDIR/watcher-${NAME}.log"
         [ -n "$STATE" ] || STATE="$LDIR/launch-state-${NAME}.json"
     fi
-    # intent.md (skills/intent): 있으면 실재·일반 파일 확인 후 sha256 기록, 없으면 경고만(2026-09-06 사용자 결정: 발사는 경고, 하네스 feat 커밋은 차단)
+    # WHY: --intent 가 없으면 경고만 한다(2026-09-06 사용자 결정: 발사는 경고, 하네스 feat 커밋은 차단).
     if [ -n "$INTENT" ]; then
         [ -f "$INTENT" ] && [ ! -L "$INTENT" ] || { echo "--intent 파일이 없거나 링크임: $INTENT" >&2; exit 64; }
         INTENT_SHA="$(sha "$(cat "$INTENT")")"
     else
         echo "⚠️  --intent 없음 — 의뢰서(intent.md) 경로가 없는 발사. 착수 전 intent.md 를 커밋하고 --intent 로 가리키는 것이 기본형이다(skills/intent). 발사는 계속한다."
     fi
-    # 심사 시각 점검 보고서(rules-lazy/design-review-check.md): --design-review, 없으면 --intent 옆 <이름>.review.md. 일반 파일이면 sha256 기록, 링크 등은 거부(64), 없으면 경고만(2026-10-12 사용자 결정: 차단 아님)
+    # WHY: 심사 시각 점검 보고서(rules-lazy/design-review-check.md)가 없으면 경고만 한다(2026-10-12 사용자 결정: 차단 아님).
     DR_PATH="$DESIGN_REVIEW"; DESIGN_REVIEW=""
     if [ -z "$DR_PATH" ] && [ -n "$INTENT" ]; then DR_PATH="${INTENT%.md}.review.md"; fi
     if [ -n "$DR_PATH" ]; then
@@ -288,23 +284,20 @@ cmd_launch() {
             echo "경고: 심사 시각 점검 보고서 없음($DR_PATH) — 새 설계라면 rules-lazy/design-review-check.md 절차를 거칠 것. 재개·시드 추가·같은 설정 재발사는 면제" >&2
         fi
     fi
-    # 발사 **전** state 를 쓸 수 있는지 확인 (5라운드 Codex: 부모 없는 --state 면 프로세스만 남고 기록 실패)
+    # WHY: 부모 없는 --state 면 프로세스만 남고 기록이 실패했다(5라운드 Codex). 그래서 발사 전에 확인한다.
     STATE_DIR="$(dirname "$STATE")"
     [ -d "$STATE_DIR" ] && [ -w "$STATE_DIR" ] || { echo "--state 디렉터리가 없거나 쓸 수 없음: $STATE_DIR (발사 전 거부)" >&2; exit 64; }
-    ( : > "$STATE.probe.$$" ) 2>/dev/null && rm -f "$STATE.probe.$$" || { echo "--state 경로에 파일을 만들 수 없음: $STATE (발사 전 거부)" >&2; exit 64; }
+    if ! { ( : > "$STATE.probe.$$" ) 2>/dev/null && rm -f "$STATE.probe.$$"; }; then echo "--state 경로에 파일을 만들 수 없음: $STATE (발사 전 거부)" >&2; exit 64; fi
     [ -r "$TW" ] || { echo "train-watcher.sh 없음: $TW" >&2; exit 64; }
     [ -r "$MG" ] || { echo "memguard-run.sh 없음: $MG" >&2; exit 64; }
     refuse_symlink "$LOG"; refuse_symlink "$WLOG"; refuse_symlink "$STATE"
-    lock_state "$STATE"   # 같은 state 로 동시에 발사하면 «state 없음» 확인을 둘 다 통과해 학습·와쳐가 둘 뜬다 — 확인부터 최종 state 기록까지 직렬화
+    lock_state "$STATE"
     if [ -e "$STATE" ] && [ "$FORCE" != 1 ]; then
         echo "FAIL: state 파일이 이미 있습니다($STATE) — 같은 이름의 발사가 진행 중이거나 남은 증거입니다. 확인 후 --force 또는 다른 --name" >&2
         exit 67
     fi
 
-    # GPU·CPU 여유 사전검사 (2026-09-29 사용자 결정 — 모든 학습 적용, 미달이면 거부 exit 76).
-    #   GPU 번호: --gpu 가 정본. 없으면 학습 명령 토큰의 RUN_GPU=N · CUDA_VISIBLE_DEVICES=N, 그다음 현재 환경의
-    #   CUDA_VISIBLE_DEVICES 에서 찾는다. 그래도 모르면 경고만 하고 넘어간다(GPU 를 지정하지 않는 옛 명령 호환).
-    #   이미 판이 도는 GPU 에 올리려면 --vram-gb·--cpu-cores 가 필수(판정은 gpu_preflight.py 헤더).
+    # WHY: GPU 번호를 모르면 경고만 하고 넘어간다(GPU 를 지정하지 않는 옛 명령 호환, 2026-09-29 사용자 결정의 사전검사).
     if [ -z "$GPU_SEL" ]; then
         for tok in "$@"; do
             case "$tok" in RUN_GPU=*|CUDA_VISIBLE_DEVICES=*) GPU_SEL="${tok#*=}"; break ;; esac
@@ -312,7 +305,7 @@ cmd_launch() {
         [ -n "$GPU_SEL" ] || GPU_SEL="${CUDA_VISIBLE_DEVICES:-}"
     fi
     if [ -n "$GPU_SEL" ]; then
-        # 인자 순서: 사용자 preflight-args 먼저, 정본(--gpu·--vram-gb·--cpu-cores)은 맨 뒤 — argparse 는 같은 옵션이 여러 번이면 마지막 값이 이기므로
+        # WHY: 정본(--gpu · --vram-gb · --cpu-cores)을 맨 뒤에 둔다. argparse 는 같은 옵션이 여러 번이면 마지막 값이 이겨
         # 약어(--vram 등)로 키 거부를 피해도 정본이 덮는다(2026-10-01).
         PF=(python3 "$(dirname "$TW")/gpu_preflight.py")
         # shellcheck disable=SC2206
@@ -332,46 +325,32 @@ cmd_launch() {
     NONCE="$(date +%Y%m%dT%H%M%S)-$$-$RANDOM"
     STARTED="$(date -Is)"
 
-    # 0) 학습 표준입출력 배치 (2026-09-29, 같은 날 세 번 개정 — 경위는 커밋 e139575ee·bf807b802·이번 커밋).
-    #    · 창(tty)에서 부르면: 표준입력·표준출력 = 이 창의 tty, 표준에러 = --log 파일(사용자 결정 «1번»).
-    #      진행 막대(Rich·tqdm)는 진짜 터미널에 그려져 창 크기를 매 프레임 따라가고, 막대 다시 그리기가
-    #      로그를 채우지 않는다(실측: 표준출력까지 로그로 받던 판은 40분에 14.4MB·9.7만 줄).
-    #    · 대가 1: 표준출력으로 찍히는 줄은 --log 에 남지 않는다. 완료 마커가 표준출력이면 --done-log 로
-    #      프로젝트 자체 로그를 가리켜야 와쳐가 찾는다.
-    #    · 대가 2: 창 자체를 닫으면(exit·Ctrl+D·kill-session) 다음 출력에서 EIO 로 학습이 죽는다(시험 확인).
-    #      detach(Ctrl+b d)는 무관하다. 그래서 세션·창 종료는 사용자 재확인 규칙으로 막는다(background-task.md).
-    #    · nohup 은 tty 인 표준입출력을 강제로 바꾸므로 쓰지 않고 HUP 무시를 직접 건다. TTIN·TTOU 도 무시해
-    #      배경 읽기는 곧바로 EIO 로 실패하고(wandb 프롬프트·input() 에 멈추지 않음) tostop 설정에서도 쓰기가 멈추지 않는다.
-    #    · COLUMNS·LINES 는 지운다 — 환경에 있으면 Rich 가 tty 크기 대신 그 값을 쓴다.
-    #    · 서브셸은 곧바로 exec 하므로 $! 가 그대로 학습 프로세스 PID 다(아래 exec 체인 불변식 유지).
-    #    · tty 가 아니면(Bash 도구 등) 종전처럼 표준입력 /dev/null, 표준출력·에러 모두 --log.
+    # WHY: 창(tty)에서는 표준출력을 창으로 보낸다. 표준출력까지 로그로 받던 판은 40분에 14.4MB · 9.7만 줄이었다(실측).
     TRAIN_TTY=""
     if [ -t 0 ] && [ -t 1 ]; then TRAIN_TTY="$(tty)"; fi
     if [ -n "$TRAIN_TTY" ] && [ -z "$DONE_LOG" ]; then
         echo "⚠️  학습 표준출력은 이 창으로 가고 --log 에는 표준에러만 남습니다. 완료 마커('$DONE_RX')가 표준출력으로 찍히는 프로젝트면 --done-log 로 프로젝트 로그 파일을 지정하세요. 발사는 계속합니다."
     fi
 
-    # 1) 학습: memguard 래핑. memguard-run.sh:97/107 이 exec 이므로 $!가 학습 프로세스 PID로 유지된다.
-    #    9>&-: state 잠금(fd 9)을 오래 사는 학습 프로세스가 물고 있지 않게 서브셸 자식에서 닫는다(exec 체인·PID 불변식에는 영향 없음).
+    # NEVER: 서브셸과 tools/mem-guard/memguard-run.sh 의 exec 를 빼지 않는다. $! 가 그대로 학습 프로세스 PID 여야 한다.
+    # NEVER: nohup 을 쓰지 않는다. tty 인 표준입출력을 강제로 바꾸므로 HUP · TTIN · TTOU 무시를 직접 건다.
+    # NEVER: COLUMNS · LINES 를 남기지 않는다. 환경에 있으면 Rich 가 tty 크기 대신 그 값을 쓴다.
     if [ -n "$TRAIN_TTY" ]; then
-        # shellcheck disable=SC2086
+        # shellcheck disable=SC2086,SC2094
         ( trap '' HUP TTIN TTOU; unset COLUMNS LINES; exec bash "$MG" --name "$NAME" $MG_ARGS -- "$@" ) < "$TRAIN_TTY" > "$TRAIN_TTY" 2> "$LOG" 9>&- &
     else
         # shellcheck disable=SC2086
         ( trap '' HUP TTIN TTOU; unset COLUMNS LINES; exec bash "$MG" --name "$NAME" $MG_ARGS -- "$@" ) < /dev/null > "$LOG" 2>&1 9>&- &
     fi
     TRAIN_PID=$!
-    # 화면 비추기(tail)는 이 함수 끝, VERIFY 출력 뒤에 시작한다 — 그 자리의 주석 참조.
 
-    # 1a) exec 체인 안정화 대기 (최대 30s)
     i=0
     while [ $i -lt 30 ]; do
         alive "$TRAIN_PID" || break
         cl="$(proc_cmdline "$TRAIN_PID")"
-        # launch-set.sh = exec 전 서브셸(부모 argv 를 그대로 가진 채 잠깐 존재한다, 2026-09-29 서브셸 발사로 추가)
+        # WHY: launch-set.sh 는 exec 전 서브셸이 부모 argv 를 가진 채 잠깐 존재하는 경우다(2026-09-29 서브셸 발사로 추가).
         case "$cl" in *memguard-run.sh*|*systemd-run*|*launch-set.sh*) sleep 1; i=$((i+1)) ;; *) break ;; esac
     done
-    # 1b) settle 폴링
     i=0
     while [ $i -lt "$SETTLE" ]; do
         if ! alive "$TRAIN_PID"; then
@@ -387,9 +366,8 @@ cmd_launch() {
     TRAIN_EXE="$(readlink -f "/proc/$TRAIN_PID/exe" 2>/dev/null)"
     TRAIN_CG="$(proc_cgpath "$TRAIN_PID")"
     MEM_MAX="$(cg_limit "$TRAIN_CG" memory.max)"; MEM_HIGH="$(cg_limit "$TRAIN_CG" memory.high)"
-    # memguard 한도 실검증 (3라운드 검수: scope 이름만으로는 무제한 scope 도 인정됐다)
-    # 시작 후 검사 실패는 학습을 죽이지 않는 대신 **rejected state** 를 남긴다 (4라운드 Codex 지적: state·와쳐 없이 프로세스만 남던 경로)
-    reject_after_start() {   # $1=사유
+    # WHY: scope 이름만으로는 무제한 scope 도 인정됐다(3라운드 검수). 실패하면 state · 와쳐 없이 프로세스만 남던 경로가 있었다(4라운드 Codex).
+    reject_after_start() {
         STATUS="rejected: $1"; WATCHER_PID=0; WATCHER_START=""; WATCHER_ARGV=""
         refuse_symlink "$STATE"; write_state "$STATE"
         echo "FAIL: $1" >&2
@@ -400,30 +378,24 @@ cmd_launch() {
     if [ -z "$MEM_MAX" ] || [ "$MEM_MAX" = "max" ]; then
         reject_after_start "학습 cgroup($TRAIN_CG)의 memory.max 가 '${MEM_MAX:-없음}' — memguard 한도가 걸리지 않음"
     fi
-    if [ -z "$MEM_HIGH" ] || [ "$MEM_HIGH" = "max" ]; then   # memguard 는 MemoryHigh 도 항상 건다(기본 40G) — max 면 래핑 이상 (4라운드)
+    if [ -z "$MEM_HIGH" ] || [ "$MEM_HIGH" = "max" ]; then   # WHY: memguard 는 MemoryHigh 도 항상 건다(기본 40G)
         reject_after_start "학습 cgroup($TRAIN_CG)의 memory.high 가 '${MEM_HIGH:-없음}' — memguard 스로틀 한도가 걸리지 않음"
     fi
-    # 명령 진위: exec 후 실제 argv 의 **한 토큰 전체**가 --expect 패턴과 일치해야 한다
-    # (3라운드: `-- sleep 999999` 차단 / 4라운드: 결합 문자열 부분 일치가 `env FAKE=train.py sleep` 로 뚫려 토큰 단위로 교체)
     if ! argv_token_match "$TRAIN_PID" "$EXPECT"; then
         reject_after_start "학습 argv 의 어느 토큰도 --expect '$EXPECT' 와 통째로 일치하지 않음 (실제: $(mask "$TRAIN_ARGV")) — 학습 명령이 아니거나 패턴 오류"
     fi
-    # exe 허용 목록은 **하드 게이트** (7라운드 렌즈2: `bash -c 'exec -a train.py sleep …'` 가 argv[0] 만 위조해 토큰 검사를 통과 — exe 는 위조 못 한다)
+    # WHY: `bash -c 'exec -a train.py sleep …'` 는 argv[0] 만 위조해 토큰 검사를 통과한다. exe 는 위조하지 못한다(7라운드 렌즈2).
     case "$(basename "${TRAIN_EXE:-}")" in
-        python*|torchrun|accelerate|deepspeed|ray|uv|java|julia|Rscript|bash|sh|dash|zsh) : ;;   # 셸은 run.sh 래퍼용 — 래퍼가 exec 하면 그 exe 로 재판정됨
+        python*|torchrun|accelerate|deepspeed|ray|uv|java|julia|Rscript|bash|sh|dash|zsh) : ;;
         *) reject_after_start "학습 exe(${TRAIN_EXE:-없음})가 허용 런타임(python*/torchrun/accelerate/deepspeed/ray/uv/java/julia/Rscript/셸)이 아님 — argv[0] 위조 의심" ;;
     esac
-    # 한계 (정직 표기): --expect 는 "학습 스크립트로 보이는 토큰" 검사이지 학습 내용의 진위가 아니다. 발사 증거의 정본은
-    # 사용자 터미널의 launch 출력 원문(LAUNCHED + VERIFY 블록)이며, 손으로 쓴 state 를 verify 가 판별하지는 못한다.
     case "$TRAIN_SCOPE" in
         memguard-"$NAME"-*) : ;;
         *) reject_after_start "학습 PID $TRAIN_PID 가 memguard scope(memguard-$NAME-*.scope) 안에 없음 — --allow-unenforced 로 돌았거나 래핑이 빠짐 (cgroup: ${TRAIN_SCOPE:-없음})" ;;
     esac
-    # provisional state (와쳐 실패해도 학습 증거는 남긴다)
     STATUS="provisional-no-watcher"; WATCHER_PID=0; WATCHER_ARGV=""; WATCHER_START=""
     write_state "$STATE"
 
-    # 2) 와쳐
     if ! start_watcher; then
         echo "FAIL: 와쳐 조기 종료 — $WLOG 확인. 학습은 계속 돌고 있고 provisional state 가 $STATE 에 있음 → 원인 해결 후:" >&2
         echo "      bash $0 reattach $STATE" >&2
@@ -431,20 +403,14 @@ cmd_launch() {
     fi
     STATUS="launched"
     write_state "$STATE"
-    exec 9>&-   # 최종 state 까지 썼다 — 잠금을 놓는다(뒤의 verify·tail 은 잠금 없이 돈다)
+    exec 9>&-
     echo "LAUNCHED nonce=$NONCE train_pid=$TRAIN_PID watcher_pid=$WATCHER_PID scope=$TRAIN_SCOPE state=$STATE"
-    # cmd_verify 는 끝에서 exit 하므로 서브셸로 부르고 결과 코드만 받는다(출력은 그대로 창에 찍힌다).
+    # NEVER: cmd_verify 를 서브셸 밖에서 부르지 않는다. 끝에서 exit 해 launch 가 그 자리에서 끝난다.
     ( cmd_verify "$STATE" ); VRC=$?
 
-    # 2) 화면 비추기: --log 내용을 이 창에 실시간으로 흘린다(화면 공백 금지, 2026-09-28 규칙).
-    #    · 창 발사(TRAIN_TTY)면 --log 에는 표준에러(경고·예외 추적)만 있다. 표준출력은 이미 창에 직접 나오므로
-    #      이 tail 은 오류를 화면에서도 보이게 하는 몫이다. tty 가 아니면 --log 에 전부 있으니 종전 그대로다.
-    #    · `> >(tee "$LOG")` 로 바꾸지 않는다: tee 가 HUP 무시 보호 밖이고 PID·exec 체인 불변식 바로 옆을 건드린다.
-    #    · nohup 금지(2026-09-28 재발 실사고): tmux 의 실제 tty 에서 nohup 이 출력을 ./nohup.out 으로 돌렸다.
-    #      tail 은 화면 전용 부산물이라 창이 죽으면 같이 죽는 게 맞다.
-    #    · VERIFY 뒤에 시작하고 -n +1 로 처음부터 흘린다(발사기 출력과 섞이지 않게, 앞부분도 빠지지 않게).
-    #    · -s 0.05: inotify 가 바닥난 서버(실측)에서 tail 은 폴링이다. 기본 1초 간격이면 몰린 줄이 한꺼번에 나온다.
-    #    · tail 자신의 stderr(inotify 부족 경고)는 버린다. 학습 출력이 아니라 tail 의 진단이다.
+    # NEVER: 이 tail 을 `> >(tee "$LOG")` 로 바꾸지 않는다. tee 가 HUP 무시 보호 밖이고 PID · exec 체인 불변식 바로 옆을 건드린다.
+    # NEVER: tail 에 nohup 을 붙이지 않는다. tmux 의 실제 tty 에서 nohup 이 출력을 ./nohup.out 으로 돌렸다(2026-09-28 재발 실사고).
+    # WHY: -s 0.05 는 inotify 가 바닥난 서버(실측)에서 tail 이 폴링이라 기본 1초 간격이면 몰린 줄이 한꺼번에 나오기 때문이다.
     if alive "$TRAIN_PID"; then
         tail -n +1 -f -s 0.05 --pid="$TRAIN_PID" "$LOG" 2>/dev/null &
     else
@@ -458,39 +424,36 @@ cmd_reattach() {
     refuse_fake_preflight
     STATE="${1:-}"; [ -n "$STATE" ] && [ -r "$STATE" ] || { echo "FAIL: state 파일 없음"; exit 64; }
     refuse_symlink "$STATE"
-    lock_state "$STATE"   # 같은 state 에 launch 나 다른 reattach 가 도는 중이면 거부(와쳐가 둘 붙거나 state 를 서로 덮어쓰는 것 방지)
+    lock_state "$STATE"
     NONCE="$(read_field "$STATE" nonce)"; NAME="$(read_field "$STATE" name)"; STARTED="$(read_field "$STATE" started_at)"
     TRAIN_PID="$(read_field "$STATE" train_pid)"; TRAIN_START="$(read_field "$STATE" train_start)"
     TRAIN_SCOPE="$(read_field "$STATE" train_scope)"; LOG="$(read_field "$STATE" train_log)"; WLOG="$(read_field "$STATE" watcher_log)"
     TRAIN_ARGV="$(proc_cmdline "$TRAIN_PID")"; EXPECT="$(read_field "$STATE" expect)"; TRAIN_EXE="$(read_field "$STATE" train_exe)"
     TRAIN_CG="$(read_field "$STATE" train_cgroup)"; MEM_MAX="$(read_field "$STATE" mem_max)"; MEM_HIGH="$(read_field "$STATE" mem_high)"
-    DESIGN_REVIEW="$(read_field "$STATE" design_review)"; DESIGN_REVIEW_SHA="$(read_field "$STATE" design_review_sha256)"   # 옛 state 에는 없다 → 빈 값 = 미기록으로 다시 쓴다
-    # 원 발사 provenance 검증 후에만 재부착 (3라운드 검수: 재부팅·무관 PID 세탁 차단)
+    DESIGN_REVIEW="$(read_field "$STATE" design_review)"; DESIGN_REVIEW_SHA="$(read_field "$STATE" design_review_sha256)"
+    # WHY: 원 발사 provenance 를 확인한 뒤에만 재부착해 재부팅 · 무관 PID 세탁을 막는다(3라운드 검수).
     case "$(read_field "$STATE" status)" in rejected*) echo "FAIL: 이 state 는 발사 시 검사에 실패한 기록(status=rejected)이라 재부착 대상이 아님 — 사유를 해결하고 새로 발사하거나 사용자가 수동 부착"; exit 65 ;; esac
     [ "$(hostname)" = "$(read_field "$STATE" host)" ] || { echo "FAIL: host 불일치 — 다른 기기의 state"; exit 65; }
     [ "$(boot_id)" = "$(read_field "$STATE" boot_id)" ] || { echo "FAIL: boot_id 불일치 — 재부팅 후 PID는 재부착 대상이 아님"; exit 65; }
     [ "$(proc_scope "$TRAIN_PID")" = "$TRAIN_SCOPE" ] || { echo "FAIL: memguard scope 불일치"; exit 65; }
     [ "$(proc_cgpath "$TRAIN_PID")" = "$TRAIN_CG" ] || { echo "FAIL: cgroup 경로 불일치"; exit 65; }
     DONE_RX="$(read_field "$STATE" done_regex)"; EVAL_CMD="$(read_field "$STATE" eval_cmd)"
-    DONE_LOG="$(read_field "$STATE" done_log)"   # 옛 state 에는 없다 → 빈 값 = 종전처럼 --log 에서 찾음
-    TITLE="$(read_field "$STATE" title)"; TW_ARGS="$(read_field "$STATE" watcher_extra)"   # 필드 분리 저장 — '|' 결합 파싱 결함 제거(3라운드)
+    DONE_LOG="$(read_field "$STATE" done_log)"
+    TITLE="$(read_field "$STATE" title)"; TW_ARGS="$(read_field "$STATE" watcher_extra)"
     refuse_protected_tw_args "$TW_ARGS" "state 의 watcher_extra"
     QUEUE="$(read_field "$STATE" queue)"; QUEUE_ITEM="$(read_field "$STATE" queue_item)"; QUEUE_GPU="$(read_field "$STATE" queue_gpu)"
-    QUEUE_ATTEMPT="$(read_field "$STATE" queue_attempt)"   # 옛 state 에는 없다 → 빈 값 = 시도 결박 없는 옛 동작
-    ON_EXIT=""; [ -z "$QUEUE" ] || ON_EXIT="$(queue_on_exit "$QUEUE" "$QUEUE_ITEM" "$QUEUE_GPU" "$QUEUE_ATTEMPT")"   # 재부착한 와쳐도 같은 사슬을 잇는다(옛 state 는 빈 값)
-    # state 의 eval_cmd 는 실행 sink 다 (5라운드 Codex: 손으로 쓴 state 로 reattach 하면 학습 종료 후 임의 명령이 실행된다).
-    # 그래서 reattach 는 사용자가 같은 eval 명령을 **다시 입력**(--confirm-eval '<원문>')해 state 값과 일치할 때만 와쳐를 붙인다.
+    QUEUE_ATTEMPT="$(read_field "$STATE" queue_attempt)"
+    ON_EXIT=""; [ -z "$QUEUE" ] || ON_EXIT="$(queue_on_exit "$QUEUE" "$QUEUE_ITEM" "$QUEUE_GPU" "$QUEUE_ATTEMPT")"
+    # WHY: state 의 eval_cmd 는 실행 sink 다. 손으로 쓴 state 로 reattach 하면 학습 종료 후 임의 명령이 실행된다(5라운드 Codex).
     CONFIRM=""; shift; while [ $# -gt 0 ]; do case "$1" in --confirm-eval) CONFIRM="$2"; shift 2 ;; *) echo "reattach 인자 오류: $1" >&2; exit 64 ;; esac; done
     if [ -z "$CONFIRM" ] || [ "$CONFIRM" != "$EVAL_CMD" ]; then
         echo "FAIL: reattach 는 --confirm-eval '<eval 명령 원문>' 이 state 의 eval_cmd 와 정확히 일치해야 함 (state 는 실행 sink 라 재입력으로 승인). state 값(masked): $(mask "$EVAL_CMD")" >&2; exit 65
     fi
-    # 경로 검증: state 와 같은 디렉터리 하위 + 심볼릭 링크 거부 (변조된 state 로 임의 파일 덮어쓰기 차단)
-    # 2026-10-06: 기본 state 위치가 <뿌리>/.scratch/launch/ 가 되면서 학습 로그(--log, 보통 프로젝트 하위)가 state 디렉터리 밖이 된다.
-    # state 가 정확히 `*/.scratch/launch` 에 있으면 허용 범위를 그 뿌리(`.scratch/launch` 의 두 단계 위) 하위로 넓힌다. 그 밖의 위치는 종전 그대로 state 디렉터리 하위만.
+    # WHY: 기본 state 위치가 <뿌리>/.scratch/launch/ 라 학습 로그(--log)가 state 디렉터리 밖이 된다(2026-10-06). 그래서 state 가 정확히
+    # `*/.scratch/launch` 에 있으면 허용 범위를 그 뿌리 하위로 넓힌다. 그 밖의 위치는 state 디렉터리 하위만이다.
     SDIR="$(cd "$(dirname "$STATE")" && pwd -P)"
     SBASE="$SDIR"; case "$SDIR" in */.scratch/launch) SBASE="${SDIR%/.scratch/launch}" ;; esac
-    # 넓힌 범위(SBASE)는 학습 로그(읽기만 함)에만 적용한다. 와쳐가 쓰는 WLOG 는 종전대로 state 디렉터리 하위만 허용한다
-    # (변조된 state 로 프로젝트 안 임의 파일을 덮어쓰지 못하게, 2026-10-06 main 검토).
+    # NEVER: 넓힌 범위(SBASE)를 와쳐가 쓰는 WLOG 에 적용하지 않는다. 변조된 state 로 프로젝트 안 임의 파일을 덮어쓰게 된다(2026-10-06 main 검토).
     for p in "$LOG" "$WLOG"; do
         refuse_symlink "$p"
         if [ "$p" = "$LOG" ]; then ALLOW_BASE="$SBASE"; else ALLOW_BASE="$SDIR"; fi
@@ -508,6 +471,7 @@ cmd_reattach() {
     cmd_verify "$STATE"
 }
 
+# shellcheck disable=SC2319
 cmd_verify() {
     STATE="${1:-}"
     [ -n "$STATE" ] && [ -r "$STATE" ] || { echo "FAIL: state 파일 없음: ${STATE:-(미지정)}"; exit 1; }
@@ -532,8 +496,8 @@ cmd_verify() {
     if alive "$TP"; then
         [ "$(proc_start "$TP")" = "$TST" ]; chk $? "학습 PID starttime 동일 (PID 재사용 아님)"
         [ "$(readlink -f "/proc/$TP/exe" 2>/dev/null)" = "$TEXE" ]; chk $? "학습 exe 동일 ($TEXE)"
-        case "$(basename "$TEXE")" in python*|torchrun|accelerate|deepspeed|ray|uv|java|julia|Rscript|bash|sh|dash|zsh) chk 0 "학습 exe 가 허용 런타임 ($(basename "$TEXE"))" ;; *) chk 1 "학습 exe 가 허용 런타임 (현재: $(basename "$TEXE") — argv[0] 위조 의심)" ;; esac   # 7라운드 렌즈2: verify 에서도 하드 판정
-        # argv 는 setproctitle 로 바뀔 수 있어(PyTorch·Lightning·ray) 참고 항목 — 정체성은 starttime·exe·scope 가 판정 (3라운드 검수)
+        case "$(basename "$TEXE")" in python*|torchrun|accelerate|deepspeed|ray|uv|java|julia|Rscript|bash|sh|dash|zsh) chk 0 "학습 exe 가 허용 런타임 ($(basename "$TEXE"))" ;; *) chk 1 "학습 exe 가 허용 런타임 (현재: $(basename "$TEXE") — argv[0] 위조 의심)" ;; esac
+        # WHY: argv 는 setproctitle 로 바뀔 수 있어(PyTorch · Lightning · ray) 참고 항목이다. 정체성은 starttime · exe · scope 가 판정한다(3라운드 검수).
         [ "$(sha "$(proc_cmdline "$TP")")" = "$TSHA" ]; warn $? "학습 argv sha256 동일"
         [ -n "$EXP" ] && argv_token_match "$TP" "$EXP"; warn $? "학습 argv 토큰이 expect 패턴('$EXP')과 통째로 일치 (발사 시점엔 하드 검사됨)"
         cur_scope="$(proc_scope "$TP")"
@@ -549,7 +513,7 @@ cmd_verify() {
         [ "$(proc_start "$WP")" = "$WST" ]; chk $? "와쳐 PID starttime 동일"
         cur="$(proc_cmdline "$WP")"
         [ "$(sha "$cur")" = "$WSHA" ]; chk $? "와쳐 argv sha256 동일"
-        # 와쳐 스크립트 경로 토큰이 정본 train-watcher.sh 의 실경로와 **정확히** 일치해야 함 (5라운드 렌즈2: `/tmp/fake/train-watcher.sh` 더미가 부분 일치로 통과)
+        # WHY: 부분 일치로는 `/tmp/fake/train-watcher.sh` 더미가 통과했다(5라운드 렌즈2). 실경로와 정확히 맞춘다.
         TW_REAL="$(readlink -f "$TW")"
         tr '\0' '\n' < "/proc/$WP/cmdline" 2>/dev/null | grep -qxF -e "$TW" -e "$TW_REAL"; chk $? "와쳐 argv 의 스크립트 토큰이 정본 train-watcher.sh 실경로($TW_REAL)와 정확히 일치"
         [ "$(readlink -f "/proc/$WP/exe" 2>/dev/null)" = "$(readlink -f "$(command -v bash)")" ]; chk $? "와쳐 exe 가 bash"
@@ -563,7 +527,7 @@ cmd_verify() {
     else
         warn 1 "intent 미기록 — 의뢰서 없는 발사 (skills/intent)"
     fi
-    DR="$(read_field "$STATE" design_review)"; DRSHA="$(read_field "$STATE" design_review_sha256)"   # 옛 state 에는 없다 → 빈 값
+    DR="$(read_field "$STATE" design_review)"; DRSHA="$(read_field "$STATE" design_review_sha256)"
     if [ -n "$DR" ]; then
         if [ -f "$DR" ] && [ "$(sha "$(cat "$DR")")" = "$DRSHA" ]; then warn 0 "design_review $DR (sha256 일치)"; else warn 1 "design_review $DR — 파일이 없거나 발사 뒤 바뀜(sha256 불일치)"; fi
     else

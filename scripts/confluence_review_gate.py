@@ -1,9 +1,5 @@
 """Confluence 게시 전 검토 관문: 자격증명 · 환자 식별자 꼴 검사와 검토본 · 게시본 해시 대조.
 
-■ 왜 있는가 (에이전트 정리 8단계, intent/2026-11-05-agent-consolidation.md)
-docs 에이전트가 위키 연결을 잃고 초안 파일만 쓰게 되면서 게시는 main 이 한다. 검토한 초안과 실제로 올리는
-본문이 같은지, 본문에 비밀이나 환자 식별자가 섞이지 않았는지를 기억이 아니라 코드로 막는다.
-
 ■ 스탬프의 뜻 (사실대로)
 confluence_skeleton_check.py 가 통과 시 sha256(끝 공백 · 개행을 뗀 본문)으로 _audit/skeleton-pass/<sha256>.json 을
 남긴다. 그 스탬프 함수가 먼저 scan() 을 불러 꼴이 하나라도 있으면 스탬프를 남기지 않는다. 그래서 스탬프는
@@ -20,6 +16,7 @@ storage HTML 은 값을 <code> 로 감싸거나 라벨과 값을 표의 다른 �
   python3 confluence_review_gate.py <게시본 파일 | ->                       # 꼴 검사만
   python3 confluence_review_gate.py <게시본 파일> --reviewed <검토본 파일>   # 꼴 검사 + 해시 대조
 종료 코드: 0=통과 · 1=거부(stdout 에 PreToolUse deny JSON) · 2=사용 오류(파일 없음 등, stderr 한 줄)
+REF: knowledge/harness/code-history/scripts__confluence_review_gate.py.md
 """
 
 import argparse
@@ -28,16 +25,13 @@ import json
 import re
 import sys
 
-# ci-gate-commit.sh SECRET_T1 의 토큰 꼴 + Atlassian API 토큰. 앞 글자는 소비하지 않는다(행 번호가 밀리지 않게).
+# WHY: ci-gate-commit.sh SECRET_T1 의 토큰 꼴 + Atlassian API 토큰. 앞 글자는 소비하지 않는다(행 번호가 밀리지 않게).
 _TOKEN = (r"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
           r"|AIza[0-9A-Za-z_-]{30,}|xox[baprs]-[A-Za-z0-9-]{10,}|tvly-[A-Za-z0-9-]{20,}|m0-[A-Za-z0-9]{20,}"
           r"|AKIA[0-9A-Z]{16}|ATATT[A-Za-z0-9_=-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----")
-# 이름: 접두가 붙어도 된다(db_password · MY_API_KEY). token 은 접두가 있을 때만(«token = 512» 같은 산문 제외).
 _CRED_NAME = (r"(?:[A-Za-z0-9]+[_-])*(?:password|passwd|api[_-]?(?:token|key)|access[_-]?token|auth[_-]?token"
               r"|secret[_-]?key|client[_-]?secret|private[_-]?key)|[A-Za-z0-9]+[_-]token")
-# 값: 따옴표 · 태그로 감싸도 된다. 자격증명 꼴만(숫자가 든 6자+ 또는 12자+).
 _CRED_VALUE = r"""(?:<[^<>]{1,80}>\s?){0,3}["'`]?(?:(?=[^\s<>"'`]*\d)[^\s<>"'`]{6,}|[^\s<>"'`]{12,})"""
-# 환자 식별자 라벨. 값에 숫자가 하나는 있어야 한다(«환자번호 열» 같은 산문 제외). 라벨 뒤 공백은 한 번만 소비한다.
 _PID_LABEL = r"(?:환자\s?(?:번호|ID)|등록\s?번호|차트\s?번호|병록\s?번호|patient[ _-]?(?:id|no|number)|\bMRN)"
 PATTERNS = {
     "토큰 꼴": re.compile(_TOKEN),
@@ -51,27 +45,24 @@ _TAG = re.compile(r"<[^<>]*>")
 
 
 def stamp_hash(body: bytes) -> str:
-    """Return sha256 of the body without trailing space, tab, CR and LF (same formula as the skeleton stamp)."""
+    # NEVER: change this formula without making the same change in the skeleton stamp of confluence_skeleton_check.py.
     return hashlib.sha256(body.rstrip(b" \t\r\n")).hexdigest()
 
 
 def scan(text: str) -> list[str]:
-    """Return one «kind (line N)» entry per credential or patient-id shape, on the raw text and on a tag-stripped copy."""
-    flat = _TAG.sub(" ", _CELL_EDGE.sub(" = ", text))  # 줄바꿈은 그대로라 행 번호가 거의 유지된다
+    flat = _TAG.sub(" ", _CELL_EDGE.sub(" = ", text))
     found = {(kind, t.count("\n", 0, m.start()) + 1)
              for t in (text, flat) for kind, pat in PATTERNS.items() for m in pat.finditer(t)}
     return [f"{kind} ({line}행)" for kind, line in sorted(found, key=lambda x: (x[1], x[0]))]
 
 
 def deny(reason: str) -> int:
-    """Print a PreToolUse deny JSON and return exit code 1."""
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                              "permissionDecisionReason": reason}}, ensure_ascii=False))
     return 1
 
 
 def read_bytes(path: str) -> bytes:
-    """Read a file (or stdin for -), exiting 2 with one stderr line when it cannot be read."""
     if path == "-":
         return sys.stdin.buffer.read()
     try:
@@ -83,7 +74,6 @@ def read_bytes(path: str) -> bytes:
 
 
 def main() -> int:
-    """Command line entry."""
     ap = argparse.ArgumentParser(description="Confluence 게시 전 검토 관문")
     ap.add_argument("publish", help="게시하려는 본문 파일, - 면 stdin")
     ap.add_argument("--reviewed", help="검토한 본문 파일(해시 대조)")

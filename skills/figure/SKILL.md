@@ -26,8 +26,10 @@ main 은 모든 그림 요청에서 이 스킬을 부르기 전에 그릴 주체
 |--------|------|
 | figure 스킬(코드로 그리기: TikZ · matplotlib · drawio) | 이 스킬 |
 | Codex 이미지 생성 | 아래 § Codex 이미지 생성 경로 |
-| Grok | `skills/grok/SKILL.md` 의 `grok-ask.sh --image`(결과는 JPG) |
+| Grok | `skills/grok/SKILL.md` 의 `grok-ask.sh --image`(결과는 JPG, 같은 이름으로 다시 그리려면 `--overwrite`) |
 | 연결된 다른 에이전트 | ListAgents 의 다른 세션에 SendMessage 로 요청 |
+
+**학습 계획서는 예외다(2026-11-19 · 11-21 사용자 지시)**: 계획서 페이지(HTML · 구조도) 자체는 늘 이 스킬(코드)로 만들고 페이지를 누가 만들지는 묻지 않는다. 페이지 안에 들어가는 그림 두 가지, 곧 블록 예시 그림(견본 `templates/training-plan-skeleton.html` 의 `blockInfo` · `diffs` 의 `img`)과 코드 이해용 그림(`plan-code` 의 `aid.img`)만 생성형으로 만들며, Codex 이미지 생성과 Grok 가운데 누구에게 맡길지를 페이지를 쓰기 전에 묻는다. 이 답이 위 그릴 주체 답을 겸한다(mod 는 사람 글 뒤의 답이 있어야 `.html` 쓰기를 푼다). 모델 · effort 질문은 그대로 한다. 코드 이해용 그림은 수식이 들어 있어도 생성형으로 만든다(아래 표의 «수식 포함은 코드 강제» 의 예외). 생성한 그림은 § UX/UI 검수대로 열어 보고 수식 기호 · 숫자가 코드와 다르면 다시 만든다. 사용자 원문 «아티팩트 자체는 항상 figure 스킬로 생성하고 그 안에 들어가는 블록 예시나 코드 이해용 이미지만 생성형으로 그록이나 코덱스에게 요청하면 돼».
 
 | figure 유형 | 백엔드 | 비고 |
 |------------|--------|------|
@@ -39,6 +41,42 @@ main 은 모든 그림 요청에서 이 스킬을 부르기 전에 그릴 주체
 - **실행 주체·비용 게이트 (MANDATORY, 2026-11-05 사용자 결정)**: 이미지 생성은 Codex 한도를 3~5배 빠르게 소모한다. 사용자가 팝업에서 Codex 이미지 생성을 고르면(고르는 것이 비용 승인) main 이 모델·effort 를 사이클당 1회 결정 팝업으로 묻고 직접 실행한다. 서브에이전트는 실행하지 않는다(external-model-gate 훅이 막는다). 설명문에 전송 3등급의 등급 3 내용을 넣지 않는다.
 - 이미지 모델은 Codex 가 구독 전용 모델을 정하며 래퍼가 고르지 않는다. 모델·품질 정보는 https://developers.openai.com/api/docs/guides/image-generation 참고.
 - 생성 뒤에는 아래 § UX/UI 검수와 같은 절차로 그림을 연다. third-party bridge(oakplank 등)는 쓰지 않고 OpenAI 공식 `codex exec` 만 쓴다.
+
+## 그림 보관과 재사용 (학습 계획서 그림, 2026-11-21 사용자 지시)
+
+학습 계획서의 블록 예시 그림과 코드 이해용 그림은 생성형이라 만들 때마다 비용이 든다. 그래서 만들기 전에 온톨로지에서 먼저 찾고, 새로 만든 그림은 온톨로지에 보관한다(사용자 원문 «생성된 이미지는 온톨로지에 보관해놨다가 나중에 동일한 설명에 사용 가능한 건 재활용하도록»).
+
+| 무엇 | 자리 |
+|------|------|
+| 개념 그림(ReLU · AdamW · softmax 처럼 프로젝트를 가리지 않는 것) | `~/.claude/knowledge/concepts/figures/<slug>.<확장자>` |
+| 개념 그림의 노트(무엇을 보여 주는 그림인지 · 생성 문구 · 쓰인 곳) | `~/.claude/knowledge/concepts/<slug>.md` |
+| 블록 예시 그림(그 프로젝트의 구조를 그린 것)과 그 노트 | `~/.claude/knowledge/<프로젝트>/figures/<slug>.<확장자>` · `<slug>.md` |
+
+1. **찾기**: 그림을 만들기 전에 위 두 자리의 노트를 주제 낱말과 `tags` 로 Grep 한다(`graphify query` 도 된다). 후보가 있으면 그림을 Read 로 열어 보고, 지금 설명에 그대로 쓸 수 있으면 다시 만들지 않고 쓴다. 쓸지 말지는 세션이 판단하고 사용자에게 따로 묻지 않는다(2026-11-21 답 «세션이 판단해 바로 사용»). 계획서에는 그 파일을 복사해 함께 올린다(보관본은 옮기지 않는다).
+2. **만들기**: 맞는 그림이 없을 때만 생성한다(누구에게 맡길지는 § 그릴 주체 선택의 학습 계획서 예외, 모델 · effort 질문 포함).
+3. **보관**: 생성한 그림이 § UX/UI 검수를 통과하면 위 자리에 그림 파일과 노트를 쓴다. 같은 개념의 그림 노트가 이미 있으면 새 노트를 만들지 않고 그 노트에 그림 한 줄을 더한다. 폴더의 `INDEX.md` 에 노트 한 줄을 더한다.
+4. **보고**: 계획서 보고에 «재사용 N장 · 새로 만든 M장» 과 파일 목록을 싣는다. 새로 보관한 파일의 경로도 적는다.
+
+노트 꼴(`rules-lazy/knowledge-capture.md` §3 의 스키마에 `type: figure` 를 쓴다):
+
+    ---
+    title: 한 줄 제목
+    date: YYYY-MM-DD
+    type: figure
+    tags: [개념 이름, 수식 또는 모델, ...]
+    source: 생성 주체 · 모델 · effort
+    ---
+
+    무엇을 보여 주는 그림인지 1~2문장.
+
+    **그림**: figures/<slug>.<확장자>
+    **생성 문구**: 생성할 때 쓴 설명문.
+    **쓰인 곳**: 계획서 이름 · 날짜.
+
+- 자리는 이 표가 정하므로 그림 노트마다 프로젝트명 확인을 다시 받지 않는다. `<프로젝트>` 폴더 이름은 그 세션이 이미 확인받은 배정을 쓰고, 없으면 한 번만 확인받는다.
+- 그림 파일과 노트는 git 추적 대상이다(2026-11-21 답 «그림도 git 에 넣음»). 커밋은 커밋 규칙대로 사용자 지시가 있을 때 한다.
+- 야간 온톨로지 갱신은 보관한 그림도 읽어 그래프에 넣는다(제외하지 않기로 함, 2026-11-21 답).
+- 그림과 생성 문구에 전송 3등급의 등급 3 내용(환자 영상 · 개인정보 · 자격증명)을 넣지 않는다.
 
 ## 실행 흐름
 
@@ -105,6 +143,7 @@ $ARGUMENTS 를 파싱하여 아래 순서로 실행:
 - 스크립트: `docs/paper/figures/scripts/gen_{name}.py` 또는 `gen_{name}_tikz.py`(matplotlib 스크립트에 `_plt` 접미를 붙이는 관행 `gen_{name}_plt.py` 도 같은 그림 스크립트로 본다)
 - 파일명: `fig_{유형}_{설명}_{MMDD}.pdf` + 동일명 `.png`
 - 항상 PDF + PNG 동시 저장
+- 학습 계획서 HTML 은 `templates/training-plan-skeleton.html` 견본에서 시작한다(검사 도구 `templates/check_template.py`, 정본 `rules-lazy/background-task.md` § 학습 계획서 보고 양식).
 
 ## UX/UI 검수 (MANDATORY: 생성 후 자동 실행)
 
@@ -143,6 +182,7 @@ Figure 생성 완료 시 파일명·유형·스크립트 경로·용도를 저�
 - `example-skills:frontend-design` (설치되어 있을 때만): 웹 UI·HTML 아티팩트·대시보드 작업에만 쓴다. 학술 figure 는 아래 § 품질 기준(DPI·색각·흑백 인쇄)이 우선이라 미적용이다(대담한 타이포는 8pt 학술 규격과 충돌).
 - `taste-skill` (leonxlnx/taste-skill, MIT): 웹 프론트엔드 한정이고 데이터 시각화에는 쓰지 않는다. frontend-design 과 영역이 겹치므로 작업당 하나만 로드한다.
 - `drawio-skill` (Agents365-ai/drawio-skill · MIT · 2026-09-14 사용자 결정): 코드·설정 파일이나 문장 설명에서 편집 가능한 `.drawio` 구조도를 만들 때만 쓴다. 렌더링은 draw.io 데스크톱 CLI 가 있을 때만 하고 없으면 `.drawio` XML 만 낸 뒤 그 사실을 보고한다. 아이콘 스크립트는 `--embed` 로 오프라인 처리한다(기본값이 CDN 참조). 격리 검토 근거는 intent/2026-09-14-external-skill-intake.md 이다.
+- 웹 UI·HTML 아티팩트 작업에서 참고 자료나 도구를 찾을 때는 `rules-lazy/design-references.md`(designbookmark.com 색인)를 따른다. 조회는 searcher 가 격리해서 하고 도입 전에 도구 게이트를 거친다.
 - `animate-skill`(delphi-ai)은 2026-07-09 라이선스 불명으로 미적용 결정이며 재검토 없이 편입하지 않는다. 웹 스킬 2종의 격리 검토 근거는 decisions.md 2026-07-09 이다. 미설치 스킬은 `rules-lazy/tool-dependency-gate.md` 3택 게이트를 따른다.
 
 ## 수식 기반 분석 PDF (사용자가 명시 요청한 경우만)

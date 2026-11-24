@@ -1,4 +1,6 @@
-"""jira_comment.py 회귀 테스트 (가짜 전송 계층, 실제 네트워크·실제 HOME 금지)."""
+"""jira_comment.py 회귀 테스트 (가짜 전송 계층, 실제 네트워크·실제 HOME 금지).
+REF: knowledge/harness/code-history/scripts__tests__test_jira_comment.py.md
+"""
 import base64
 import copy
 import hashlib
@@ -22,7 +24,8 @@ REAL_HTTP = jc.http
 REAL_OPEN = jc._open
 ROOT = Path(__file__).resolve().parents[2]
 SAMPLE = ROOT / ".scratch/0a1b2c3d/jira/abc123_10001.adf.json"
-FAKE_CRED = "-".join(["FAKE", "CRED", "123"])   # noqa: FLY002  # 시험용 가짜 값. 리터럴 한 덩어리로 쓰면 커밋 시크릿 검사가 오탐한다(2026-10-01)
+# WHY: 시험용 가짜 값. 리터럴 한 덩어리로 쓰면 커밋 시크릿 검사가 오탐한다(2026-10-01)
+FAKE_CRED = "-".join(["FAKE", "CRED", "123"])   # noqa: FLY002
 TOKEN = FAKE_CRED
 SKILL = (
     "# x\n\n## Jira 댓글 자동 기록 (MANDATORY)\n\n댓글 형식 규칙:\n* 줄 수: 10줄 이내\n\n"
@@ -31,12 +34,10 @@ SKILL = (
 
 
 class Fake:
-    """In-memory stand-in for the Jira REST transport."""
 
     def __init__(self):
         self.calls, self.comments, self.next_id, self.tamper = [], {}, 100, None
-        self.override = {}   # method -> (status, data) forced reply
-
+        self.override = {}
     def __call__(self, method, url, body=None):
         self.calls.append((method, url, body))
         m = re.search(r"/comment/(\d+)", url)
@@ -93,7 +94,6 @@ def media_adf(text="앞 문장 하나"):
                 {"type": "media", "attrs": {"type": "file", "id": "uuid-1", "collection": ""}}]}]}]}]}
 
 
-# ---------------------------------------------------------------- markdown -> ADF
 
 def test_md_nested_lists_three_levels():
     adf = jc.md_to_adf("1. 가\n  * 나\n    * 다\n2. 라\n")
@@ -143,7 +143,6 @@ def test_sample_adf_renders_three_numbered_items():
     assert "[이미지]" in text
 
 
-# ---------------------------------------------------------------- preview
 
 def test_preview_prints_rules_verbatim(env, capsys):
     assert run("preview", "--issue", "PROJ-1", "--body-file", env.body) == 0
@@ -178,7 +177,6 @@ def test_preview_warnings(env, capsys):
     assert "본문이 비었습니다" in capsys.readouterr().out
 
 
-# ---------------------------------------------------------------- post
 
 def test_post_without_stamp_rc3_no_calls(env, capsys):
     assert run("post", "--issue", "PROJ-1", "--body-file", env.body) == 3
@@ -193,8 +191,7 @@ def test_preview_then_post_ok_and_stamp_removed(env, capsys):
     out = capsys.readouterr().out
     assert "focusedCommentId=100" in out and "/browse/PROJ-1" in out
     assert stamp_files(env) == []
-    assert run("post", "--issue", "PROJ-1", "--body-file", env.body) == 3   # no double publish
-
+    assert run("post", "--issue", "PROJ-1", "--body-file", env.body) == 3
 
 def test_post_changed_body_other_issue_and_expired(env):
     run("preview", "--issue", "PROJ-1", "--body-file", env.body)
@@ -204,7 +201,7 @@ def test_post_changed_body_other_issue_and_expired(env):
     assert env.fake.calls == []
     env.body.write_text("* 원래\n", encoding="utf-8")
     run("preview", "--issue", "PROJ-1", "--body-file", env.body)
-    for f in stamp_files(env):   # 해시 순서에 기대지 않고 모든 스탬프를 만료시킨다
+    for f in stamp_files(env):
         rec = json.loads(f.read_text())
         rec["time"] = (datetime.now() - timedelta(hours=7)).isoformat()
         f.write_text(json.dumps(rec))
@@ -226,7 +223,6 @@ def test_post_verify_mismatch_rc4(env, capsys):
     assert "게시는 완료" in capsys.readouterr().err
 
 
-# ---------------------------------------------------------------- update
 
 def test_update_body_file_notify_false_and_backup(env):
     env.fake.comments["7"] = jc.md_to_adf("* 옛 본문\n")
@@ -281,7 +277,6 @@ def test_update_requires_stamp(env):
     assert "PUT" not in env.fake.methods()
 
 
-# ---------------------------------------------------------------- get / secrets
 
 def test_get_summary_and_save(env, capsys):
     env.fake.comments["7"] = media_adf("요약 대상 문장")
@@ -292,7 +287,6 @@ def test_get_summary_and_save(env, capsys):
     assert json.loads(out_path.read_text()) == media_adf("요약 대상 문장")
 
 
-# ---------------------------------------------------------------- mine
 
 def _issues(n):
     return {"issues": [{"key": f"PROJ-{i}", "fields": {"summary": f"제목 {i}", "status": {"name": "진행 중"},
@@ -351,14 +345,12 @@ def test_mine_unexpected_exception_prints_type_name_only_rc2(env, monkeypatch, c
 
 
 def test_token_never_leaks(env, monkeypatch, capsys):
-    # 1) normal flow through the fake transport
     run("preview", "--issue", "PROJ-1", "--body-file", env.body)
     run("post", "--issue", "PROJ-1", "--body-file", env.body)
-    # 2) real http() with a failing urlopen whose body echoes the token
     monkeypatch.setattr(jc, "http", REAL_HTTP)
 
     def boom(req):
-        assert req.get_header("Authorization")   # header exists but must never be printed
+        assert req.get_header("Authorization")
         raise urllib.error.HTTPError(req.full_url, 401, "no", {}, io.BytesIO(f"bad {TOKEN}".encode()))
 
     monkeypatch.setattr(jc, "_open", boom)
@@ -373,21 +365,19 @@ def test_token_never_leaks(env, monkeypatch, capsys):
     assert "HTTP 401" in blob
 
 
-# ---------------------------------------------------------------- review hardening (2026-10-01)
 
 def test_arg_validation_rc2(env, capsys):
     bad_ids = ["7?notifyUsers=true#", "7\n", "٣", "7/x", "", "abc"]
     for bad in bad_ids:
         assert run("get", "--issue", "PROJ-1", "--comment-id", bad) == 2
         assert run("update", "--issue", "PROJ-1", "--comment-id", bad, "--body-file", env.body) == 2
-    for bad in ["nrs-1", "PROJ-1/../x", "PROJ-", "N-1", "PROJ-1\n", "PROJ-١"]:
+    for bad in ["proj-1", "PROJ-1/../x", "PROJ-", "N-1", "PROJ-1\n", "PROJ-١"]:
         assert run("get", "--issue", bad, "--comment-id", "7") == 2
         assert run("preview", "--issue", bad, "--body-file", env.body) == 2
     assert env.fake.calls == [] and stamp_files(env) == []
 
 
 class _Resp:
-    """Minimal urlopen response stand-in."""
 
     def __init__(self, status=200, payload=b"{}", exc=None):
         self.status, self.payload, self.exc = status, payload, exc
@@ -744,13 +734,12 @@ def test_loose_token_file_warns_once(env, capsys):
     assert capsys.readouterr().err == ""
 
 
-# ---------------------------------------------------------------- 2026-10-01 감사 수정 (D4: 게시 승인은 일회 소모)
 
 def test_stamp_bound_to_site_and_preview_shows_destination(env, monkeypatch, capsys):
     run("preview", "--issue", "PROJ-1", "--body-file", env.body)
     assert "your-company-prod.atlassian.net" in capsys.readouterr().out
     monkeypatch.setenv("JIRA_SITE", "https://other.atlassian.net")
-    assert run("post", "--issue", "PROJ-1", "--body-file", env.body) == 3   # 미리보기 때와 다른 사이트
+    assert run("post", "--issue", "PROJ-1", "--body-file", env.body) == 3
     assert env.fake.calls == []
 
 
@@ -761,7 +750,7 @@ def test_concurrent_post_only_one_publishes(env, monkeypatch):
     def racing(method, url, body=None):
         if method == "POST" and not seen:
             seen.append(1)
-            monkeypatch.setattr(jc, "check_stamp", lambda *a, **k: None)   # 둘째 호출도 확인은 통과한 상황
+            monkeypatch.setattr(jc, "check_stamp", lambda *a, **k: None)
             seen.append(run("post", "--issue", "PROJ-1", "--body-file", env.body))
         return env.fake(method, url, body)
 
@@ -791,7 +780,6 @@ def test_post_4xx_restores_stamp_for_retry(env):
 
 @pytest.mark.parametrize("code", [408, 429])
 def test_post_408_429_consumes_stamp_as_unknown_outcome(env, capsys, code):
-    """2026-10-01 P6 검수: 408·429 는 4xx 여도 반영 여부 불명 — 스탬프를 되돌리면 재실행이 중복 게시한다."""
     run("preview", "--issue", "PROJ-1", "--body-file", env.body)
     env.fake.override["POST"] = (code, {"_raw": "slow"})
     assert run("post", "--issue", "PROJ-1", "--body-file", env.body) == 5
@@ -801,7 +789,6 @@ def test_post_408_429_consumes_stamp_as_unknown_outcome(env, capsys, code):
 
 
 def test_prune_old_removes_stale_claimed_leftovers(env):
-    """2026-10-01 P6 검수: 게시 중 죽어 남은 `.json.claimed` 도 7일 지나면 지운다(최근 것은 진행 중일 수 있어 둔다)."""
     d = env.home / ".claude/_audit/jira-preview"
     d.mkdir(parents=True)
     now = datetime.now().timestamp()
@@ -816,12 +803,11 @@ def test_prune_old_removes_stale_claimed_leftovers(env):
 def test_missing_credentials_restores_stamp(env):
     run("preview", "--issue", "PROJ-1", "--body-file", env.body)
     (env.home / ".atlassian_token").unlink()
-    jc.http = REAL_HTTP   # 실제 자격증명 읽기 경로(네트워크 전에 실패)
+    jc.http = REAL_HTTP
     assert run("post", "--issue", "PROJ-1", "--body-file", env.body) == 5
     assert len(stamp_files(env)) == 1
 
 
-# ---------------------------------------------------------------- 그림 넣기 (--figures, 2026-10-13)
 
 SECRET_LOC = "https://api.media.atlassian.com/file/{u}/binary?token=SUPERSECRETSIG&client=abc"
 
@@ -855,7 +841,6 @@ def fig_adf(old_media=None):
 
 
 class FigFake(Fake):
-    """Fake that also answers the issue attachment list."""
 
     def __init__(self):
         super().__init__()
@@ -869,7 +854,6 @@ class FigFake(Fake):
 
 
 class RawFake:
-    """Stand-in for http_raw: numbers new attachments from 500 and answers the content lookup with a signed 303."""
 
     def __init__(self):
         self.calls, self.next_att, self.upload_reply, self.on_call = [], 500, None, None
@@ -893,7 +877,7 @@ def fig(env, monkeypatch):
     fake, raw = FigFake(), RawFake()
     monkeypatch.setattr(jc, "http", fake)
     monkeypatch.setattr(jc, "http_raw", raw)
-    d = env.home / ".scratch" / "figs"   # 목록은 .scratch 아래에만 둘 수 있다
+    d = env.home / ".scratch" / "figs"
     d.mkdir(parents=True)
     (d / "a.png").write_bytes(png_bytes(4, 3, b"AAAA-unique-bytes"))
     (d / "b.png").write_bytes(png_bytes(8, 6, b"BBBB"))
@@ -912,7 +896,6 @@ def fupdate(fig):
 
 
 def upload_name(fig, name):
-    """Return the content-bound attachment name the tool uploads for fig/<name>."""
     return f"{name[:-4]}-{hashlib.sha256((fig.dir / name).read_bytes()).hexdigest()[:12]}.png"
 
 
@@ -938,14 +921,14 @@ def test_figures_preview_marks_reuse_with_newest_id(fig, capsys):
     assert fpreview(fig) == 0
     out = capsys.readouterr().out
     assert "기존 첨부 901 재사용" in out and "기존 첨부 900" not in out
-    assert out.count("새로 올림") == 1   # b 는 크기가 달라 재사용 대상이 아니다
+    assert out.count("새로 올림") == 1
     assert f"올라갈 이름 {ua}" in out and f"올라갈 이름 {ub}" in out
     assert re.fullmatch(r"a-[0-9a-f]{12}\.png", ua)
 
 
 def test_figures_same_name_and_size_but_other_hash_is_not_reused(fig, capsys):
     size = len((fig.dir / "a.png").read_bytes())
-    fig.fake.attachments = [{"id": "950", "filename": "a.png", "size": size},   # 옛 그림: 원래 이름·같은 크기
+    fig.fake.attachments = [{"id": "950", "filename": "a.png", "size": size},
                             {"id": "951", "filename": "a-000000000000.png", "size": size}]
     assert fpreview(fig) == 0
     assert "재사용" not in capsys.readouterr().out.split("== 그림 계획 ==")[1]
@@ -953,11 +936,10 @@ def test_figures_same_name_and_size_but_other_hash_is_not_reused(fig, capsys):
     posts = [c for c in fig.raw.calls if c.method == "POST"]
     assert len(posts) == 2 and f'filename="{upload_name(fig, "a.png")}"'.encode() in posts[0].data
     media = fig.fake.comments["7"]["content"][0]["content"][0]["content"][1]["content"][0]["attrs"]
-    assert media["alt"] == "a.png" and media["id"] == uuid_for(500)   # 새로 올린 500, 옛 첨부 950 이 아니다
-
+    assert media["alt"] == "a.png" and media["id"] == uuid_for(500)
 
 def test_figures_argument_rules(fig, env):
-    assert run("preview", "--issue", "PROJ-1", "--figures", fig.lst) == 2   # --comment-id 필요
+    assert run("preview", "--issue", "PROJ-1", "--figures", fig.lst) == 2
     assert run("preview", "--issue", "PROJ-1", "--comment-id", 7, "--figures", fig.lst, "--body-file", env.body) == 2
     assert run("preview", "--issue", "PROJ-1", "--comment-id", 7) == 2
     bad = fig.dir / "bad.json"
@@ -971,7 +953,7 @@ def test_figures_argument_rules(fig, env):
 
 def test_figures_anchor_zero_multiple_or_same_paragraph_rc2(fig, capsys):
     for items in ([{"anchor": "없는 글귀", "file": "a.png"}],
-                  [{"anchor": "[그림", "file": "a.png"}],   # 문단 둘에 일치
+                  [{"anchor": "[그림", "file": "a.png"}],
                   [{"anchor": "[그림 1]", "file": "a.png"}, {"anchor": "[그림 1] 첫째", "file": "b.png"}]):
         fig.lst.write_text(json.dumps(items))
         assert fpreview(fig) == 2 and fupdate(fig) == 2
@@ -1023,7 +1005,7 @@ def test_figures_files_outside_list_folder_rejected(fig, capsys):
     other.mkdir()
     (other / "c.png").write_bytes(png_bytes())
     (fig.env.home / "up.png").write_bytes(png_bytes())
-    (fig.dir / "linkdir").symlink_to(other)   # 폴더 안의 폴더 링크가 밖을 가리킨다
+    (fig.dir / "linkdir").symlink_to(other)
     for f in (str(other / "c.png"), "../up.png", "sub/../../up.png", "linkdir/c.png"):
         fig.lst.write_text(json.dumps([{"anchor": "[그림 1]", "file": f}]))
         assert fpreview(fig) == 2 and fupdate(fig) == 2
@@ -1049,7 +1031,7 @@ def test_figures_anchor_parent_must_be_doc_or_list_item(fig, capsys):
     assert fpreview(fig) == 2 and fupdate(fig) == 2
     assert "이 자리에는 그림을 넣을 수 없습니다" in capsys.readouterr().err
     assert fig.raw.calls == [] and stamp_files(fig.env) == []
-    fig.lst.write_text(json.dumps([{"anchor": "끝 문단", "file": "a.png"}]))   # 최상위 문단은 허용
+    fig.lst.write_text(json.dumps([{"anchor": "끝 문단", "file": "a.png"}]))
     assert fpreview(fig) == 0
 
 
@@ -1062,13 +1044,13 @@ def test_figures_png_dimension_limit(fig, monkeypatch):
         assert fpreview(fig) == 2
     fig.lst.write_text(json.dumps([{"anchor": "[그림 1]", "file": "max.png"}]))
     assert fpreview(fig) == 0
-    monkeypatch.setattr(jc, "MAX_FIG_DIM", 3)   # a.png 는 4×3
+    monkeypatch.setattr(jc, "MAX_FIG_DIM", 3)
     fig.lst.write_text(json.dumps([{"anchor": "[그림 1]", "file": "a.png"}]))
     assert fpreview(fig) == 2
 
 
 def test_figures_upload_name_too_long_rc2(fig):
-    long = "x" * 90 + ".png"   # 원래 이름은 통과하지만 «-해시12자» 가 붙으면 100자를 넘는다
+    long = "x" * 90 + ".png"
     (fig.dir / long).write_bytes(png_bytes())
     fig.lst.write_text(json.dumps([{"anchor": "[그림 1]", "file": long}]))
     assert fpreview(fig) == 2
@@ -1077,7 +1059,7 @@ def test_figures_upload_name_too_long_rc2(fig):
 def test_figures_same_size_content_change_after_preview_rc3(fig):
     assert fpreview(fig) == 0
     old = (fig.dir / "a.png").read_bytes()
-    (fig.dir / "a.png").write_bytes(old.replace(b"AAAA", b"ZZZZ"))   # 크기·가로세로·이름 그대로 바이트만 바뀜
+    (fig.dir / "a.png").write_bytes(old.replace(b"AAAA", b"ZZZZ"))
     assert len((fig.dir / "a.png").read_bytes()) == len(old) and (fig.dir / "a.png").read_bytes() != old
     assert fupdate(fig) == 3
     assert fig.raw.calls == [] and "PUT" not in fig.fake.methods()
@@ -1096,7 +1078,7 @@ def test_figures_comment_changed_during_upload_rc3_sends_nothing(fig, capsys):
     assert fupdate(fig) == 3
     assert "업로드하는 동안 댓글이 바뀌었습니다" in capsys.readouterr().err
     assert "PUT" not in fig.fake.methods() and backups_of(fig) == []
-    assert len(stamp_files(fig.env)) == 1   # 스탬프는 되돌려진다
+    assert len(stamp_files(fig.env)) == 1
     assert fig.fake.comments["7"]["content"][1]["content"][0]["text"] == "업로드 중에 남이 고침"
 
 
@@ -1115,7 +1097,7 @@ def test_figures_put_failures_restore_or_consume_stamp(fig, capsys, reply, kept)
     err = capsys.readouterr().err
     assert len(_no_backup(stamp_files(fig.env))) == kept
     assert fig.fake.methods().count("PUT") == 1
-    assert ("게시 여부 불명" in err) == (not kept)   # 4xx 만 «미반영 확정», 나머지는 불명이라 스탬프를 소모한다
+    assert ("게시 여부 불명" in err) == (not kept)
 
 
 def test_figures_backup_write_failure_restores_stamp_and_sends_no_put(fig, monkeypatch):
@@ -1202,10 +1184,10 @@ def test_figures_update_uploads_inserts_and_verifies(fig, capsys):
     stripped = copy.deepcopy(new)
     for it in stripped["content"][0]["content"]:
         it["content"] = [c for c in it["content"] if c["type"] != "mediaSingle"]
-    assert stripped == orig   # 그림 외에는 한 글자도 바뀌지 않았다
+    assert stripped == orig
     assert f"그림 1: 첨부 500 · 미디어 {uuid_for(500)}" in cap.out and "focusedCommentId=7" in cap.out
     assert [f for f in stamp_files(fig.env) if not f.name.startswith("backup-")] == []
-    assert fupdate(fig) == 2   # 같은 자리에 이미 그림이 있어 다시 넣지 않는다
+    assert fupdate(fig) == 2
 
 
 def test_figures_reuse_skips_upload(fig, capsys):
@@ -1228,14 +1210,14 @@ def test_figures_uuid_failure_sends_nothing_and_restores_stamp(fig, capsys):
     assert "PUT" not in fig.fake.methods() and fig.fake.comments["7"] == fig_adf() and backups_of(fig) == []
     assert len(stamp_files(fig.env)) == 1
     fig.raw.location = SECRET_LOC.format
-    assert fupdate(fig) == 0   # 되돌려진 스탬프로 재시도
+    assert fupdate(fig) == 0
 
 
 def test_figures_uuid_lookup_non_redirect_status_rc5(fig, monkeypatch):
     assert fpreview(fig) == 0
     monkeypatch.setattr(jc, "http_raw", lambda m, u, *a, **k: (200, {"location": SECRET_LOC.format(u=uuid_for(1))}, {})
                         if m == "GET" else (200, {}, [{"id": "500"}]))
-    assert fupdate(fig) == 5   # 리다이렉트가 아니면 Location 을 읽지 않는다
+    assert fupdate(fig) == 5
     assert "PUT" not in fig.fake.methods() and len(stamp_files(fig.env)) == 1
 
 
@@ -1273,10 +1255,10 @@ def test_figures_exception_before_response_restores_stamp(fig, monkeypatch):
 def test_figures_precheck_blocks_duplicate_or_colliding_uuid(fig):
     assert fpreview(fig) == 0
     fig.raw.location = lambda **kw: SECRET_LOC.format(u="11111111-0000-4000-8000-000000000000")
-    assert fupdate(fig) == 2   # 두 그림이 같은 UUID
+    assert fupdate(fig) == 2
     assert "PUT" not in fig.fake.methods() and len(stamp_files(fig.env)) == 1 and backups_of(fig) == []
     fig.raw.location, fig.raw.next_att = SECRET_LOC.format, 500
-    fig.fake.comments["7"] = fig_adf(old_media=uuid_for(500))   # 새 UUID 가 기존 그림과 겹침
+    fig.fake.comments["7"] = fig_adf(old_media=uuid_for(500))
     assert fpreview(fig) == 0
     assert fupdate(fig) == 2
     assert "PUT" not in fig.fake.methods()
@@ -1293,7 +1275,7 @@ def test_figures_check_result_rejects_text_or_card_change():
     nocard["content"][0]["content"][1]["content"][0]["content"].pop()
     with pytest.raises(jc.Fail):
         jc.check_figure_result(cur, nocard, [])
-    with pytest.raises(jc.Fail):   # 넣었다고 한 UUID 가 문서에 없다
+    with pytest.raises(jc.Fail):
         jc.check_figure_result(cur, cur, [uuid_for(1)])
 
 
@@ -1317,7 +1299,6 @@ def test_figures_verify_mismatch_rc4(fig, capsys):
 
 
 class _RawResp:
-    """urlopen response stand-in with headers."""
 
     def __init__(self, status=200, headers=None, payload=b"{}", exc=None):
         self.status, self.headers, self.payload, self.exc = status, headers or {}, payload, exc
@@ -1402,7 +1383,6 @@ def test_http_raw_does_not_follow_redirect_to_other_host(env, monkeypatch):
     assert len(hits["a"]) == 1 and hits["a"][0].startswith("Basic ") and hits["b"] == []
 
 
-# ---------------------------------------------------------------- 이슈 파일 첨부 (attach, 2026-10-14)
 
 @pytest.fixture
 def att(env, monkeypatch):
@@ -1410,7 +1390,7 @@ def att(env, monkeypatch):
     monkeypatch.setattr(jc, "http", fake)
     monkeypatch.setattr(jc, "http_raw", raw)
 
-    def land(call):   # 업로드가 성공하면 이슈 첨부 목록에 «올라간 이름+크기» 가 생긴다(되읽기 대조용)
+    def land(call):
         if call.method == "POST" and not raw.upload_reply and not raw.lose:
             m = re.search(rb'filename="([^"]+)"', call.data)
             content = call.data.split(b"\r\n\r\n", 1)[1].rsplit(b"\r\n--", 1)[0]
@@ -1450,7 +1430,7 @@ def test_attach_preview_is_read_only_and_shows_plan(att, capsys):
     assert f"올라갈 이름 {aname(att, 'a.csv')}" in out and out.count("새로 올림") == 2
     assert "첫 줄: patient_id,name,score" in out and "줄 2개 · 첫 줄 열 3개" in out
     assert "형태: 객체 · 키 앞 10개: k" in out
-    assert "! 환자 식별 정보로 보이는 열: patient_id, name" in out   # score 는 낱말 표에 없다
+    assert "! 환자 식별 정보로 보이는 열: patient_id, name" in out
 
 
 def test_attach_preview_first_line_is_escaped_truncated_and_bom_skipped(att, capsys):
@@ -1459,7 +1439,7 @@ def test_attach_preview_first_line_is_escaped_truncated_and_bom_skipped(att, cap
     assert apreview(att) == 0
     line = next(x for x in capsys.readouterr().out.splitlines() if "첫 줄:" in x)
     assert line.startswith("    첫 줄: id\\x1b[31m,yyy") and "second" not in line and "﻿" not in line and "\x1b" not in line
-    assert line.count("y") == jc.PREVIEW_CHARS - len("id\x1b[31m,")   # 120자에서 자른다(esc 는 자른 뒤에 한다)
+    assert line.count("y") == jc.PREVIEW_CHARS - len("id\x1b[31m,")
 
 
 def test_attach_preview_marks_reuse(att, capsys):
@@ -1592,8 +1572,8 @@ def test_attach_uploads_with_headers_multipart_and_readback(att, capsys):
     assert f"첨부 500 · {aname(att, 'a.csv')} · 새로" in out and f"첨부 501 · {aname(att, 'r.json')} · 새로" in out
     assert out.rstrip().endswith("https://your-company-prod.atlassian.net/browse/PROJ-1")
     assert stamp_files(att.env) == []
-    assert att.fake.methods().count("GET") == 3   # 미리보기 1 + 올리기 전 1 + 되읽기 1
-    assert aattach(att) == 3   # 스탬프는 한 번만 쓴다
+    assert att.fake.methods().count("GET") == 3
+    assert aattach(att) == 3
 
 
 def test_attach_reuse_skips_upload(att, capsys):
@@ -1605,7 +1585,7 @@ def test_attach_reuse_skips_upload(att, capsys):
     posts = [c for c in att.raw.calls if c.method == "POST"]
     assert len(posts) == 1 and f'filename="{aname(att, "r.json")}"'.encode() in posts[0].data
     assert f"첨부 900 · {aname(att, 'a.csv')} · 재사용" in capsys.readouterr().out
-    att.lst.write_text(json.dumps([{"file": "a.csv"}]))   # 전부 재사용이면 업로드 요청이 아예 없다
+    att.lst.write_text(json.dumps([{"file": "a.csv"}]))
     n = len(att.raw.calls)
     assert apreview(att) == 0 and aattach(att) == 0 and len(att.raw.calls) == n
 
@@ -1642,7 +1622,7 @@ def test_attach_exception_before_response_restores_stamp(att, monkeypatch):
 def test_attach_readback_missing_rc4(att, capsys):
     assert apreview(att) == 0
     capsys.readouterr()
-    att.raw.lose = True   # 업로드는 성공 응답이지만 첨부 목록에는 나타나지 않는다
+    att.raw.lose = True
     assert aattach(att) == 4
     err = capsys.readouterr().err
     assert "첨부는 요청했으나 되읽기에서 찾지 못했습니다" in err and aname(att, "a.csv") in err
@@ -1666,7 +1646,6 @@ def test_attach_never_prints_credentials(att, capsys):
 
 
 def shown_lines(capsys):
-    """Return the indented preview lines under the attach plan."""
     return [x.strip() for x in capsys.readouterr().out.split("== 첨부 계획 ==")[1].splitlines() if x.startswith("    ")]
 
 
@@ -1677,7 +1656,7 @@ def one_file_list(att, name, content):
 
 def test_list_must_live_under_scratch_for_attach_and_figures(att):
     att.fake.comments["7"] = fig_adf()
-    plain = att.env.home / "patients"   # .scratch 가 없는 폴더: 민감 자료 폴더에 둔 목록을 흉내
+    plain = att.env.home / "patients"
     plain.mkdir()
     (plain / "a.csv").write_text("x\n")
     (plain / "a.png").write_bytes(png_bytes())
@@ -1688,7 +1667,7 @@ def test_list_must_live_under_scratch_for_attach_and_figures(att):
     assert run("preview", "--issue", "PROJ-1", "--comment-id", 7, "--figures", plain / "f.json") == 2
     assert run("update", "--issue", "PROJ-1", "--comment-id", 7, "--figures", plain / "f.json") == 2
     assert stamp_files(att.env) == [] and att.raw.calls == []
-    deep = att.env.home / ".scratch" / "x" / "y"   # .scratch 아래면 깊이는 상관없다
+    deep = att.env.home / ".scratch" / "x" / "y"
     deep.mkdir(parents=True)
     (deep / "a.csv").write_text("x\n")
     (deep / "l.json").write_text(json.dumps([{"file": "a.csv"}]))
@@ -1711,19 +1690,19 @@ def test_attach_preview_skips_leading_blank_lines(att, capsys):
 
 
 def test_attach_preview_counts_lines_and_columns(att, capsys):
-    one_file_list(att, "c.csv", "a,b,c,d\n1,2,3,4\n5,6,7,8")   # 마지막 줄에 줄바꿈 없음
+    one_file_list(att, "c.csv", "a,b,c,d\n1,2,3,4\n5,6,7,8")
     assert apreview(att) == 0
     assert "줄 3개 · 첫 줄 열 4개" in shown_lines(capsys)
     one_file_list(att, "d.tsv", "a\tb\n1\t2\n")
     assert apreview(att) == 0
     assert "줄 2개 · 첫 줄 열 2개" in shown_lines(capsys)
-    one_file_list(att, "t.txt", "a,b,c\n")   # txt 는 줄 수·열 수를 보이지 않는다
+    one_file_list(att, "t.txt", "a,b,c\n")
     assert apreview(att) == 0
     assert shown_lines(capsys) == ["첫 줄: a,b,c"]
 
 
 def test_attach_preview_only_scans_first_64kib(att, capsys):
-    one_file_list(att, "big.csv", "\n" * (jc.PREVIEW_SCAN + 10) + "late,line\n")   # 앞 64KiB 가 전부 빈 줄이면 첫 줄은 비어 보인다
+    one_file_list(att, "big.csv", "\n" * (jc.PREVIEW_SCAN + 10) + "late,line\n")
     assert apreview(att) == 0
     assert shown_lines(capsys)[0] == "첫 줄:"
 
@@ -1752,7 +1731,7 @@ def test_attach_preview_warns_on_phi_looking_words(att, capsys, name, content, h
     one_file_list(att, name, content)
     assert apreview(att) == 0
     assert f"! 환자 식별 정보로 보이는 열: {hits}" in shown_lines(capsys)
-    assert att.raw.calls == []   # 경고만 하고 막지는 않는다
+    assert att.raw.calls == []
     assert len(stamp_files(att.env)) == 1
     assert aattach(att) == 0
 
@@ -1785,7 +1764,7 @@ def test_attach_total_size_limit(att, monkeypatch, capsys):
     (att.dir / "h1.csv").write_text("a" * 50)
     (att.dir / "h2.csv").write_text("b" * 50)
     (att.dir / "h3.csv").write_text("c")
-    att.lst.write_text(json.dumps([{"file": "h1.csv"}, {"file": "h2.csv"}]))   # 합계가 정확히 상한이면 허용
+    att.lst.write_text(json.dumps([{"file": "h1.csv"}, {"file": "h2.csv"}]))
     assert apreview(att) == 0
     att.lst.write_text(json.dumps([{"file": "h1.csv"}, {"file": "h2.csv"}, {"file": "h3.csv"}]))
     capsys.readouterr()
@@ -1807,10 +1786,10 @@ def test_attach_exactly_ten_files_allowed_eleven_rejected(att):
 def test_attach_duplicate_names_are_case_insensitive(att):
     (att.dir / "sub").mkdir()
     (att.dir / "x.csv").write_text("same\n")
-    (att.dir / "sub/x.CSV").write_text("same\n")   # 내용까지 같아 올라갈 이름도 같다
+    (att.dir / "sub/x.CSV").write_text("same\n")
     att.lst.write_text(json.dumps([{"file": "x.csv"}, {"file": "sub/x.CSV"}]))
     assert apreview(att) == 2 and aattach(att) == 2
-    (att.dir / "sub/x.CSV").write_text("other\n")   # 내용이 달라도 대소문자만 다른 같은 이름이면 거부
+    (att.dir / "sub/x.CSV").write_text("other\n")
     assert apreview(att) == 2 and att.raw.calls == []
 
 
@@ -1826,12 +1805,12 @@ def test_attach_second_upload_4xx_keeps_first_and_reuses_it_on_retry(att):
             att.raw.land(c)
     att.raw.land, att.raw.on_call = att.raw.on_call, second_fails
     assert aattach(att) == 5
-    assert len(stamp_files(att.env)) == 1   # 4xx 라 스탬프를 되돌렸다
-    assert [x["filename"] for x in att.fake.attachments] == [aname(att, "a.csv")]   # 첫 파일은 올라간 상태
+    assert len(stamp_files(att.env)) == 1
+    assert [x["filename"] for x in att.fake.attachments] == [aname(att, "a.csv")]
     att.raw.upload_reply, before = None, len(att.raw.calls)
     assert aattach(att) == 0
     posts = att.raw.calls[before:]
-    assert len(posts) == 1 and f'filename="{aname(att, "r.json")}"'.encode() in posts[0].data   # 첫 파일은 재사용
+    assert len(posts) == 1 and f'filename="{aname(att, "r.json")}"'.encode() in posts[0].data
 
 
 def test_multipart_file_default_stays_png_and_accepts_other_type():
@@ -1839,7 +1818,6 @@ def test_multipart_file_default_stays_png_and_accepts_other_type():
     assert b"Content-Type: text/csv\r\n\r\n" in jc.multipart_file("a.csv", b"x", "text/csv")[1]
 
 
-# ---------------------------------------------------------------- 그림 교체 + 글자 치환 (2026-10-14)
 
 def media_block(mid, alt):
     return {"type": "mediaSingle", "attrs": {"layout": "center"}, "content": [
@@ -1847,7 +1825,6 @@ def media_block(mid, alt):
 
 
 def rep_adf(first=True, second=True):
-    """fig_adf 에 [그림 1]·[그림 2] 문단 바로 뒤 옛 그림(old-1·old-2)을 붙인 댓글."""
     adf = fig_adf()
     items = adf["content"][0]["content"]
     if second:
@@ -1891,7 +1868,7 @@ def test_replace_two_figures_swaps_old_ids_and_puts_new_uuids(rep, capsys):
     assert "old-1" not in json.dumps(new) and "old-2" not in json.dumps(new)
     assert jc.fingerprint(new)[:2] == jc.fingerprint(orig)[:2]
     assert new["content"][0]["content"][0]["content"][1]["content"][0]["attrs"]["alt"] == "a.png"
-    assert json.loads(backups_of(rep)[0].read_text()) == orig   # 옛 첨부는 지우지 않는다(DELETE 호출 없음)
+    assert json.loads(backups_of(rep)[0].read_text()) == orig
     assert "DELETE" not in rep.fake.methods() and all(c.method in ("GET", "POST") for c in rep.raw.calls)
 
 
@@ -1903,12 +1880,12 @@ def test_replace_and_add_mixed(rep):
     new = rep.fake.comments["7"]
     assert jc.fingerprint(new)[2] == sorted([uuid_for(500), uuid_for(501)])
     assert [c["type"] for c in new["content"][0]["content"][1]["content"]] == ["paragraph", "mediaSingle", "bulletList"]
-    assert len(new["content"][0]["content"][0]["content"]) == 2   # 교체는 개수를 늘리지 않는다
+    assert len(new["content"][0]["content"][0]["content"]) == 2
 
 
 def test_replace_with_patches_finds_anchor_in_patched_text(rep, capsys):
     rep.pat.write_text(json.dumps([{"anchor": "[그림 1] 첫째 설명", "new": "[도표 1] 새 설명"}]))
-    rep.lst.write_text(json.dumps([{"anchor": "[도표 1]", "file": "a.png", "replace": True}]))   # 치환 뒤 글로 찾는다
+    rep.lst.write_text(json.dumps([{"anchor": "[도표 1]", "file": "a.png", "replace": True}]))
     assert rpreview(rep, True) == 0
     out = capsys.readouterr().out
     assert "- 전: [그림 1] 첫째 설명" in out and "+ 후: [도표 1] 새 설명" in out and "치환 1곳" in out
@@ -1950,7 +1927,7 @@ def test_combined_patch_list_change_after_preview_rc3(rep):
 
 def test_combined_stamp_binds_patch_list_and_replace_flag(rep):
     assert rpreview(rep, True) == 0
-    assert rupdate(rep, False) == 3   # 치환 목록이 스탬프에 묶여 있다
+    assert rupdate(rep, False) == 3
     assert rupdate(rep, True) == 0
     assert jc.fingerprint(rep.fake.comments["7"])[2] == sorted([uuid_for(500), uuid_for(501)])
 
@@ -1959,7 +1936,7 @@ def test_replace_flag_is_part_of_stamp_hash():
     plan = [{"anchor": "a", "name": "a.png", "size": 1, "sha256": "x", "width": 1, "height": 1, "replace": False}]
     flipped = [{**plan[0], "replace": True}]
     assert jc.figures_stamp_hash("PROJ-1", "7", plan) != jc.figures_stamp_hash("PROJ-1", "7", flipped)
-    assert jc.figures_stamp_hash("PROJ-1", "7", plan) == jc.figures_stamp_hash("PROJ-1", "7", plan, [])   # 치환 없으면 옛 입력 그대로
+    assert jc.figures_stamp_hash("PROJ-1", "7", plan) == jc.figures_stamp_hash("PROJ-1", "7", plan, [])
 
 
 def test_combined_figure_file_change_after_preview_rc3(rep):
@@ -1996,19 +1973,19 @@ def test_combined_insert_step_violations_block_put(rep, monkeypatch, mutation):
     assert rpreview(rep, True) == 0
     assert rupdate(rep, True) == 2
     assert "PUT" not in rep.fake.methods() and backups_of(rep) == []
-    assert len(stamp_files(rep.env)) == 1   # 스탬프는 되돌려진다
+    assert len(stamp_files(rep.env)) == 1
 
 
 def test_check_figure_result_replace_rules():
     cur = rep_adf()
     base = copy.deepcopy(cur)
     new = jc.insert_figures(base, [{"anchor": "[그림 1]", "replace": True, "width": 1, "height": 1, "name": "n.png"}], [uuid_for(5)])
-    jc.check_figure_result(cur, new, [uuid_for(5)], base, ["old-1"])   # 정상
-    with pytest.raises(jc.Fail):   # 옛 id 를 교체됐다고 신고하지 않으면 id 합이 어긋난다
+    jc.check_figure_result(cur, new, [uuid_for(5)], base, ["old-1"])
+    with pytest.raises(jc.Fail):
         jc.check_figure_result(cur, new, [uuid_for(5)], base, [])
-    with pytest.raises(jc.Fail):   # 새 UUID 가 남는 옛 그림(old-2)과 겹친다
+    with pytest.raises(jc.Fail):
         jc.check_figure_result(cur, new, ["old-2"], base, ["old-1"])
-    with pytest.raises(jc.Fail):   # 교체할 옛 id 가 댓글에 없다
+    with pytest.raises(jc.Fail):
         jc.check_figure_result(cur, new, [uuid_for(5)], base, ["nope"])
 
 
@@ -2018,7 +1995,7 @@ def test_replace_swaps_whole_block_and_preserves_neighbors():
     new = jc.insert_figures(cur, [e], [uuid_for(5)])
     kids = new["content"][0]["content"][0]["content"]
     assert [c["type"] for c in kids] == ["paragraph", "mediaSingle"] and kids[1]["content"][0]["attrs"]["id"] == uuid_for(5)
-    assert cur == rep_adf()   # 입력은 건드리지 않는다
+    assert cur == rep_adf()
 
 
 def test_body_file_with_figures_or_patches_still_rc2(rep, env):
@@ -2028,17 +2005,16 @@ def test_body_file_with_figures_or_patches_still_rc2(rep, env):
     assert run("update", "--issue", "PROJ-1", "--comment-id", 7, "--body-file", env.body, "--patches", rep.pat) == 2
     assert run("update", "--issue", "PROJ-1", "--comment-id", 7) == 2
     assert run("preview", "--issue", "PROJ-1", "--comment-id", 7, "--attach", rep.lst, "--patches", rep.pat) == 2
-    assert run("preview", "--issue", "PROJ-1", "--patches", rep.pat, "--figures", rep.lst) == 2   # --comment-id 필요
+    assert run("preview", "--issue", "PROJ-1", "--patches", rep.pat, "--figures", rep.lst) == 2
     assert stamp_files(env) == [] and rep.raw.calls == [] and "PUT" not in rep.fake.methods()
 
 
 def test_patches_only_path_still_keeps_media_ids(rep):
     assert run("preview", "--issue", "PROJ-1", "--comment-id", 7, "--patches", rep.pat) == 0
     assert run("update", "--issue", "PROJ-1", "--comment-id", 7, "--patches", rep.pat) == 0
-    assert jc.fingerprint(rep.fake.comments["7"])[2] == ["old-1", "old-2"]   # 글자만 경로는 그림 id 집합 불변
+    assert jc.fingerprint(rep.fake.comments["7"])[2] == ["old-1", "old-2"]
 
 
-# ---- 보강 R1~R5: 그림만 바꾼다(캡션·배치 유지), 모양 검사, 빈 문자열 인자
 
 def cap_block(mid, alt, caption="옛 설명 글", layout="wide", width=80):
     return {"type": "mediaSingle", "attrs": {"layout": layout, "width": width}, "content": [
@@ -2067,7 +2043,7 @@ def test_replace_keeps_caption_and_layout_and_shows_them(rep, capsys):
 
 def test_replace_caption_can_be_patched_in_same_run(rep):
     set_first_block(rep, cap_block("old-1", "old1.png"))
-    rep.pat.write_text(json.dumps([{"anchor": "옛 설명", "new": "새 설명"}]))   # 치환은 캡션 글에도 닿는다
+    rep.pat.write_text(json.dumps([{"anchor": "옛 설명", "new": "새 설명"}]))
     assert rpreview(rep, True) == 0 and rupdate(rep, True) == 0
     blk = rep.fake.comments["7"]["content"][0]["content"][0]["content"][1]
     assert blk["content"][1]["content"][0]["text"] == "새 설명 글" and blk["attrs"]["layout"] == "wide"
@@ -2090,19 +2066,19 @@ def test_replace_target_media_group_rc2(rep, capsys):
 
 def test_replace_new_uuid_equal_to_remaining_old_id_blocks_put_after_upload(rep):
     adf = rep_adf()
-    adf["content"][0]["content"][1]["content"][1] = media_block(uuid_for(500), "keep.png")   # 남는 옛 그림이 첫 업로드 UUID 와 같다
+    adf["content"][0]["content"][1]["content"][1] = media_block(uuid_for(500), "keep.png")
     rep.fake.comments["7"] = adf
     rep.lst.write_text(json.dumps([{"anchor": "[그림 1]", "file": "a.png", "replace": True}]))
     assert rpreview(rep) == 0
     assert rupdate(rep) == 2
-    assert next(c.method for c in rep.raw.calls) == "POST"   # 업로드까지는 갔다
+    assert next(c.method for c in rep.raw.calls) == "POST"
     assert "PUT" not in rep.fake.methods() and backups_of(rep) == [] and len(stamp_files(rep.env)) == 1
     assert rep.fake.comments["7"] == adf
 
 
 def test_replace_one_of_two_identical_old_ids_removes_only_one(rep):
     adf = rep_adf()
-    adf["content"][0]["content"][1]["content"][1] = media_block("old-1", "old1b.png")   # 같은 옛 id 가 댓글에 두 번
+    adf["content"][0]["content"][1]["content"][1] = media_block("old-1", "old1b.png")
     rep.fake.comments["7"] = adf
     rep.lst.write_text(json.dumps([{"anchor": "[그림 1]", "file": "a.png", "replace": True}]))
     assert rpreview(rep) == 0 and rupdate(rep) == 0
@@ -2127,7 +2103,6 @@ def test_empty_string_arguments_count_as_given(rep, env):
     assert stamp_files(env) == [] and rep.raw.calls == [] and "PUT" not in rep.fake.methods()
 
 
-# ---------------------------------------------------------------- 표(GFM table -> ADF table, 2026-11-06)
 
 TABLE_MD = "| 판 | 값 |\n|:---|---:|\n| **굵게** | `코드` |\n| a\\|b | |\n"
 
@@ -2138,7 +2113,7 @@ def cell_nodes(cell):
 
 def test_md_table_to_adf_header_body_inline_empty_cell_and_escaped_pipe():
     adf = jc.md_to_adf("* 가\n\n" + TABLE_MD + "\n* 나\n")
-    assert [n["type"] for n in adf["content"]] == ["bulletList", "table", "bulletList"]   # 목록 뒤 표는 목록 안으로 들어가지 않는다
+    assert [n["type"] for n in adf["content"]] == ["bulletList", "table", "bulletList"]
     table = adf["content"][1]
     assert table["attrs"] == {"isNumberColumnEnabled": False, "layout": "default"}
     rows = table["content"]
@@ -2149,8 +2124,8 @@ def test_md_table_to_adf_header_body_inline_empty_cell_and_escaped_pipe():
     assert cell_nodes(rows[1]["content"][0]) == [{"type": "text", "text": "굵게", "marks": [{"type": "strong"}]}]
     assert cell_nodes(rows[1]["content"][1]) == [{"type": "text", "text": "코드", "marks": [{"type": "code"}]}]
     assert cell_nodes(rows[2]["content"][0]) == [{"type": "text", "text": "a|b"}]
-    assert rows[2]["content"][1]["content"] == [{"type": "paragraph", "content": []}]   # 빈 칸 = 빈 문단
-    assert "---" not in json.dumps(table, ensure_ascii=False)   # 구분 줄은 본문에 남지 않는다
+    assert rows[2]["content"][1]["content"] == [{"type": "paragraph", "content": []}]
+    assert "---" not in json.dumps(table, ensure_ascii=False)
 
 
 def test_md_table_ends_at_first_non_pipe_line_and_keeps_following_text():
@@ -2162,7 +2137,7 @@ def test_md_table_ends_at_first_non_pipe_line_and_keeps_following_text():
 def test_md_table_column_mismatch_stays_text_with_one_warning():
     warns = []
     adf = jc.md_to_adf("| a | b |\n|---|---|\n| 1 | 2 |\n| 3 |\n", warns)
-    assert [n["type"] for n in adf["content"]] == ["paragraph"] * 4   # 종전 처리: 줄마다 문단
+    assert [n["type"] for n in adf["content"]] == ["paragraph"] * 4
     assert len(warns) == 1 and "열 수(1)" in warns[0] and "머리(2)" in warns[0] and "표 본문 2번째 줄" in warns[0]
     assert jc.md_to_adf("| a | b |\n|---|---|\n| 1 | 2 | 3 |\n")["content"][0]["type"] == "paragraph"
 
@@ -2257,16 +2232,14 @@ def test_verify_detects_table_count_row_and_cell_changes_rc4(env, capsys):
         rc, err = attempt(tamper)
         assert rc == 4 and "표 구조" in err and "게시는 완료됐습니다" in err, tamper.__name__
     err = attempt(drop_cell)[1]
-    assert "[[2, 2, 2]]" in err and "[[2, 2, 1]]" in err   # 보낸 것과 되읽은 것의 모양이 함께 나온다
+    assert "[[2, 2, 2]]" in err and "[[2, 2, 1]]" in err
 
 
-# ---------------------------------------------------------------- 표 행 추가(--patches 의 table_anchor·append_rows, 2026-11-06)
 
 ROWS = [["원본 x2t", "**0.91**", "0.88"], ["원본 x17t", "0.93", "`0.90`"]]
 
 
 def table_comment(n_rows=8, head="판", cols=3):
-    """그림 1장(media id uuid-1)이 든 댓글 + 머리 1행과 본문 n_rows-1행짜리 표."""
     lines = [f"| {head} | " + " | ".join(f"지표{c}" for c in range(1, cols)) + " |", "|" + "---|" * cols]
     lines += [f"| 판{k} | " + " | ".join(f"0.{k}{c}" for c in range(1, cols)) + " |" for k in range(1, n_rows)]
     adf = media_adf("앞 문장 하나")
@@ -2275,7 +2248,6 @@ def table_comment(n_rows=8, head="판", cols=3):
 
 
 def row_patch_file(env, *patches):
-    """치환 파일을 쓰고 경로를 돌려준다(인자가 없으면 표 «판» 에 ROWS 를 붙이는 항목 하나)."""
     path = env.home / "rows.json"
     path.write_text(json.dumps(list(patches) or [{"table_anchor": "판", "append_rows": ROWS}], ensure_ascii=False), encoding="utf-8")
     return path
@@ -2299,7 +2271,7 @@ def test_row_append_to_figure_comment_adds_rows_keeps_media_and_previews_change(
     assert jc.table_shapes(orig) == [[3] * 8] and jc.table_shapes(new) == [[3] * 10]
     assert jc.fingerprint(new)[2] == ["uuid-1"] and new["content"][0] == orig["content"][0]
     rows = new["content"][1]["content"]
-    assert rows[:8] == orig["content"][1]["content"]   # 기존 8행은 그대로
+    assert rows[:8] == orig["content"][1]["content"]
     assert [[c["type"] for c in r["content"]] for r in rows[8:]] == [["tableCell"] * 3] * 2
     assert cell_nodes(rows[8]["content"][1]) == [{"type": "text", "text": "0.91", "marks": [{"type": "strong"}]}]
     assert cell_nodes(rows[9]["content"][2]) == [{"type": "text", "text": "0.90", "marks": [{"type": "code"}]}]
@@ -2318,7 +2290,7 @@ def test_table_row_helper_builds_header_or_body_cells_and_table_node_uses_it():
 
 def test_row_anchor_not_found_or_two_tables_rc2(env, capsys):
     adf = table_comment()
-    adf["content"].append(copy.deepcopy(adf["content"][1]))   # 머리 첫 칸이 같은 표가 둘
+    adf["content"].append(copy.deepcopy(adf["content"][1]))
     env.fake.comments["7"] = copy.deepcopy(adf)
     for anchor, n in (("없는 표", 0), ("판", 2)):
         path = row_patch_file(env, {"table_anchor": anchor, "append_rows": ROWS})
@@ -2332,7 +2304,7 @@ def test_row_anchor_matches_first_cell_exactly_after_strip_and_ignoring_marks(en
     adf = media_adf()
     adf["content"].append(jc.md_to_adf("| **판** | 값 |\n|---|---|\n| x | 1 |\n")["content"][0])
     env.fake.comments["7"] = adf
-    assert rows_run("preview", row_patch_file(env, {"table_anchor": "판 일부", "append_rows": [["y", "2"]]})) == 2   # 부분 일치는 안 된다
+    assert rows_run("preview", row_patch_file(env, {"table_anchor": "판 일부", "append_rows": [["y", "2"]]})) == 2
     path = row_patch_file(env, {"table_anchor": "  판 ", "append_rows": [["y", "2"]]})
     assert rows_run("preview", path) == 0 and rows_run("update", path) == 0
     assert jc.table_shapes(env.fake.comments["7"]) == [[2, 2, 2]]
@@ -2391,8 +2363,8 @@ def test_two_row_patches_on_same_table_and_on_second_table(env):
     new = env.fake.comments["7"]
     assert jc.table_shapes(new) == [[3] * 10, [2] * 3]
     assert [r["content"][0]["content"][0]["content"] for r in new["content"][1]["content"][8:]] == \
-        [[{"type": "text", "text": "원본 x2t"}], [{"type": "text", "text": "원본 x17t"}]]   # 파일 순서대로 맨 아래에 쌓인다
-    assert new["content"][2]["content"][2]["content"][1]["content"] == [{"type": "paragraph", "content": []}]   # 빈 칸 = 빈 문단
+        [[{"type": "text", "text": "원본 x2t"}], [{"type": "text", "text": "원본 x17t"}]]
+    assert new["content"][2]["content"][2]["content"][1]["content"] == [{"type": "paragraph", "content": []}]
 
 
 def test_row_patch_changed_after_preview_rc3(env):
@@ -2415,7 +2387,7 @@ def test_load_patches_format_errors_rc2_show_both_formats(env, bad):
     with pytest.raises(jc.Fail) as e:
         jc.load_patches(path)
     assert e.value.rc == 2 and '"anchor"' in e.value.msg and '"table_anchor"' in e.value.msg and '"append_rows"' in e.value.msg
-    path.write_text(json.dumps({"table_anchor": "판", "append_rows": [["a"]]}), encoding="utf-8")   # 목록이 아닌 것도 같은 오류
+    path.write_text(json.dumps({"table_anchor": "판", "append_rows": [["a"]]}), encoding="utf-8")
     with pytest.raises(jc.Fail) as e2:
         jc.load_patches(path)
     assert e2.value.rc == 2
@@ -2429,7 +2401,6 @@ def test_load_patches_accepts_both_kinds_and_ignores_unknown_keys(env):
 
 
 def old_figures_stamp_hash(issue, comment_id, plan, patches):
-    """이 변경 이전의 figures_stamp_hash 식 그대로(글자 치환만 있는 해시 입력이 안 바뀌었음을 대조하는 기준)."""
     keys = ("anchor", "name", "size", "sha256", "width", "height")
     rec = {"kind": "figures", "site": jc.site(), "issue": issue, "comment_id": comment_id,
            "figures": [{**{k: e[k] for k in keys}, **({"replace": True} if e["replace"] else {})} for e in plan]}
@@ -2444,7 +2415,7 @@ def test_figures_stamp_hash_text_only_patches_keep_old_hash_and_row_patches_are_
     assert jc.figures_stamp_hash("PROJ-1", "7", plan, text) == old_figures_stamp_hash("PROJ-1", "7", plan, text)
     assert jc.figures_stamp_hash("PROJ-1", "7", plan, [{"anchor": "옛", "new": "새", "memo": 1}]) == old_figures_stamp_hash("PROJ-1", "7", plan, text)
     row = [{"table_anchor": "판", "append_rows": [["a", "b"]]}]
-    h = jc.figures_stamp_hash("PROJ-1", "7", plan, row)   # 예외 없이 계산된다
+    h = jc.figures_stamp_hash("PROJ-1", "7", plan, row)
     assert h != jc.figures_stamp_hash("PROJ-1", "7", plan) and h != jc.figures_stamp_hash("PROJ-1", "7", plan, text)
     assert h != jc.figures_stamp_hash("PROJ-1", "7", plan, [{"table_anchor": "판", "append_rows": [["a", "c"]]}])
     assert h != jc.figures_stamp_hash("PROJ-1", "7", plan, [{"table_anchor": "값", "append_rows": [["a", "b"]]}])
@@ -2465,7 +2436,7 @@ def test_figures_combined_with_row_patch_adds_rows_and_figures(fig, capsys):
     out = capsys.readouterr().out
     assert "- 전: [표 «판»] 2행" in out and "+ 후: [표 «판»] 3행 · 추가: y | 2" in out
     pat.write_text(json.dumps([{"table_anchor": "판", "append_rows": [["y", "3"]]}]), encoding="utf-8")
-    assert go("update") == 3 and fig.raw.calls == [] and "PUT" not in fig.fake.methods()   # 행 내용이 스탬프에 묶여 있다
+    assert go("update") == 3 and fig.raw.calls == [] and "PUT" not in fig.fake.methods()
     pat.write_text(json.dumps([{"table_anchor": "판", "append_rows": [["y", "2"]]}]), encoding="utf-8")
     assert go("update") == 0
     new = fig.fake.comments["7"]
@@ -2509,7 +2480,7 @@ def test_update_refuses_when_result_differs_from_requested_rows_only(env, capsys
         mutate(new)
         return new, changes
     monkeypatch.setattr(jc, "apply_patches", sneaky)
-    assert rows_run("preview", path) == 2 and stamp_files(env) == []   # 미리보기도 같은 검사를 한다
+    assert rows_run("preview", path) == 2 and stamp_files(env) == []
     assert "보내지 않습니다" in capsys.readouterr().err
     assert rows_run("update", path) == 2
     assert "보내지 않습니다" in capsys.readouterr().err and "PUT" not in env.fake.methods()
@@ -2518,7 +2489,7 @@ def test_update_refuses_when_result_differs_from_requested_rows_only(env, capsys
 def test_text_patch_aimed_at_appended_row_text_is_refused(env, capsys):
     env.fake.comments["7"] = table_comment()
     path = row_patch_file(env, {"table_anchor": "판", "append_rows": ROWS[:1]}, {"anchor": "원본 x2t", "new": "원본 X2T"})
-    assert rows_run("update", path) == 2   # 붙은 행은 요청한 글 그대로여야 한다(고칠 글은 행에 바로 쓴다)
+    assert rows_run("update", path) == 2
     assert "붙은 행이 요청과 다릅니다" in capsys.readouterr().err and "PUT" not in env.fake.methods()
 
 
@@ -2526,7 +2497,7 @@ def test_check_rows_only_added_is_a_noop_without_row_patches():
     cur = table_comment()
     other = copy.deepcopy(cur)
     other["content"][0]["content"][0]["content"][0]["content"][0]["text"] = "전혀 다른 글"
-    jc.check_rows_only_added(cur, other, [{"anchor": "a", "new": "b"}])   # 글자 치환만 있으면 검사하지 않는다(종전 동작)
+    jc.check_rows_only_added(cur, other, [{"anchor": "a", "new": "b"}])
     jc.check_rows_only_added(cur, other, [])
     with pytest.raises(jc.Fail):
         jc.check_rows_only_added(cur, other, [{"table_anchor": "판", "append_rows": ROWS}])

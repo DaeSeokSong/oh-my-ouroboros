@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """read-once.sh --clear 회귀 테스트 (2026-09-08 결정 6: PreCompact 에서 캐시 삭제).
 
 실행: python3 ~/.claude/scripts/tests/test_read_once.py → 실패 0 이면 exit 0
@@ -7,6 +6,7 @@
   · 캐시 폴더는 `$HOME/.claude/_cache/read-once/*.cache`. HOME 을 가짜로 바꾸면 실제 캐시는 건드리지 않는다.
   · `--clear` 는 stdin 을 읽지 않고 캐시 파일 전부를 지운 뒤 exit 0.
   · 캐시 이외 파일(.cache 아닌 것)은 남긴다.
+REF: knowledge/harness/code-history/scripts__tests__test_read_once.py.md
 """
 import json
 import os
@@ -35,29 +35,25 @@ with tempfile.TemporaryDirectory() as td:
     (cache / "keep.txt").write_text("not a cache\n")
     env = dict(os.environ, HOME=str(fake_home))
 
-    r = subprocess.run(["bash", str(SCRIPT), "--clear"], input="", capture_output=True, text=True, env=env)
+    r = subprocess.run(["bash", str(SCRIPT), "--clear"], input="", capture_output=True, text=True, env=env, check=False)
     check("--clear exit 0", r.returncode == 0, f"rc={r.returncode} stderr={r.stderr.strip()}")
     left = sorted(p.name for p in cache.glob("*.cache"))
     check("--clear 뒤 *.cache 0개", left == [], f"남음={left}")
     check("--clear 는 .cache 아닌 파일 보존", (cache / "keep.txt").exists())
     check("--clear 는 stdout 침묵", r.stdout == "", f"stdout={r.stdout!r}")
 
-    # 캐시 폴더가 없어도 --clear 는 성공해야 한다(PreCompact 는 첫 compact 전에도 돈다)
     r2 = subprocess.run(["bash", str(SCRIPT), "--clear"], input="", capture_output=True, text=True,
-                        env=dict(env, HOME=str(fake_home / "empty")))
+                        env=dict(env, HOME=str(fake_home / "empty")), check=False)
     check("캐시 폴더 부재 시 --clear exit 0", r2.returncode == 0, f"rc={r2.returncode}")
 
-# ── 2026-10-01 감사: 차단·기록·부분 읽기(pages 포함) 면제·agent 분리 ──
-# 수정 전에는 pages 가 면제되지 않아 PDF 다음 쪽 범위가 차단됐고, 키에 agent_id 가 없어 부모와 서브에이전트가 서로를 막았다.
 def hook(env, mode, tool_input, session="s1", agent=None, response=None):
-    """훅을 한 번 돌려 stdout 을 돌려준다. mode: 'check' | '--record'."""
     d = {"tool_name": "Read", "session_id": session, "tool_input": tool_input}
     if agent:
         d["agent_id"] = agent
     if response is not None:
         d["tool_response"] = response
     args = ["bash", str(SCRIPT)] + ([] if mode == "check" else [mode])
-    return subprocess.run(args, input=json.dumps(d), capture_output=True, text=True, env=env).stdout
+    return subprocess.run(args, input=json.dumps(d), capture_output=True, text=True, env=env, check=False).stdout
 
 
 with tempfile.TemporaryDirectory() as td:

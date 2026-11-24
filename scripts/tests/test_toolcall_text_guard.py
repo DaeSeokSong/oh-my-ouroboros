@@ -1,16 +1,17 @@
-"""toolcall-text-guard.sh 회귀 테스트 (2026-10-01 감사: SubagentStop 은 자식 기록을 읽어야 한다; 2026-10-16: last_assistant_message 우선 + 한글 보고 검사).
+"""toolcall-text-guard.sh 회귀 테스트.
 
 실행: uv run -q --with pytest python -m pytest scripts/tests/test_toolcall_text_guard.py -q
 계약: last_assistant_message 가 있으면 그것을, 없으면 Stop 은 transcript_path, SubagentStop 은 agent_transcript_path(자식 기록)의
       마지막 assistant 메시지를 검사한다. 여는 invoke 태그와 parameter 태그가 둘 다 본문 텍스트로 남아 있으면 decision:block.
       Stop 에서만 마크업 검사 뒤에 한글 보고 검사(korean_report_check.py)가 이어진다.
+REF: knowledge/harness/code-history/scripts__tests__test_toolcall_text_guard.py.md
 """
 import json
 import subprocess
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "toolcall-text-guard.sh"
-LEAK = "<invoke name=\"Bash\"><parameter name=\"command\">ls</parameter></invoke>"   # 가짜 도구 호출 마크업 원문
+LEAK = "<invoke name=\"Bash\"><parameter name=\"command\">ls</parameter></invoke>"
 ENGLISH = "The training run finished without any errors and all of the checkpoints were saved."
 
 
@@ -20,7 +21,7 @@ def entry(text):
 
 def run(payload, raw=None):
     data = raw if raw is not None else json.dumps(payload)
-    p = subprocess.run(["bash", str(SCRIPT)], input=data, capture_output=True, text=True)
+    p = subprocess.run(["bash", str(SCRIPT)], input=data, capture_output=True, text=True, check=False)
     assert p.returncode == 0
     return p.stdout
 

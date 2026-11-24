@@ -3,6 +3,7 @@
 실제 tmux·GPU·launch-set 발사는 건드리지 않는다. 발사 백엔드는 FakeBackend, GPU 상태는 가짜 dict 다.
 실행: uv run --no-project --with pytest python -m pytest scripts/tests/test_launch_queue.py -q
 (와쳐 시험은 실제 train-watcher.sh 를 수 초짜리 가짜 프로세스로 돌려 15초쯤 걸린다.)
+REF: knowledge/harness/code-history/scripts__tests__test_launch_queue.py.md
 """
 import copy
 import fcntl
@@ -21,7 +22,6 @@ from types import SimpleNamespace
 import pytest
 
 TW_DIR = Path(__file__).resolve().parents[2] / "tools" / "train-watcher"
-# 와쳐·발사 셸의 위치(기본 TW_DIR). 가동 중인 와쳐 때문에 제자리 교체 전의 사본(.scratch/…)을 같은 시험으로 검증할 때만 TW_SCRIPT_DIR 로 바꾼다.
 SCRIPT_DIR = Path(os.environ.get("TW_SCRIPT_DIR") or TW_DIR)
 _spec = importlib.util.spec_from_file_location("launch_queue", TW_DIR / "launch_queue.py")
 lq = importlib.util.module_from_spec(_spec)
@@ -69,14 +69,12 @@ def statuses(qp):
 
 
 def ready(tmp_path, n_items, gpus=None, **item_kw):
-    """n 개 판 + 승인까지 끝낸 (큐 경로, FakeBackend)."""
     qp = mk_queue(tmp_path, [mk_item(tmp_path, f"a{i}", **item_kw) for i in range(1, n_items + 1)])
     be = lq.FakeBackend(gpus or six_gpus())
     assert run(be, "approve", qp, "--session", "test") == 0
     return qp, be
 
 
-# ───────────── Phase 1: 형식·승인 ─────────────
 
 def good(tmp_path):
     return {"name": "q1", "items": [mk_item(tmp_path, "a1"), mk_item(tmp_path, "a2")]}
@@ -97,7 +95,7 @@ def mutate_str_argv(q): q["items"][0]["argv"] = "bash run.sh {GPU}"
                                  mutate_vram_zero, mutate_rel_logdir, mutate_empty_items, mutate_str_argv])
 def test_malformed_queue_is_rejected(tmp_path, mut):
     q = good(tmp_path)
-    lq.parse_queue(json.dumps(q).encode(), "q1")   # 변형 전에는 통과
+    lq.parse_queue(json.dumps(q).encode(), "q1")
     mut(q)
     with pytest.raises(lq.QueueError):
         lq.parse_queue(json.dumps(q).encode(), "q1")
@@ -112,7 +110,6 @@ def test_approve_rejects_malformed_with_exit_2(tmp_path):
 
 
 def test_edit_after_approval_halts_next(tmp_path):
-    """성공 기준 2: 승인 뒤 한 글자만 바꿔도 next 는 아무것도 올리지 않고 halted 와 알림을 남긴다."""
     qp, be = ready(tmp_path, 3)
     assert run(be, "start", qp, "--gpus", "0") == 0
     assert len(be.launches) == 1
@@ -121,21 +118,19 @@ def test_edit_after_approval_halts_next(tmp_path):
     assert len(be.launches) == 1, "목록이 바뀌었는데 발사됨"
     st = state(qp)
     assert st["halted"]["reason"] == "queue-changed"
-    assert st["items"]["a1"]["status"] == "done"   # 끝난 판의 기록은 해시와 무관하게 남긴다
+    assert st["items"]["a1"]["status"] == "done"
     assert any("바뀌어" in n for n in be.notes)
     assert list(qp.with_name("q1.events").glob("*queue-changed*"))
-    # 알림은 처음 멈출 때 한 번. 다시 불러도 계속 거부하고 알림은 늘지 않는다
     n = len(be.notes)
     run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 0)
     assert len(be.launches) == 1 and len(be.notes) == n
-    # 되돌려도 halted 는 approve 전까지 유지
     qp.write_text(qp.read_text().replace("a2 목적!", "a2 목적"))
     run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 0)
     assert len(be.launches) == 1
     assert run(be, "approve", qp) == 0
-    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 0)   # 이미 done 으로 처리된 보고의 되풀이는 무시된다(시도 결박, 2026-10-01)
+    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 0)
     assert len(be.launches) == 1
-    run(be, "start", qp, "--gpus", "0")                                       # halt 뒤 다시 올리는 길은 approve 후 start
+    run(be, "start", qp, "--gpus", "0")
     assert len(be.launches) == 2
 
 
@@ -161,18 +156,16 @@ def test_table_lists_every_item(tmp_path, capsys):
     assert "| 판 | 목적 | 기준판 | 변경 사항 |" in out and "a3 변경" in out and "판 > GPU" in out
 
 
-# ───────────── Phase 2: 발사 ─────────────
 
 def test_eight_items_six_gpus(tmp_path):
-    """성공 기준 1(로직 부분): 6개가 먼저 올라가고 끝나는 GPU 마다 나머지 2개가 사람 없이 올라간다."""
     qp, be = ready(tmp_path, 8)
     assert run(be, "start", qp, "--gpus", "0,1,2,3,4,5") == 0
-    assert [(i, s) for i, s, _ in be.launches] == [(f"a{k}", f"tq{k - 1}:0") for k in range(1, 7)]   # 세션 = 접두 + GPU 번호, 첫 창
+    assert [(i, s) for i, s, _ in be.launches] == [(f"a{k}", f"tq{k - 1}:0") for k in range(1, 7)]
     assert statuses(qp) == {**{f"a{k}": "running" for k in range(1, 7)}, "a7": "queued", "a8": "queued"}
     assert run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 0) == 0
     assert run(be, "next", "--queue", qp, "--item", "a2", "--gpu", 1, "--exit", 0) == 0
     st = state(qp)["items"]
-    assert (st["a7"]["status"], st["a7"]["gpu"], st["a7"]["tmux"]) == ("running", 0, "tq0:1")   # 같은 GPU 0 의 세션에 창이 더해진다
+    assert (st["a7"]["status"], st["a7"]["gpu"], st["a7"]["tmux"]) == ("running", 0, "tq0:1")
     assert (st["a8"]["status"], st["a8"]["gpu"], st["a8"]["tmux"]) == ("running", 1, "tq1:1")
     assert st["a1"]["status"] == st["a2"]["status"] == "done"
     assert len(be.launches) == 8 and len({s for _, s, _ in be.launches}) == 8 and len(be.sessions) == 6
@@ -193,14 +186,12 @@ def test_launch_script_is_quoted_substituted_and_valid_bash(tmp_path):
 
 
 def test_big_vram_item_skips_l40s_and_lands_on_h100(tmp_path):
-    """성공 기준 3: 60GB 판은 빈 L40S(45GB)를 건너뛰고 H100 이 빈 뒤에 올라간다."""
     qp = mk_queue(tmp_path, [mk_item(tmp_path, "big", vram_gb=60), mk_item(tmp_path, "small", vram_gb=20)])
     be = lq.FakeBackend({0: gpu(*L40S), 1: gpu(*H100)})
     run(be, "approve", qp)
     run(be, "start", qp, "--gpus", "0,1")
     st = state(qp)["items"]
     assert (st["small"]["gpu"], st["big"]["gpu"]) == (0, 1)
-    # L40S 만 비는 상황에서는 big 이 남아 있어도 올리지 않고 알린다
     qp2 = mk_queue(tmp_path / "second", [mk_item(tmp_path, "x", vram_gb=20), mk_item(tmp_path, "big2", vram_gb=60)])
     be2 = lq.FakeBackend({0: gpu(*L40S), 1: gpu(*H100)})
     run(be2, "approve", qp2)
@@ -208,14 +199,14 @@ def test_big_vram_item_skips_l40s_and_lands_on_h100(tmp_path):
     assert run(be2, "next", "--queue", qp2, "--item", "x", "--gpu", 0, "--exit", 0) == 0
     assert statuses(qp2) == {"x": "done", "big2": "queued"} and len(be2.launches) == 1
     assert any("들어가는 대기 판이 없습니다" in n for n in be2.notes)
-    run(be2, "start", qp2, "--gpus", "1")   # H100 이 비면 올라간다
+    run(be2, "start", qp2, "--gpus", "1")
     assert statuses(qp2)["big2"] == "running" and state(qp2)["items"]["big2"]["gpu"] == 1
 
 
 def test_preflight_decide_checks_vram_on_empty_gpu():
     a = lambda v: type("A", (), {"vram_gb": v, "cpu_cores": None, "util_max": 70.0, "sample_sec": 60, "cpu_reserve": 8.0, "vram_margin": 0.1})()
     g = {0: gpu(*L40S)}
-    assert lq.gp.decide(g, [0], {}, None, a(None))[0]       # 크기를 안 주면 종전대로 통과
+    assert lq.gp.decide(g, [0], {}, None, a(None))[0]
     assert lq.gp.decide(g, [0], {}, None, a(30))[0]
     ok, msgs = lq.gp.decide(g, [0], {}, None, a(60))
     assert not ok and "빈 VRAM 44.5GB < 필요 66.0GB" in msgs[0]
@@ -236,16 +227,15 @@ def test_gpu_preflight_fake_env_drives_exit_code(tmp_path):
 
 
 def test_concurrent_next_never_launches_same_item_twice(tmp_path):
-    """성공 기준 5: 두 판이 같은 순간 끝나도 남은 판은 한 번만 올라간다."""
     qp, be = ready(tmp_path, 3, gpus={0: gpu(*H100), 1: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0,1")
-    be.delay = 0.4   # 두 next 의 발사 구간을 겹치게 한다
+    be.delay = 0.4
     errors = []
 
     def call(item, g):
         try:
             run(be, "next", "--queue", qp, "--item", item, "--gpu", g, "--exit", 0)
-        except Exception as e:   # noqa: BLE001 — 스레드 안 예외를 메인에서 단정
+        except Exception as e:   # noqa: BLE001
             errors.append(e)
     ts = [threading.Thread(target=call, args=("a1", 0)), threading.Thread(target=call, args=("a2", 1))]
     [t.start() for t in ts]
@@ -263,11 +253,11 @@ def test_record_exit_maps_codes():
     assert (s["a"], s["b"], s["c"], s["d"]) == ("done", "needs-fix", "eval-failed", "timeout")
     assert st["items"]["b"]["exit"] == 2 and st["items"]["b"]["gpu"] == 7
     st["items"]["e"]["attempt"] = 1
-    lq.record_exit(st, "e", 7, 5)   # 발사 거부: queued 로 되돌려 목록 뒤로, 시도 수는 되돌림
+    lq.record_exit(st, "e", 7, 5)
     assert st["items"]["e"]["status"] == "queued" and st["items"]["e"]["rank"] > st["items"]["f"]["rank"] and st["items"]["e"]["attempt"] == 0
     lq.record_exit(st, "f", 7, 9)
     assert st["items"]["f"]["status"] == "failed"
-    lq.record_exit(st, "없는판", 7, 0)   # 목록에 없는 판은 무시
+    lq.record_exit(st, "없는판", 7, 0)
 
 
 def test_abnormal_exit_marks_needs_fix_and_launch_continues(tmp_path):
@@ -284,18 +274,17 @@ def test_exit_5_requeues_to_back_and_caps_refusals(tmp_path):
     s = state(qp)
     s["items"]["a1"].update(status="running", attempt=1)
     lq.save_state(qp, s)
-    be.rc["a1"] = 76   # 다시 골라져도 거부
+    be.rc["a1"] = 76
     run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 5)
     st = state(qp)["items"]
     assert st["a1"]["rank"] > st["a3"]["rank"] and st["a1"]["refused"] >= 1
-    assert st["a2"]["status"] == "running"        # 먼저 올라간 건 a2(a1 은 목록 뒤로 밀렸다)
-    # 거부만 반복하는 판은 상한에서 닫혀 목록을 맴돌지 않는다
+    assert st["a2"]["status"] == "running"
     for _ in range(lq.MAX_REFUSALS):
         s = state(qp)
         if s["items"]["a1"]["status"] == "launch-failed":
             break
         s["items"]["a1"]["status"] = "queued"
-        s["items"]["a2"]["status"], s["items"]["a3"]["status"] = "running", "done"   # 종료 보고는 도는 판에 대해서만 받는다
+        s["items"]["a2"]["status"], s["items"]["a3"]["status"] = "running", "done"
         lq.save_state(qp, s)
         run(be, "next", "--queue", qp, "--item", "a2", "--gpu", 0, "--exit", 0)
     assert state(qp)["items"]["a1"]["status"] == "launch-failed"
@@ -313,7 +302,7 @@ def test_launch_refusal_76_skips_to_next_candidate(tmp_path):
 
 def test_launch_failure_stops_that_gpu_and_notifies(tmp_path):
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
-    be.rc["a1"] = 1   # 발사는 됐으나 verify 실패
+    be.rc["a1"] = 1
     run(be, "start", qp, "--gpus", "0")
     st = state(qp)["items"]
     assert st["a1"]["status"] == "launch-failed" and st["a2"]["status"] == "queued" and len(be.launches) == 1
@@ -357,18 +346,14 @@ def test_pick_candidate_is_pure_and_ordered():
     assert (items, st["big"], gpus) == (snap[0], snap[1]["big"], snap[2])
 
 
-# ───────────── 와쳐 --on-exit (실제 train-watcher.sh) ─────────────
-
 def _spawn_dummy_training(sec, log=None, text=""):
-    """sec 초 뒤 text 를 log 에 덧붙이고 끝나는 가짜 학습(완료 마커는 와쳐가 뜬 «뒤»에 찍혀야 이번 실행의 것으로 본다)."""
     cmd = ["bash", "-c", f"sleep {sec}; printf %s {shlex.quote(text)} >> {shlex.quote(str(log))}"] if log else ["sleep", str(sec)]
     p = subprocess.Popen(cmd)
-    threading.Thread(target=p.wait, daemon=True).start()   # 좀비로 남으면 kill -0 이 계속 성공하므로 거둔다
+    threading.Thread(target=p.wait, daemon=True).start()
     return p.pid
 
 
 def _watch(tmp_path, tag, log_text, on_exit=None, old_log="", extra=(), sec=2, eval_cmd="true"):
-    """log_text = 가짜 학습이 끝날 때 로그에 덧붙이는 내용, old_log = 시작 전에 이미 있던 내용(재사용한 로그)."""
     log = tmp_path / f"{tag}.log"
     log.write_text(old_log)
     cmd = ["bash", str(SCRIPT_DIR / "train-watcher.sh"), "--pid", str(_spawn_dummy_training(sec, log, log_text)), "--log", str(log), "--done-regex", "TRAIN_DONE",
@@ -388,14 +373,12 @@ def test_watcher_on_exit_runs_once_with_watch_exit(tmp_path):
     }
     outs = {k: p.communicate(timeout=60)[0] for k, p in procs.items()}
     rcs = {k: p.returncode for k, p in procs.items()}
-    assert rcs == {"ok": 0, "crash": 2, "failing_hook": 0, "no_hook": 0}   # 훅 실패·유무와 무관하게 종료 코드는 그대로
+    assert rcs == {"ok": 0, "crash": 2, "failing_hook": 0, "no_hook": 0}
     assert out0.read_text().split() == ["0"]
     assert out2.read_text().split() == ["2"]
     assert outf.read_text().split() == ["0"] and "on-exit 실패 (exit 7)" in outs["failing_hook"]
     assert "on-exit" not in outs["no_hook"]
 
-
-# ───────────── launch-set.sh 인자 검사 (발사 전에 끝나는 경로만) ─────────────
 
 def _launch_set(tmp_path, *extra):
     cmd = ["bash", str(SCRIPT_DIR / "launch-set.sh"), "launch", "--name", "n", "--log", "l.log", "--done-regex", "x", "--eval-cmd", "true",
@@ -425,7 +408,6 @@ def test_launch_set_refuses_on_exit_in_watcher_args(tmp_path, wa):
 
 
 def _launch_set_at(cwd, *extra):
-    """Run launch-set.sh launch in cwd; a pre-existing state file makes it exit 67 right after the default-path step (no real launch)."""
     cmd = ["bash", str(SCRIPT_DIR / "launch-set.sh"), "launch", "--name", "n", "--log", "l.log", "--done-regex", "x", "--eval-cmd", "true",
            "--title", "t", "--expect", "e", *extra, "--", "sleep", "1"]
     env = {k: v for k, v in os.environ.items() if k not in ("CUDA_VISIBLE_DEVICES", "GPU_PREFLIGHT_FAKE")}
@@ -433,7 +415,6 @@ def _launch_set_at(cwd, *extra):
 
 
 def test_launch_set_default_state_and_watcher_log_go_under_scratch_launch(tmp_path):
-    """Default state/watcher-log live in <git root>/.scratch/launch/ and nothing is created in cwd or the repo top level."""
     repo = tmp_path / "repo"
     sub = repo / "sub"
     sub.mkdir(parents=True)
@@ -449,22 +430,20 @@ def test_launch_set_default_state_and_watcher_log_go_under_scratch_launch(tmp_pa
 
 
 def test_launch_set_default_dir_created_and_no_git_falls_back_to_cwd(tmp_path):
-    """Missing default dir is created via mkdir -p (explicit --state still honoured); outside git the root is the cwd."""
     plain = tmp_path / "plain"
     plain.mkdir()
     st = plain / "mystate.json"
     st.write_text("{}")
     r = _launch_set_at(plain, "--state", str(st))
-    assert r.returncode == 67 and (plain / ".scratch" / "launch").is_dir()   # watcher-log default triggered mkdir, state stayed where given
+    assert r.returncode == 67 and (plain / ".scratch" / "launch").is_dir()
     assert not list((plain / ".scratch" / "launch").glob("launch-state*"))
     assert sorted(p.name for p in plain.iterdir()) == [".scratch", "mystate.json", "mystate.json.lock"]
 
 
 def test_launch_set_default_dir_unwritable_is_refused_before_launch(tmp_path):
-    """If .scratch/launch cannot be created the launch is refused (exit 64) before anything starts."""
     plain = tmp_path / "plain"
     plain.mkdir()
-    (plain / ".scratch").write_text("not a dir")   # a file blocks mkdir -p
+    (plain / ".scratch").write_text("not a dir")
     r = _launch_set_at(plain)
     assert r.returncode == 64 and "기본 출력 폴더" in r.stderr
 
@@ -473,8 +452,6 @@ def test_launch_set_default_dir_unwritable_is_refused_before_launch(tmp_path):
 def test_shell_scripts_parse(name):
     assert subprocess.run(["bash", "-n", str(SCRIPT_DIR / name)], check=False).returncode == 0
 
-
-# ───────────── 검수 차단 B1: 시험 전용 GPU_PREFLIGHT_FAKE 가 운영 경로에 남지 않는다 ─────────────
 
 def test_launch_set_refuses_fake_preflight_env(tmp_path):
     env = {**os.environ, "GPU_PREFLIGHT_FAKE": str(tmp_path / "fake.json")}
@@ -490,11 +467,9 @@ def test_make_backend_removes_fake_env_and_warns(monkeypatch, capsys):
     be = lq.make_backend()
     assert isinstance(be, lq.TmuxBackend) and "GPU_PREFLIGHT_FAKE" not in os.environ
     assert "GPU_PREFLIGHT_FAKE" in capsys.readouterr().err
-    lq.make_backend()   # 변수가 없으면 경고 없음
+    lq.make_backend()
     assert capsys.readouterr().err == ""
 
-
-# ───────────── 검수 차단 B2: 큐가 가동 중으로 아는 GPU 에는 또 올리지 않는다 ─────────────
 
 def test_exit_4_timeout_launches_nothing_and_blocks_gpu(tmp_path):
     qp, be = ready(tmp_path, 3, gpus={0: gpu(*H100)})
@@ -503,9 +478,8 @@ def test_exit_4_timeout_launches_nothing_and_blocks_gpu(tmp_path):
     it = state(qp)["items"]
     assert len(be.launches) == 1 and it["a1"]["status"] == "timeout" and it["a1"]["maybe_alive"] and "살아 있을 수 있어" in it["a1"]["fail_reason"]
     assert sum("타임아웃" in n for n in be.notes) == 1
-    run(be, "start", qp, "--gpus", "0")      # 살아 있을 수 있는 판이 GPU 를 쥔 채로 남는다
+    run(be, "start", qp, "--gpus", "0")
     assert len(be.launches) == 1
-    # 와쳐가 뒤늦게라도 정상 종료를 보고하면 점유가 풀린다
     run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 0)
     assert len(be.launches) == 2
 
@@ -541,7 +515,7 @@ def test_two_nexts_for_different_items_on_same_gpu_launch_once(tmp_path):
     qp, be = ready(tmp_path, 4, gpus={0: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
     s = state(qp)
-    s["items"]["a2"].update(status="running", gpu=0)   # 같은 GPU 를 나눠 쓰던 두 판
+    s["items"]["a2"].update(status="running", gpu=0)
     lq.save_state(qp, s)
     be.delay = 0.4
     ts = [threading.Thread(target=run, args=(be, "next", "--queue", qp, "--item", i, "--gpu", 0, "--exit", 0)) for i in ("a1", "a2")]
@@ -590,10 +564,7 @@ def test_launch_script_cd_failure_writes_rc_file(tmp_path):
     assert rc_file.read_text().strip() == "64"
 
 
-# ───────────── tmux 배치: 세션 = 접두 + GPU 번호, 같은 GPU 의 여러 판은 창 ─────────────
-
 def test_sessions_are_prefix_plus_gpu_number_and_never_grow_beyond_gpus(tmp_path):
-    """8판이 6 GPU 에 오르는 동안 만들어진 세션은 접두+GPU 번호뿐이고 6개를 넘지 않는다. 늘어나는 것은 창이다."""
     qp, be = ready(tmp_path, 8)
     run(be, "start", qp, "--gpus", "0,1,2,3,4,5")
     run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 0)
@@ -610,7 +581,7 @@ def test_consecutive_items_on_one_gpu_add_windows_not_sessions(tmp_path):
         run(be, "next", "--queue", qp, "--item", f"a{k}", "--gpu", 0, "--exit", 0)
     assert list(be.sessions) == ["tq0"] and be.sessions["tq0"] == [0, 1, 2, 3]
     assert [t for _, t, _ in be.launches] == ["tq0:0", "tq0:1", "tq0:2", "tq0:3"]
-    assert [state(qp)["items"][f"a{k}"]["tmux"] for k in range(1, 5)] == ["tq0:0", "tq0:1", "tq0:2", "tq0:3"]   # status·알림이 어느 창인지 보인다
+    assert [state(qp)["items"][f"a{k}"]["tmux"] for k in range(1, 5)] == ["tq0:0", "tq0:1", "tq0:2", "tq0:3"]
 
 
 def test_launch_name_state_and_watcher_log_are_unique_per_item_and_attempt(tmp_path):
@@ -621,7 +592,7 @@ def test_launch_name_state_and_watcher_log_are_unique_per_item_and_attempt(tmp_p
         for attempt in (1, 2):
             text = lq.write_launch_script(qp, item, attempt, "tq0", 0)[0].read_text()
             name = re.search(r"--name (\S+)", text).group(1)
-            assert re.fullmatch(r"[A-Za-z0-9._-]+", name) and name == f"tq0-{item['id']}-{attempt}"   # launch-set.sh 의 --name 허용 형식
+            assert re.fullmatch(r"[A-Za-z0-9._-]+", name) and name == f"tq0-{item['id']}-{attempt}"
             assert f"launch-state-{name}.json" in text and f"watcher-{name}.log" in text
             seen.add(name)
     assert len(seen) == 4
@@ -637,7 +608,6 @@ def test_state_tmux_field_is_session_and_window_after_launch(tmp_path, capsys):
 
 
 def test_old_format_state_without_window_number_still_loads(tmp_path, capsys):
-    """옛 state 의 tmux 필드는 세션 이름만이다(tq7). status 와 next 가 그대로 읽고 이어 간다."""
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
     set_state(qp, a1={"tmux": "tq7"})
@@ -650,7 +620,6 @@ def test_old_format_state_without_window_number_still_loads(tmp_path, capsys):
 
 
 def _fake_tmux_run(monkeypatch, sessions, windows=None):
-    """lq.run_proc 를 가짜로 바꾼 tmux: 호출 argv 를 기록하고 세션·창 상태를 흉내 낸다(실제 tmux 는 부르지 않는다)."""
     calls, windows = [], windows if windows is not None else {}
     def fake(cmd, **kw):
         calls.append(cmd)
@@ -682,7 +651,7 @@ def test_tmux_backend_creates_session_when_absent_then_adds_window_when_present(
     assert ns[2:] == ["-d", "-P", "-F", "#{window_index}", "-s", "tq0", "-c", "/proj",
                       "-e", "XDG_RUNTIME_DIR=/run/user/1", "-e", "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1/bus"]
     calls.clear()
-    assert be.open_window("tq0", "/proj") == "tq0:1"                               # 세션이 이미 있으면 새 세션이 아니라 새 창
+    assert be.open_window("tq0", "/proj") == "tq0:1"
     assert [c[1] for c in calls] == ["has-session", "new-window"]
     assert calls[1][2:] == ["-d", "-P", "-F", "#{window_index}", "-t", "=tq0:", "-c", "/proj",
                             "-e", "XDG_RUNTIME_DIR=/run/user/1", "-e", "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1/bus"]
@@ -692,11 +661,10 @@ def test_tmux_backend_creates_session_when_absent_then_adds_window_when_present(
     rc_file = tmp_path / "a.rc"
     rc_file.write_text("0\n")
     assert be.launch("tq0:2", tmp_path / "a-1.sh", rc_file, 5) == 0
-    assert calls == [["tmux", "send-keys", "-t", "=tq0:2", f"bash {tmp_path}/a-1.sh", "Enter"]]   # 방금 만든 그 창에만 키를 보낸다
+    assert calls == [["tmux", "send-keys", "-t", "=tq0:2", f"bash {tmp_path}/a-1.sh", "Enter"]]
 
 
 def test_tmux_backend_only_touches_sessions_named_prefix_plus_gpu(tmp_path, monkeypatch):
-    """qpath 쪽 발사 흐름 전체를 TmuxBackend 로 돌려, tmux 에 닿는 모든 세션 이름이 접두+GPU 번호인지 본다."""
     sessions = set()
     calls = _fake_tmux_run(monkeypatch, sessions)
     qp = mk_queue(tmp_path, [mk_item(tmp_path, f"a{i}") for i in range(1, 4)])
@@ -708,7 +676,7 @@ def test_tmux_backend_only_touches_sessions_named_prefix_plus_gpu(tmp_path, monk
     real_launch = lq.TmuxBackend.launch
 
     def launch_with_rc(self, target, script, rc_file, timeout):
-        rc_file.write_text("0\n")   # launch-set.sh 가 끝나 .rc 를 남겼다고 친다
+        rc_file.write_text("0\n")
         return real_launch(self, target, script, rc_file, timeout)
     monkeypatch.setattr(lq.TmuxBackend, "launch", launch_with_rc)
     run(be, "approve", qp)
@@ -722,10 +690,10 @@ def test_tmux_backend_only_touches_sessions_named_prefix_plus_gpu(tmp_path, monk
 
 
 def test_tmux_backend_falls_back_to_new_window_when_session_appears_between_check_and_create(monkeypatch):
-    seq = iter([SimpleNamespace(returncode=1, stdout="", stderr=""),                    # has-session: 없음
-                SimpleNamespace(returncode=1, stdout="", stderr="duplicate session"),   # new-session: 그 사이 다른 곳이 만들었다
-                SimpleNamespace(returncode=0, stdout="", stderr=""),                    # has-session: 있음
-                SimpleNamespace(returncode=0, stdout="4\n", stderr="")])                # new-window
+    seq = iter([SimpleNamespace(returncode=1, stdout="", stderr=""),
+                SimpleNamespace(returncode=1, stdout="", stderr="duplicate session"),
+                SimpleNamespace(returncode=0, stdout="", stderr=""),
+                SimpleNamespace(returncode=0, stdout="4\n", stderr="")])
     calls = []
     monkeypatch.setattr(lq, "run_proc", lambda cmd, **kw: (calls.append(cmd), next(seq))[1])
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1")
@@ -747,10 +715,7 @@ def test_tmux_backend_rejects_missing_window_index_and_failed_create(monkeypatch
         lq.TmuxBackend().open_window("tq0", "/p")
 
 
-# ───────────── Phase 3: 비정상 종료 · 재발사 · 이벤트 · 요약 ─────────────
-
 def set_state(qp, **per_item):
-    """판별 state 를 직접 만든다(시험 준비용). set_state(qp, a1={"status": "running", "gpu": 0})"""
     s = state(qp)
     for k, v in per_item.items():
         s["items"][k].update(v)
@@ -771,34 +736,34 @@ def test_exit2_writes_needs_fix_event_and_next_item_still_launches(tmp_path):
     assert st["a1"]["status"] == "needs-fix" and st["a2"]["status"] == "running"
     ev = events(qp, "needs-fix")
     assert len(ev) == 1 and ev[0]["item"] == "a1" and ev[0]["gpu"] == 0 and "relaunch" in ev[0]["hint"] and ev[0]["watcher_report"].endswith("run.watch-report.md")
-    assert not any("재발사" in n for n in be.notes)   # needs-fix 는 알림 대신 이벤트로 세션을 깨운다
+    assert not any("재발사" in n for n in be.notes)
 
 
 def test_relaunch_once_then_refail_closes_only_that_item(tmp_path, capsys):
     qp, be = ready(tmp_path, 4, gpus={0: gpu(*H100), 1: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0,1")
-    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)          # a1 needs-fix, a3 → GPU 0
+    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)
     capsys.readouterr()
     assert run(be, "relaunch", qp, "--item", "a1", "--fix-note", "lr 오타 수정") == 0
-    assert "대기 맨 앞" in capsys.readouterr().out                                      # 두 GPU 모두 점유 → 대기 맨 앞(발사 못 한 GPU 별 결과 뒤에 한 줄)
+    assert "대기 맨 앞" in capsys.readouterr().out
     it = state(qp)["items"]
     assert it["a1"]["status"] == "queued" and it["a1"]["fixes"] == 1 and it["a1"]["rank"] < it["a4"]["rank"] and it["a1"]["fix_note"] == "lr 오타 수정"
-    run(be, "next", "--queue", qp, "--item", "a2", "--gpu", 1, "--exit", 0)           # 빈 GPU 1 → 맨 앞 a1 이 먼저
+    run(be, "next", "--queue", qp, "--item", "a2", "--gpu", 1, "--exit", 0)
     it = state(qp)["items"]
     assert it["a1"]["status"] == "running" and it["a1"]["attempt"] == 2 and it["a1"]["gpu"] == 1 and it["a4"]["status"] == "queued"
     assert be.launches[-1][2].name == "a1-2.sh"
     n = len(be.notes)
-    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 1, "--exit", 2)           # 재실패 → 그 판만 failed, 나머지는 계속
+    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 1, "--exit", 2)
     it = state(qp)["items"]
     assert it["a1"]["status"] == "failed" and it["a1"]["fail_stage"] == "refail" and it["a4"]["status"] == "running"
     assert sum("재발사 후 다시 비정상 종료" in x for x in be.notes[n:]) == 1
-    assert run(be, "relaunch", qp, "--item", "a1", "--fix-note", "또") == 2          # 판당 1회 한정(failed 판은 받지 않음)
+    assert run(be, "relaunch", qp, "--item", "a1", "--fix-note", "또") == 2
 
 
 def test_relaunch_launches_immediately_on_free_gpu(tmp_path):
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100), 1: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
-    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)           # a2 가 GPU 0 을 차지
+    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)
     assert run(be, "relaunch", qp, "--item", "a1", "--fix-note", "수정", "--gpus", "1") == 0
     it = state(qp)["items"]
     assert it["a1"]["status"] == "running" and it["a1"]["gpu"] == 1 and it["a1"]["attempt"] == 2
@@ -807,10 +772,10 @@ def test_relaunch_launches_immediately_on_free_gpu(tmp_path):
 def test_relaunch_rejects_non_needs_fix_and_changed_launch_args(tmp_path, capsys):
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
-    assert run(be, "relaunch", qp, "--item", "a1", "--fix-note", "x") == 2            # running 판은 받지 않는다
+    assert run(be, "relaunch", qp, "--item", "a1", "--fix-note", "x") == 2
     run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)
     n = len(be.launches)
-    qp.write_text(qp.read_text().replace("run.sh", "run2.sh"))                         # 발사 인자(argv)를 바꿨다
+    qp.write_text(qp.read_text().replace("run.sh", "run2.sh"))
     capsys.readouterr()
     assert run(be, "relaunch", qp, "--item", "a1", "--fix-note", "x") == 2
     assert "재승인 필요" in capsys.readouterr().err
@@ -819,22 +784,22 @@ def test_relaunch_rejects_non_needs_fix_and_changed_launch_args(tmp_path, capsys
 
 def test_gpu_excluded_after_two_different_items_refail_in_a_row(tmp_path):
     qp, be = ready(tmp_path, 5, gpus={0: gpu(*H100)})
-    set_state(qp, a1={"fixes": 1, "status": "running"}, a2={"fixes": 1, "status": "running"})   # 종료 보고는 도는 판에 대해서만 받는다
-    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)           # 첫 재실패: 아직 제외 아님
+    set_state(qp, a1={"fixes": 1, "status": "running"}, a2={"fixes": 1, "status": "running"})
+    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)
     assert not state(qp)["excluded_gpus"]
-    run(be, "next", "--queue", qp, "--item", "a2", "--gpu", 0, "--exit", 2)           # 서로 다른 두 번째 재실패 → 제외
+    run(be, "next", "--queue", qp, "--item", "a2", "--gpu", 0, "--exit", 2)
     st = state(qp)
     assert st["excluded_gpus"] == [0] and len(events(qp, "gpu-excluded")) == 1
     n = len(be.launches)
-    run(be, "next", "--queue", qp, "--item", "a3", "--gpu", 0, "--exit", 2)           # a3 는 a1 이 닫힌 뒤 이 GPU 에 올라간 판
-    assert len(be.launches) == n and n >= 1                                           # 제외된 GPU 에는 더 올리지 않는다(제외 전엔 올렸다)
+    run(be, "next", "--queue", qp, "--item", "a3", "--gpu", 0, "--exit", 2)
+    assert len(be.launches) == n and n >= 1
 
 
 def test_success_between_refails_resets_gpu_exclusion_streak(tmp_path):
     qp, be = ready(tmp_path, 4, gpus={0: gpu(*H100)})
-    set_state(qp, a1={"fixes": 1, "status": "running"}, a2={"fixes": 1, "status": "running"})   # 종료 보고는 도는 판에 대해서만 받는다
+    set_state(qp, a1={"fixes": 1, "status": "running"}, a2={"fixes": 1, "status": "running"})
     run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)
-    run(be, "next", "--queue", qp, "--item", "a3", "--gpu", 0, "--exit", 0)           # 그 GPU 의 성공이 «연속»을 끊는다
+    run(be, "next", "--queue", qp, "--item", "a3", "--gpu", 0, "--exit", 0)
     run(be, "next", "--queue", qp, "--item", "a2", "--gpu", 0, "--exit", 2)
     assert state(qp)["excluded_gpus"] == []
 
@@ -847,12 +812,12 @@ def test_wait_event_emits_each_event_once_and_times_out_rc3(tmp_path, capsys):
     run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)
     capsys.readouterr()
     assert run(be, "events", qp, "--pending") == 0
-    assert "needs-fix" in capsys.readouterr().out                                      # events 는 소비하지 않는다
+    assert "needs-fix" in capsys.readouterr().out
     assert run(be, "wait-event", qp, "--timeout", "2", "--interval", "0.05") == 0
     lines = [json.loads(x) for x in capsys.readouterr().out.splitlines()]
     assert len(lines) == 1 and lines[0]["kind"] == "needs-fix" and lines[0]["item"] == "a1"
     assert list(qp.with_name("q1.events").glob("*.consumed"))
-    assert run(be, "wait-event", qp, "--timeout", "0.3", "--interval", "0.05") == 3  # 같은 이벤트를 다시 내지 않는다
+    assert run(be, "wait-event", qp, "--timeout", "0.3", "--interval", "0.05") == 3
     capsys.readouterr()
     assert run(be, "events", qp, "--pending") == 0 and capsys.readouterr().out == ""
 
@@ -877,8 +842,8 @@ def test_release_records_who_and_why_and_then_next_launches(tmp_path):
     assert run(be, "release", qp, "--item", "a1", "--reason", "PID 사망 확인", "--by", "tester") == 0
     s = state(qp)["items"]["a1"]
     assert not s["maybe_alive"] and s["released"][0]["by"] == "tester" and s["released"][0]["reason"] == "PID 사망 확인"
-    assert len(be.launches) == 1                                                       # --then-next 없이는 발사 안 함
-    assert run(be, "release", qp, "--item", "a1", "--reason", "다시") == 2            # 표시가 없으면 받지 않는다
+    assert len(be.launches) == 1
+    assert run(be, "release", qp, "--item", "a1", "--reason", "다시") == 2
     set_state(qp, a1={"maybe_alive": True})
     assert run(be, "release", qp, "--item", "a1", "--reason", "확인", "--then-next") == 0
     assert state(qp)["items"]["a2"]["status"] == "running" and len(be.launches) == 2
@@ -887,24 +852,24 @@ def test_release_records_who_and_why_and_then_next_launches(tmp_path):
 def test_summary_table_and_finished_event_once(tmp_path, capsys):
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
-    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)           # a1 needs-fix, a2 GPU 0
-    run(be, "relaunch", qp, "--item", "a1", "--fix-note", "lr 수정")                    # GPU 점유 → 맨 앞 대기
+    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)
+    run(be, "relaunch", qp, "--item", "a1", "--fix-note", "lr 수정")
     capsys.readouterr()
     run(be, "summary", qp)
     assert "아직 끝나지 않았습니다" in capsys.readouterr().out
-    run(be, "next", "--queue", qp, "--item", "a2", "--gpu", 0, "--exit", 0)           # a1(재발사) 올라감
+    run(be, "next", "--queue", qp, "--item", "a2", "--gpu", 0, "--exit", 0)
     assert not events(qp, "queue-finished")
-    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)           # 재실패 → 모두 끝남
+    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)
     assert len(events(qp, "queue-finished")) == 1 and events(qp, "queue-finished")[0]["failed"] == ["a1"]
     assert sum("대기 목록 종료" in n for n in be.notes) == 1
-    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)           # 같은 보고가 되풀이돼도 이벤트·알림은 1회
+    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)
     assert len(events(qp, "queue-finished")) == 1 and sum("대기 목록 종료" in n for n in be.notes) == 1
     capsys.readouterr()
     assert run(be, "summary", qp) == 0
     out = capsys.readouterr().out
     assert "| 판 | 목적 | 실패 단계 | 사유 | 고친 내용 | GPU |" in out
     assert "| a1 | a1 목적 | 재발사 후 재실패 | 재발사 후 다시 비정상 종료(exit 2) | lr 수정 | 0 |" in out
-    assert "| a2 |" not in out                                                         # 실패한 판만
+    assert "| a2 |" not in out
 
 
 def test_summary_without_failures_prints_no_table(tmp_path, capsys):
@@ -917,15 +882,13 @@ def test_summary_without_failures_prints_no_table(tmp_path, capsys):
     assert "실패 없음" in out and "| 판 |" not in out
 
 
-# ───────────── Phase 4: 남은 시간으로 기다림 판정 ─────────────
-
 @pytest.mark.parametrize("tail,elapsed,rx,want", [
-    ("Epoch 4/60\nEpoch 5/60 loss=1", 0.5, None, 5.5),            # 마지막 일치, 경과 × (전체−현재) ÷ 현재
+    ("Epoch 4/60\nEpoch 5/60 loss=1", 0.5, None, 5.5),
     ("no progress here", 0.5, None, None),
     ("Epoch 5/60", None, None, None),
     ("Epoch 60/60", 2.0, None, 0.0),
     ("step 10 of 40", 1.0, r"step (\d+) of (\d+)", 3.0),
-    ("Epoch 5/60", 1.0, "([", None),                              # 잘못된 정규식은 None
+    ("Epoch 5/60", 1.0, "([", None),
 ])
 def test_remaining_hours(tail, elapsed, rx, want):
     got = lq.remaining_hours(tail, elapsed, rx)
@@ -933,25 +896,25 @@ def test_remaining_hours(tail, elapsed, rx, want):
 
 
 GPUS2 = {0: gpu(*L40S), 1: gpu(*H100)}
-TT = {"L": 1.0, "H": 0.5}   # 기종별 소요(h): L40S 1.0 · H100 0.5
+TT = {"L": 1.0, "H": 0.5}
 
 
 def test_should_wait_pure_cases():
-    w, why = lq.should_wait(0, GPUS2, 1, TT, {1: 0.2})                               # 느린 GPU 가 빔 · 빠른 GPU 가 곧 빔(0.2+0.5 < 1.0) · k=1 ≤ m=1
+    w, why = lq.should_wait(0, GPUS2, 1, TT, {1: 0.2})
     assert w and "k ≤ m" in why
-    w, why = lq.should_wait(0, GPUS2, 1, TT, {1: 0.8})                               # 멀다(0.8+0.5 ≥ 1.0) → m=0 → 바로 올림
+    w, why = lq.should_wait(0, GPUS2, 1, TT, {1: 0.8})
     assert not w and "일찍 끝나는 빠른 GPU 가 없어" in why
-    w, why = lq.should_wait(0, GPUS2, 1, TT, {1: None})                              # 남은 시간 None → 기다리지 않음
+    w, why = lq.should_wait(0, GPUS2, 1, TT, {1: None})
     assert not w and "읽지 못해" in why
-    w, why = lq.should_wait(0, GPUS2, 1, {"L": 1.0}, {1: 0.2})                       # 한 기종(H) 자료 없음 → 기다리지 않음
+    w, why = lq.should_wait(0, GPUS2, 1, {"L": 1.0}, {1: 0.2})
     assert not w and "소요 자료가 없어" in why
-    assert not lq.should_wait(0, GPUS2, 1, {"H": 0.5}, {1: 0.2})[0]                  # 빈 기종(L) 자료 없음
-    w, why = lq.should_wait(0, GPUS2, 2, TT, {1: 0.2})                               # k=2 > m=1 → 바로 올림
+    assert not lq.should_wait(0, GPUS2, 1, {"H": 0.5}, {1: 0.2})[0]
+    w, why = lq.should_wait(0, GPUS2, 2, TT, {1: 0.2})
     assert not w and "k > m" in why
     two = {**GPUS2, 2: gpu(*H100)}
-    assert lq.should_wait(0, two, 2, TT, {1: 0.2, 2: 0.3})[0]                        # 빠른 GPU 둘이 곧 빔 → k=2 ≤ m=2
-    assert not lq.should_wait(1, GPUS2, 1, TT, {0: 0.2})[0]                          # 빈 GPU 가 빠른 쪽이면 기다릴 이유 없음
-    assert not lq.should_wait(0, GPUS2, 0, TT, {1: 0.2})[0]                          # 대기 판 0개
+    assert lq.should_wait(0, two, 2, TT, {1: 0.2, 2: 0.3})[0]
+    assert not lq.should_wait(1, GPUS2, 1, TT, {0: 0.2})[0]
+    assert not lq.should_wait(0, GPUS2, 0, TT, {1: 0.2})[0]
 
 
 def test_collect_estimates_medians_per_kind_and_remaining():
@@ -961,7 +924,7 @@ def test_collect_estimates_medians_per_kind_and_remaining():
                     "d1": {"status": "done", "gpu": 1, "started": ago(7200), "ended": ago(5400)},
                     "d2": {"status": "done", "gpu": 0, "started": ago(7200), "ended": ago(3600)}}}
     tt, rem = lq.collect_estimates(q, st, GPUS2)
-    assert tt == {"H": pytest.approx(0.5), "L": pytest.approx(1.0)} and rem == {1: None}   # 진행 로그가 없는 도는 판은 남은 시간 None
+    assert tt == {"H": pytest.approx(0.5), "L": pytest.approx(1.0)} and rem == {1: None}
 
 
 def _iso_ago(sec):
@@ -969,7 +932,6 @@ def _iso_ago(sec):
 
 
 def _wait2(tmp_path, hrun_hours=0.45, progress="Epoch 50/60", n_hdone=1, n_queued=1, gpus=None):
-    """느린 GPU(L40S 0)가 막 비는 시점. 빠른 GPU(H100 1)는 판 hrun 이 도는 중이고 같은 기종에서 끝난 판이 n_hdone 개(각 0.5h)다."""
     items = [mk_item(tmp_path, "lend"), mk_item(tmp_path, "hrun")] + [mk_item(tmp_path, f"hd{i}") for i in range(n_hdone)] + [mk_item(tmp_path, f"q{i}") for i in range(1, n_queued + 1)]
     qp = mk_queue(tmp_path, items)
     be = lq.FakeBackend(gpus or {0: gpu(*L40S), 1: gpu(*H100, procs=1, used=20.0)})
@@ -981,7 +943,7 @@ def _wait2(tmp_path, hrun_hours=0.45, progress="Epoch 50/60", n_hdone=1, n_queue
         log = Path(items[1]["log_dir"]) / "run.log"
         log.parent.mkdir(parents=True)
         log.write_text(progress)
-    run(be, "next", "--queue", qp, "--item", "lend", "--gpu", 0, "--exit", 0)      # 느린 GPU 가 먼저 빔
+    run(be, "next", "--queue", qp, "--item", "lend", "--gpu", 0, "--exit", 0)
     return qp, be
 
 
@@ -995,26 +957,25 @@ def test_slow_gpu_waits_when_fast_gpu_frees_soon(tmp_path):
     assert st["items"]["q1"]["status"] == "queued" and not be.launches and "0" in st["idle_gpus"]
     d = last_decision(qp)
     assert d["wait"] is True and d["k"] == 1 and "k ≤ m" in d["why"] and d["type_total"]["L"] == pytest.approx(1.0, abs=0.01)
-    assert sum("기다립니다" in n and "k ≤ m" in n for n in be.notes) == 1                 # 기다림은 알림에도 적는다
+    assert sum("기다립니다" in n and "k ≤ m" in n for n in be.notes) == 1
     assert len(be.notes) == 1
 
 
 @pytest.mark.parametrize("kw,reason", [
-    ({"hrun_hours": 4, "n_hdone": 2}, "일찍 끝나는 빠른 GPU 가 없어"),    # 멀면 즉시
-    ({"progress": None}, "읽지 못해"),                                  # 남은 시간 None → 즉시
-    ({"progress": None, "n_hdone": 0}, "소요 자료가 없어"),                # 자료 없음 → 즉시
-    ({"n_queued": 2}, "k > m"),                                          # k > m → 즉시
+    ({"hrun_hours": 4, "n_hdone": 2}, "일찍 끝나는 빠른 GPU 가 없어"),
+    ({"progress": None}, "읽지 못해"),
+    ({"progress": None, "n_hdone": 0}, "소요 자료가 없어"),
+    ({"n_queued": 2}, "k > m"),
 ])
 def test_slow_gpu_launches_immediately_when_wait_not_justified(tmp_path, kw, reason):
     qp, _be = _wait2(tmp_path, **kw)
     st = state(qp)
     assert st["items"]["q1"]["status"] == "running" and st["items"]["q1"]["gpu"] == 0 and not st["idle_gpus"]
     d = last_decision(qp)
-    assert d["wait"] is False and reason in d["why"]                                   # 기다리지 않은 근거도 남긴다
+    assert d["wait"] is False and reason in d["why"]
 
 
 def test_waiting_gpu_is_reevaluated_when_fast_gpu_times_out(tmp_path):
-    """기다리는 동안 빠른 GPU 판이 타임아웃(4)으로 끝나 next 가 그 GPU 에 발사하지 않아도 대기 판이 굶지 않는다."""
     qp, be = _wait2(tmp_path)
     assert not be.launches and "0" in state(qp)["idle_gpus"]
     run(be, "next", "--queue", qp, "--item", "hrun", "--gpu", 1, "--exit", 4)
@@ -1024,14 +985,14 @@ def test_waiting_gpu_is_reevaluated_when_fast_gpu_times_out(tmp_path):
 
 def test_waiting_gpu_is_released_when_fast_gpu_launch_takes_the_item(tmp_path):
     qp, be = _wait2(tmp_path)
-    run(be, "next", "--queue", qp, "--item", "hrun", "--gpu", 1, "--exit", 2)         # 빠른 GPU 가 비정상 종료 → 같은 GPU 에 다음 판(q1)이 올라간다
+    run(be, "next", "--queue", qp, "--item", "hrun", "--gpu", 1, "--exit", 2)
     st = state(qp)
     assert st["items"]["q1"]["gpu"] == 1 and st["items"]["q1"]["status"] == "running" and not st["idle_gpus"]
 
 
 def test_waiting_gpu_is_reevaluated_on_release_and_relaunch_paths(tmp_path):
     qp, be = _wait2(tmp_path)
-    set_state(qp, hrun={"status": "launch-failed", "maybe_alive": True})              # 빠른 GPU 판이 «살아 있을 수 있음»으로 굳음 → 더 기다릴 근거 없음
+    set_state(qp, hrun={"status": "launch-failed", "maybe_alive": True})
     assert run(be, "release", qp, "--item", "hrun", "--reason", "PID 사망 확인") == 0
     assert state(qp)["items"]["q1"]["status"] == "running" and not state(qp)["idle_gpus"]
 
@@ -1054,8 +1015,6 @@ def test_vram_large_item_still_skips_l40s_with_wait_logic_on(tmp_path):
     it = state(qp)["items"]
     assert (it["small"]["gpu"], it["big"]["gpu"]) == (0, 1)
 
-
-# ───────────── 진행률 읽기 견고화 ─────────────
 
 @pytest.mark.parametrize("tail,rx", [
     ("-5/10", r"(-?\d+)/(\d+)"), ("0/10", r"(\d+)/(\d+)"), ("70/60", r"(\d+)/(\d+)"), ("1/99999999999999999999999", r"(\d+)/(\d+)"),
@@ -1087,8 +1046,6 @@ def test_progress_regex_is_validated_at_parse_and_approve(tmp_path, rx, ok):
     assert (run(lq.FakeBackend(six_gpus()), "approve", qp) == 0) is ok
 
 
-# ───────────── Phase 5: 판 < GPU 배치 제안 ─────────────
-
 TABLE = json.loads((TW_DIR / "placement_table.json").read_text())
 SIX = {g: gpu(*(H100 if g < 2 else L40S)) for g in range(6)}
 BOTH, DDP = {"DDP_READY": "1", "PROP_BATCH_READY": "1"}, {"DDP_READY": "1"}
@@ -1101,7 +1058,7 @@ def plan(n, env, gpus=SIX):
 def test_placement_without_declaration_is_one_gpu_per_job_with_reason():
     p = plan(3, {})
     assert p["mode"] == "one-per-gpu" and [g["gpus"] for g in p["groups"]] == [[0], [1], [2]] and "DDP_READY" in p["reason"] and "PROP_BATCH_READY" in p["reason"]
-    p = plan(3, DDP)   # 판 3개 행은 비례 짝이 필요하다 — DDP 만 선언해서는 묶지 않는다
+    p = plan(3, DDP)
     assert p["mode"] == "one-per-gpu" and "PROP_BATCH_READY" in p["reason"] and "DDP_READY" not in p["reason"]
 
 
@@ -1111,7 +1068,7 @@ def test_placement_bundles_when_declared():
     assert [g["gpus"] for g in plan(4, DDP)["groups"]] == [[0], [1], [2, 3], [4, 5]]
     assert [g["jobs"] for g in plan(5, BOTH)["groups"]] == [["j1", "j2"], ["j3", "j4"], ["j5"]]
     assert [g["gpus"] for g in plan(2, DDP)["groups"]] == [[0, 1], [2, 3, 4, 5]]
-    assert plan(1, DDP)["mode"] == "one-per-gpu"                                      # 판 1개(6장 비례 DDP)는 비례 짝 선언까지 필요
+    assert plan(1, DDP)["mode"] == "one-per-gpu"
     assert plan(1, BOTH)["groups"][0]["gpus"] == [0, 1, 2, 3, 4, 5]
 
 
@@ -1133,7 +1090,7 @@ def test_place_command_only_proposes_and_table_gets_placement_column(tmp_path, c
     assert run(be, "table", qp, "--gpus", "0,1,2,3,4,5") == 0
     out = capsys.readouterr().out
     assert "| 배치 |" in out and "| GPU 0,2 (묶음 1, 1번째) |" in out and "| GPU 4,5 (묶음 3, 1번째) |" in out
-    assert not be.launches                                                            # 제안만 — 발사 0건
+    assert not be.launches
 
 
 def test_read_env_parses_exports_quotes_and_comments(tmp_path):
@@ -1145,19 +1102,18 @@ def test_read_env_parses_exports_quotes_and_comments(tmp_path):
 def test_ddp_ready_zero_is_not_a_declaration():
     assert plan(2, {"DDP_READY": "0"})["mode"] == "one-per-gpu" and "DDP_READY" in plan(2, {"DDP_READY": "0"})["reason"]
     assert plan(3, {"DDP_READY": "0", "PROP_BATCH_READY": "0"})["mode"] == "one-per-gpu"
-    assert plan(2, {"DDP_READY": "true"})["mode"] == "one-per-gpu"                    # «1» 만 선언으로 인정한다
+    assert plan(2, {"DDP_READY": "true"})["mode"] == "one-per-gpu"
     assert plan(2, {"DDP_READY": "1"})["mode"] == "bundle"
 
 
 def test_placement_table_values_match_benchmark_note():
-    want = {"1": (0.2, 0.6), "2": (0.3, 0.6), "3": (0.5, 0.9), "4": (0.6, 0.9), "5": (0.7, 0.9)}   # placement_table.json 예시 표
+    want = {"1": (0.2, 0.6), "2": (0.3, 0.6), "3": (0.5, 0.9), "4": (0.6, 0.9), "5": (0.7, 0.9)}   # REF: placement_table.json 예시 표
     assert set(TABLE["rows"]) == set(want) and TABLE["config"] == {"H100": 2, "L40S": 4}
     for n, (fin, par) in want.items():
         assert (TABLE["rows"][n]["finish_h"], TABLE["rows"][n]["parallel_h"]) == (fin, par)
-        assert sum(g["jobs"] for g in TABLE["rows"][n]["groups"]) == int(n)         # 묶음의 판 수 합 = 판 수
+        assert sum(g["jobs"] for g in TABLE["rows"][n]["groups"]) == int(n)
 
 
-# ───────────── 검수 대응: 승인 경계 ─────────────
 
 @pytest.mark.parametrize("field,val", [("purpose", "a\nb"), ("change", "x\x1b[31mred"), ("baseline", "t\tb"), ("eval_cmd", "true\nrm -rf x"), ("log_dir", "/tmp/a\nb"), ("id", "a\u0085b")])
 def test_control_characters_in_any_string_field_are_rejected(tmp_path, field, val):
@@ -1179,12 +1135,11 @@ def test_table_escapes_cells_masks_secrets_and_lists_exec_summary(tmp_path, caps
     out = capsys.readouterr().out
     assert "| a/b |" in out and "a|b" not in out and "SECRETVALUE" not in out and "--api-key ***" in out
     assert "실행 요약" in out and "- a1: 명령 `bash run.sh --api-key *** {GPU}` · log_dir " in out and "XYZ789" not in out
-    # 실행에 쓰이는 필드는 기본 출력에 전부 보인다(시크릿은 가림) — 예전에는 eval_cmd 를 «있음»으로만 보이고 나머지는 --full 이 있어야 보였다
     assert "eval_cmd: evalrun token=***" in out and "done_regex: DONE" in out and "expect: run\\.sh" in out
-    assert run(be, "table", qp, "--full") == 0   # --full 은 옛 호출 호환용으로 받기만 한다
+    assert run(be, "table", qp, "--full") == 0
     full = capsys.readouterr().out
     assert "XYZ789" not in full and "eval_cmd: evalrun token=***" in full and "done_regex: DONE" in full and "expect: run\\.sh" in full
-    assert run(be, "approve", qp) == 2 and not lq.state_path(qp).exists()             # 시크릿 형태는 승인 거부
+    assert run(be, "approve", qp) == 2 and not lq.state_path(qp).exists()
 
 
 def test_approve_rejects_secret_shape_in_eval_cmd_and_argv_joined(tmp_path):
@@ -1207,16 +1162,16 @@ def test_code_change_after_approval_is_recorded_and_notified_but_not_blocking(tm
     be = lq.FakeBackend({0: gpu(*H100)})
     run(be, "approve", qp)
     ap = state(qp)["approved"]["code"]
-    assert len(ap["head"]) == 40 and ap["changed"] == 1                                # 승인 시점의 HEAD · 변경 파일 수(train.env 한 개, launch-queue 폴더는 제외)
+    assert len(ap["head"]) == 40 and ap["changed"] == 1
     run(be, "start", qp, "--gpus", "0")
-    assert not any("승인 이후 코드가" in n for n in be.notes) and "code_changed" not in state(qp)   # state·이벤트 파일이 해시를 흔들지 않는다
+    assert not any("승인 이후 코드가" in n for n in be.notes) and "code_changed" not in state(qp)
     (proj / "run.sh").write_text("echo 2\n")
     _git(proj, "commit", "-q", "-am", "fix")
     run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 0)
-    assert state(qp)["items"]["a2"]["status"] == "running"                             # 막지 않는다
+    assert state(qp)["items"]["a2"]["status"] == "running"
     assert sum("승인 이후 코드가 바뀜(HEAD " in n for n in be.notes) == 1 and "HEAD" in state(qp)["code_changed"]["msg"]
     run(be, "next", "--queue", qp, "--item", "a2", "--gpu", 0, "--exit", 0)
-    assert state(qp)["items"]["a3"]["status"] == "running" and sum("승인 이후 코드가" in n for n in be.notes) == 1   # 같은 변경은 다시 알리지 않는다
+    assert state(qp)["items"]["a3"]["status"] == "running" and sum("승인 이후 코드가" in n for n in be.notes) == 1
 
 
 def test_code_snapshot_is_none_outside_git_repo(tmp_path):
@@ -1243,7 +1198,7 @@ def test_tmux_backend_sign_uses_env_script_and_only_warns_on_failure(tmp_path, m
     lq.TmuxBackend().sign("approve", "t", "b", "actor", str(tmp_path))
     assert out.read_text() == "approve|t|b|actor|"
     script.write_text("#!/usr/bin/env bash\nexit 3\n")
-    lq.TmuxBackend().sign("launch", "t", "b", "actor", str(tmp_path))                   # 실패해도 예외 없이 경고만
+    lq.TmuxBackend().sign("launch", "t", "b", "actor", str(tmp_path))
     assert "감시 서명(launch) 기록 실패" in capsys.readouterr().err
     monkeypatch.setenv("LAUNCH_QUEUE_OVERSIGHT", str(tmp_path / "missing.sh"))
     lq.TmuxBackend().sign("launch", "t", "b", "actor", str(tmp_path / "no-such-cwd"))
@@ -1254,34 +1209,32 @@ def test_halt_stops_all_launching_until_approve(tmp_path):
     qp, be = ready(tmp_path, 4, gpus={0: gpu(*H100), 1: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
     assert run(be, "halt", qp, "--reason", "점검 중") == 0
-    assert run(be, "halt", qp, "--reason", "또") == 0                                  # 이미 멈춤: 이벤트·알림은 처음 한 번
+    assert run(be, "halt", qp, "--reason", "또") == 0
     assert len(events(qp, "halted")) == 1 and sum("사용자 정지" in n for n in be.notes) == 1 and state(qp)["halted"]["detail"] == "점검 중"
     n = len(be.launches)
     run(be, "start", qp, "--gpus", "1")
     run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 0)
     set_state(qp, a2={"status": "needs-fix"})
     assert run(be, "relaunch", qp, "--item", "a2", "--fix-note", "x") == 2
-    assert len(be.launches) == n                                                       # start·next·relaunch 발사 0건
-    run(be, "approve", qp)                                                              # 해제는 approve 뿐
-    run(be, "start", qp, "--gpus", "0")                                                 # approve 는 발사하지 않는다 — 이어 올리는 길은 start(되풀이된 종료 보고는 무시)
+    assert len(be.launches) == n
+    run(be, "approve", qp)
+    run(be, "start", qp, "--gpus", "0")
     assert len(be.launches) == n + 1
 
-
-# ───────────── 검수 대응: 낮음·비차단 묶음 ─────────────
 
 def test_state_events_launch_dir_and_script_permissions_and_umask_restored(tmp_path):
     before = os.umask(0)
     os.umask(before)
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
-    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)             # needs-fix 이벤트
+    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)
     mode = lambda p: os.stat(p).st_mode & 0o777
     assert mode(lq.state_path(qp)) == 0o600 and mode(qp.with_name("q1.lock")) == 0o600
     assert mode(qp.with_name("q1.events")) == 0o700 and mode(qp.with_name("q1.launch")) == 0o700 and mode(be.launches[0][2]) == 0o600
     assert all(mode(p) == 0o600 for p in qp.with_name("q1.events").glob("*.json"))
     after = os.umask(0)
     os.umask(after)
-    assert before == after                                                              # main 이 끝나면 umask 를 되돌린다
+    assert before == after
 
 
 def test_launch_script_comment_has_no_user_strings(tmp_path):
@@ -1310,12 +1263,12 @@ def test_exceptions_become_event_notice_and_rc1(tmp_path, cmd, capsys):
     qp, ok_be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
     be = Boom({0: gpu(*H100)})
     if cmd == "next":
-        assert run(ok_be, "start", qp, "--gpus", "0") == 0   # a1 이 도는 중이어야 종료 보고(next)가 반영된다
+        assert run(ok_be, "start", qp, "--gpus", "0") == 0
     args = ("start", qp, "--gpus", "0") if cmd == "start" else ("next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 0)
     assert run(be, *args) == 1
     ev = events(qp, "launch-blocked")
     assert len(ev) == 1 and "RuntimeError" in ev[0]["reason"] and len(be.notes) == 1 and "Traceback" not in capsys.readouterr().err
-    assert run(be, "status", qp) == 0                                                    # 락이 풀려 있다(교착 없음)
+    assert run(be, "status", qp) == 0
 
 
 def test_on_exit_uses_absolute_system_python():
@@ -1336,33 +1289,33 @@ def test_wait_event_skips_and_quarantines_broken_files_and_enforces_min_interval
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 1 and json.loads(lines[0])["kind"] == "needs-fix"
     assert (d / "20200101T000000-x-1-1.json.bad").exists() and not (d / "20200101T000000-x-1-1.json.consumed").exists()
-    assert run(be, "events", qp) == 0                                                    # 비 pending: *.json 과 *.consumed 만
+    assert run(be, "events", qp) == 0
     out = capsys.readouterr().out
     assert len(out.splitlines()) == 1 and json.loads(out)["kind"] == "needs-fix" and json.loads(out)["file"].endswith(".consumed") and ".bad" not in out
 
 
 def test_exit_3_ends_the_refail_streak_and_include_gpu_restores_chain(tmp_path):
     qp, be = ready(tmp_path, 5, gpus={0: gpu(*H100)})
-    set_state(qp, a1={"fixes": 1, "status": "running"}, a2={"fixes": 1, "status": "running"})   # 종료 보고는 도는 판에 대해서만 받는다
+    set_state(qp, a1={"fixes": 1, "status": "running"}, a2={"fixes": 1, "status": "running"})
     run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)
-    run(be, "next", "--queue", qp, "--item", "a3", "--gpu", 0, "--exit", 3)             # 학습은 정상 종료(평가만 실패) → «연속» 끊김
+    run(be, "next", "--queue", qp, "--item", "a3", "--gpu", 0, "--exit", 3)
     run(be, "next", "--queue", qp, "--item", "a2", "--gpu", 0, "--exit", 2)
     assert state(qp)["excluded_gpus"] == []
 
 
 def test_all_gpus_excluded_event_once_and_include_gpu_with_signature(tmp_path):
     qp, be = ready(tmp_path, 5, gpus={0: gpu(*H100)})
-    set_state(qp, a1={"fixes": 1, "status": "running"}, a2={"fixes": 1, "status": "running"})   # 종료 보고는 도는 판에 대해서만 받는다
+    set_state(qp, a1={"fixes": 1, "status": "running"}, a2={"fixes": 1, "status": "running"})
     run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)
     run(be, "next", "--queue", qp, "--item", "a2", "--gpu", 0, "--exit", 2)
     assert state(qp)["excluded_gpus"] == [0] and len(events(qp, "all-gpus-excluded")) == 1
     assert sum("모든 GPU" in n for n in be.notes) == 1
-    set_state(qp, a3={"status": "done"})   # a1 이 닫힐 때 이 GPU 에 올라간 a3 는 끝난 것으로(도는 판이 쥔 GPU 에는 then-next 가 올리지 않는다)
+    set_state(qp, a3={"status": "done"})
     assert run(be, "include-gpu", qp, "--gpu", "0", "--reason", "카드 점검 완료", "--by", "tester", "--then-next") == 0
     st = state(qp)
     assert st["excluded_gpus"] == [] and "0" not in st.get("gpu_refail", {}) and any(s[0] == "approve" and "gpu0 제외 해제" in s[1] and "카드 점검 완료" in s[2] for s in be.signs)
-    assert [s["status"] for p, s in st["items"].items() if p == "a4"] == ["running"]   # --then-next 로 바로 이어 올라간다
-    assert run(be, "include-gpu", qp, "--gpu", "0", "--reason", "또") == 2             # 제외 상태가 아니면 받지 않는다
+    assert [s["status"] for p, s in st["items"].items() if p == "a4"] == ["running"]
+    assert run(be, "include-gpu", qp, "--gpu", "0", "--reason", "또") == 2
 
 
 def test_finished_event_after_approve_rerun_reports_maybe_alive_training(tmp_path, capsys):
@@ -1371,7 +1324,7 @@ def test_finished_event_after_approve_rerun_reports_maybe_alive_training(tmp_pat
     run(be, "start", qp, "--gpus", "0")
     set_state(qp, a2={"status": "done"})
     assert not events(qp, "queue-finished")
-    run(be, "approve", qp)                                                                # approve 재실행 뒤에도 종료 판정
+    run(be, "approve", qp)
     ev = events(qp, "queue-finished")
     assert len(ev) == 1 and ev[0]["maybe_alive"] == ["a1"] and any("살아 있을 수 있는 학습 1개" in n for n in be.notes)
     capsys.readouterr()
@@ -1401,20 +1354,18 @@ def test_status_and_events_warn_when_watcher_process_is_gone(tmp_path, capsys):
     run(be, "events", qp, "--pending")
     assert "와쳐 없음(자동 발사 사슬 끊김)" in capsys.readouterr().out
     start = Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]
-    ls.write_text(json.dumps({"watcher_pid": os.getpid(), "watcher_start": start}))     # 살아 있는 PID(시작 시각까지 일치)
+    ls.write_text(json.dumps({"watcher_pid": os.getpid(), "watcher_start": start}))
     assert lq.watcher_alive(str(ls)) is True and lq.missing_watchers(state(qp)) == []
-    ls.write_text(json.dumps({"watcher_pid": os.getpid(), "watcher_start": "1"}))       # PID 재사용(시작 시각 불일치)
+    ls.write_text(json.dumps({"watcher_pid": os.getpid(), "watcher_start": "1"}))
     assert lq.watcher_alive(str(ls)) is False and lq.watcher_alive(str(tmp_path / "none.json")) is None
 
-
-# ───────────── 후속: umask 누수 방지 · halt 뒤 approve ─────────────
 
 def test_log_dir_and_child_processes_keep_the_original_umask(tmp_path):
     seen = []
 
     class Spy(lq.FakeBackend):
         def sign(self, *a):
-            seen.append(lq.run_proc(["bash", "-c", "umask"], capture_output=True, text=True).stdout.strip())   # 자식 프로세스가 보는 umask
+            seen.append(lq.run_proc(["bash", "-c", "umask"], capture_output=True, text=True).stdout.strip())
             super().sign(*a)
     old = os.umask(0o022)
     try:
@@ -1425,9 +1376,9 @@ def test_log_dir_and_child_processes_keep_the_original_umask(tmp_path):
         os.umask(old)
     ld = Path(mk_item(tmp_path, "a1")["log_dir"])
     mode = lambda p: os.stat(p).st_mode & 0o777
-    assert seen == ["0022"] and mode(ld) == 0o755 and mode(ld.parent) == 0o755          # 학습 로그 폴더는 도구가 권한을 바꾸지 않는다
-    assert mode(lq.state_path(qp)) == 0o600 and mode(qp.with_name("q1.launch")) == 0o700   # 도구 자신의 파일은 그대로 0600/0700
-    assert lq._ORIG_UMASK is None                                                       # main 이 끝나면 되돌린다
+    assert seen == ["0022"] and mode(ld) == 0o755 and mode(ld.parent) == 0o755
+    assert mode(lq.state_path(qp)) == 0o600 and mode(qp.with_name("q1.launch")) == 0o700
+    assert lq._ORIG_UMASK is None
 
 
 def test_approve_after_halt_does_not_launch_clears_idle_and_hints_start(tmp_path, capsys):
@@ -1441,10 +1392,10 @@ def test_approve_after_halt_does_not_launch_clears_idle_and_hints_start(tmp_path
     capsys.readouterr()
     assert run(be, "approve", qp) == 0
     out = capsys.readouterr().out
-    assert len(be.launches) == n and state(qp)["idle_gpus"] == {} and not state(qp)["halted"]      # approve 는 발사하지 않는다
+    assert len(be.launches) == n and state(qp)["idle_gpus"] == {} and not state(qp)["halted"]
     assert "발사를 이어가려면 start --gpus" in out
     assert run(be, "start", qp, "--gpus", "0,1") == 0
-    assert len(be.launches) == n + 1 and state(qp)["items"]["a2"]["gpu"] == 1                      # 이미 running 인 GPU 0 은 건너뛰고 빈 GPU 1 에만
+    assert len(be.launches) == n + 1 and state(qp)["items"]["a2"]["gpu"] == 1
     capsys.readouterr()
     run(be, "approve", qp)
     run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 0)
@@ -1452,20 +1403,18 @@ def test_approve_after_halt_does_not_launch_clears_idle_and_hints_start(tmp_path
     run(be, "next", "--queue", qp, "--item", "a3", "--gpu", 1, "--exit", 0)
     capsys.readouterr()
     run(be, "approve", qp)
-    assert "발사를 이어가려면" not in capsys.readouterr().out                            # queued 가 없으면 안내하지 않는다
+    assert "발사를 이어가려면" not in capsys.readouterr().out
 
-
-# ───────────── E2E 결함: launch-set rc 0 뒤의 추가 verify 는 결과를 바꾸지 않는다 ─────────────
 
 def test_rc0_with_failing_extra_verify_stays_running_without_failure_event_and_signs(tmp_path):
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
-    be.verify_rc = 1                                                                    # launch-set 은 통과했지만 그 뒤 학습이 빨리 죽은 상황
+    be.verify_rc = 1
     run(be, "start", qp, "--gpus", "0")
     a1 = state(qp)["items"]["a1"]
-    assert a1["status"] == "running" and not a1["maybe_alive"] and a1["verify"].startswith("rc=1 ")   # 참고 필드에만 적는다
+    assert a1["status"] == "running" and not a1["maybe_alive"] and a1["verify"].startswith("rc=1 ")
     assert not events(qp, "launch-failed") and not be.notes
-    assert len(be.signatures) == 1 and be.signatures[0][0].endswith(" a1")             # 발사 감시 서명은 rc 0 이면 항상 남는다
-    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)             # 빨리 죽은 판은 와쳐 exit 2 의 정상 경로로
+    assert len(be.signatures) == 1 and be.signatures[0][0].endswith(" a1")
+    run(be, "next", "--queue", qp, "--item", "a1", "--gpu", 0, "--exit", 2)
     assert state(qp)["items"]["a1"]["status"] == "needs-fix" and len(events(qp, "needs-fix")) == 1
 
 
@@ -1478,40 +1427,35 @@ def test_rc1_launch_set_own_verify_failure_is_still_verify_failed(tmp_path):
     assert len(events(qp, "launch-failed")) == 1 and len(be.notes) == 1 and not be.signatures
 
 
-# ───────────── 2026-10-01 감사 P6 묶음 B: 발사 도구 결함 수정의 짝 시험 ─────────────
-
 def next_args(qp, item, gpu_no, code, attempt=None):
     return ["next", "--queue", qp, "--item", item, "--gpu", gpu_no, "--exit", code, *([] if attempt is None else ["--attempt", attempt])]
 
 
 def test_stale_attempt_report_does_not_close_the_relaunched_item(tmp_path, capsys):
-    """#1: 이전 시도의 종료 콜백이 재발사된 현재 판을 done 으로 닫고 GPU 점유를 지우던 결함."""
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
-    set_state(qp, a1={"attempt": 2})                                    # 재발사로 2번째 시도가 도는 중
+    set_state(qp, a1={"attempt": 2})
     n = len(be.launches)
-    assert run(be, *next_args(qp, "a1", 0, 0, attempt=1)) == 0          # 1번째 시도 와쳐의 늦은 보고
+    assert run(be, *next_args(qp, "a1", 0, 0, attempt=1)) == 0
     it = state(qp)["items"]["a1"]
     assert it["status"] == "running" and it["exit"] is None and len(be.launches) == n
     assert "무시" in capsys.readouterr().out
-    assert run(be, *next_args(qp, "a1", 0, 0, attempt=2)) == 0          # 현재 시도의 보고는 받는다
+    assert run(be, *next_args(qp, "a1", 0, 0, attempt=2)) == 0
     assert state(qp)["items"]["a1"]["status"] == "done"
-    assert len(be.launches) == n + 1                                    # 그 GPU 에 다음 판이 올라간다
+    assert len(be.launches) == n + 1
 
 
 def test_report_for_already_processed_item_is_ignored_even_without_attempt(tmp_path):
-    """#1: --attempt 가 없는 옛 와쳐의 보고도 running·launching 일 때만 반영한다(되풀이 보고가 상태를 되돌리지 않는다)."""
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
     run(be, *next_args(qp, "a1", 0, 0))
     n = len(be.launches)
-    run(be, *next_args(qp, "a1", 0, 2))                                 # 이미 done — needs-fix 로 바뀌면 안 된다
+    run(be, *next_args(qp, "a1", 0, 2))
     assert state(qp)["items"]["a1"]["status"] == "done" and len(be.launches) == n
 
 
 @pytest.mark.parametrize("code,status_word", [(6, "평가 시간 초과"), (7, "신호")])
 def test_hold_exit_codes_6_7_keep_gpu_and_launch_nothing(tmp_path, code, status_word):
-    """D7: 평가 시간 초과(6)·와쳐 신호 중단(7)은 학습·평가가 살아 있을 수 있어 exit 4 처럼 GPU 를 보류한다."""
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
     assert run(be, *next_args(qp, "a1", 0, code)) == 0
@@ -1519,19 +1463,18 @@ def test_hold_exit_codes_6_7_keep_gpu_and_launch_nothing(tmp_path, code, status_
     assert it["status"] == "timeout" and it["maybe_alive"] and status_word in it["fail_reason"] and len(be.launches) == 1
     assert any(status_word.split()[0] in n or str(code) in n for n in be.notes)
     run(be, "start", qp, "--gpus", "0")
-    assert len(be.launches) == 1                                        # 점유가 풀리기 전엔 올리지 않는다
+    assert len(be.launches) == 1
     assert run(be, "release", qp, "--item", "a1", "--reason", "PID 사망 확인", "--then-next") == 0
     assert len(be.launches) == 2
 
 
 def test_halt_during_launch_gap_cancels_reserved_item(tmp_path, monkeypatch):
-    """#2: 예약(락 안)과 발사(락 밖) 사이에 halt 가 들어와도 «이후 발사 0건»(background-task.md)이어야 한다."""
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
     real = lq.write_launch_script
 
     def script_then_halt(*a, **kw):
         out = real(*a, **kw)
-        assert run(be, "halt", qp, "--reason", "발사 직전 정지") == 0   # 락이 풀려 있는 구간
+        assert run(be, "halt", qp, "--reason", "발사 직전 정지") == 0
         return out
     monkeypatch.setattr(lq, "write_launch_script", script_then_halt)
     assert run(be, "start", qp, "--gpus", "0") == 0
@@ -1556,21 +1499,19 @@ def test_queue_edit_during_launch_gap_cancels_reserved_item(tmp_path, monkeypatc
 
 
 def test_late_launch_result_does_not_overwrite_exit_report(tmp_path):
-    """#3: 발사 중에 와쳐가 이미 끝났다고 알려 왔으면(빨리 죽은 판) 발사 결과 기록이 running 으로 덮어쓰면 안 된다."""
     class ReportsDuringLaunch(lq.FakeBackend):
         def launch(self, target, script, rc_file, timeout):
-            run(self, *next_args(qp, "a1", 0, 0, attempt=1))   # 락이 풀려 있는 발사 구간에 종료 보고가 먼저 도착
+            run(self, *next_args(qp, "a1", 0, 0, attempt=1))
             return super().launch(target, script, rc_file, timeout)
     qp = mk_queue(tmp_path, [mk_item(tmp_path, "a1")])
     be = ReportsDuringLaunch({0: gpu(*H100)})
     run(be, "approve", qp)
     run(be, "start", qp, "--gpus", "0")
     it = state(qp)["items"]["a1"]
-    assert it["status"] == "done" and it["exit"] == 0 and it["launch_state"]   # 종료 기록은 지켜지고 발사 증거만 보태진다
+    assert it["status"] == "done" and it["exit"] == 0 and it["launch_state"]
 
 
 def test_start_emits_queue_finished_when_every_first_launch_fails(tmp_path):
-    """#4: 최초 발사가 전부 실패하면 이후 next 가 없어 queue-finished 가 안 나오던 결함."""
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
     be.rc.update(a1=64, a2=64)
     run(be, "start", qp, "--gpus", "0")
@@ -1580,7 +1521,6 @@ def test_start_emits_queue_finished_when_every_first_launch_fails(tmp_path):
 
 
 def test_refusal_cap_closes_item_with_event_and_notice(tmp_path):
-    """#5: 거부가 MAX_REFUSALS 에 닿아 launch-failed 로 닫힐 때 이벤트·알림이 없던 결함(launch-set 거부 경로)."""
     qp, be = ready(tmp_path, 1, gpus={0: gpu(*H100)})
     be.rc["a1"] = 76
     for _ in range(lq.MAX_REFUSALS):
@@ -1601,26 +1541,24 @@ def test_refusal_cap_via_watcher_exit_5_also_notifies(tmp_path):
 @pytest.mark.parametrize("raw", ["NaN", "Infinity", "-Infinity", "1e999"])
 @pytest.mark.parametrize("key", ["vram_gb", "cpu_cores"])
 def test_non_finite_resource_amounts_are_rejected(tmp_path, key, raw):
-    """#6: JSON NaN·Infinity 는 `<= 0` 검사를 통과하던 결함."""
     text = json.dumps({"name": "q1", "items": [mk_item(tmp_path, "a1", **{key: 7})]}).replace(f'"{key}": 7', f'"{key}": {raw}')
     with pytest.raises(lq.QueueError, match="유한한 양수"):
         lq.parse_queue(text.encode(), "q1")
 
 
 def test_reapproval_with_reordered_list_reranks_queued_items_and_marks_removed(tmp_path):
-    """#7: 순서만 바꿔 재승인해도 옛 rank 가 남던 결함 + 목록에서 뺀 queued 판은 removed(종결)로."""
     qp, be = ready(tmp_path, 3, gpus={0: gpu(*H100)})
-    items = [mk_item(tmp_path, i) for i in ("a3", "a1")]               # a2 제거, a3 가 앞
+    items = [mk_item(tmp_path, i) for i in ("a3", "a1")]
     qp.write_text(json.dumps({"name": "q1", "items": items}, ensure_ascii=False, indent=2))
     assert run(be, "approve", qp) == 0
     st = state(qp)["items"]
     assert st["a3"]["rank"] < st["a1"]["rank"] and st["a2"]["status"] == "removed"
     run(be, "start", qp, "--gpus", "0")
-    assert [i for i, _, _ in be.launches] == ["a3"]                     # 새 순서대로 올라간다
+    assert [i for i, _, _ in be.launches] == ["a3"]
     run(be, *next_args(qp, "a3", 0, 0))
     run(be, *next_args(qp, "a1", 0, 0))
     fin = events(qp, "queue-finished")
-    assert len(fin) == 1 and fin[0]["done"] == 2 and fin[0]["failed"] == []   # removed 는 종료 판정·완료 수에서 빠진다
+    assert len(fin) == 1 and fin[0]["done"] == 2 and fin[0]["failed"] == []
 
 
 def test_removed_item_does_not_count_as_waiting_and_can_be_readded(tmp_path):
@@ -1634,7 +1572,6 @@ def test_removed_item_does_not_count_as_waiting_and_can_be_readded(tmp_path):
 
 
 def test_table_shows_every_executed_field_by_default_with_secrets_masked(tmp_path, capsys):
-    """#8: 승인 표 기본 출력이 watcher_args·memguard_args·done_regex·expect·log 를 숨기던 결함."""
     it = mk_item(tmp_path, "a1", watcher_args="--timeout-h 5 --eval-timeout-h 3", memguard_args="--high 20G --max 24G", done_log="/x/train_run_*/train.log",
                  log="/x/a1.log", progress_regex="Epoch (\\d+)/(\\d+)", intent="intent/x.md")
     qp = mk_queue(tmp_path, [it])
@@ -1646,17 +1583,15 @@ def test_table_shows_every_executed_field_by_default_with_secrets_masked(tmp_pat
 
 
 def test_two_items_sharing_a_log_path_are_rejected(tmp_path):
-    """#9: log 를 안 주면 둘 다 <log_dir>/run.log 라 같은 log_dir 의 판들이 로그를 공유하던 결함."""
     shared = str(tmp_path / "logs" / "shared")
     items = [mk_item(tmp_path, "a1", log_dir=shared), mk_item(tmp_path, "a2", log_dir=shared)]
     with pytest.raises(lq.QueueError, match="로그 경로가 같습니다"):
         lq.parse_queue(json.dumps({"name": "q1", "items": items}).encode(), "q1")
-    items[1]["log"] = f"{shared}/a2.log"                                # 같은 폴더라도 로그 파일이 다르면 허용
+    items[1]["log"] = f"{shared}/a2.log"
     lq.parse_queue(json.dumps({"name": "q1", "items": items}).encode(), "q1")
 
 
 def test_wait_event_restores_event_when_output_fails(tmp_path, monkeypatch):
-    """#10: 소비 표시를 붙인 뒤 출력이 실패(세션이 끊겨 파이프 닫힘)하면 이벤트가 영영 사라지던 결함."""
     qp, be = ready(tmp_path, 1)
     lq.write_event(qp, "needs-fix", item="a1")
     d = qp.with_name("q1.events")
@@ -1671,10 +1606,9 @@ def test_wait_event_restores_event_when_output_fails(tmp_path, monkeypatch):
 
 
 def test_relaunch_failure_does_not_claim_there_was_no_free_gpu(tmp_path, capsys):
-    """#10: 재발사가 실패(발사 실패)했는데 «빈 GPU 가 없어 맨 앞에 두었다» 고 말하던 오문구."""
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
-    run(be, *next_args(qp, "a1", 0, 2))                                 # a1 needs-fix, a2 가 GPU 0
+    run(be, *next_args(qp, "a1", 0, 2))
     run(be, *next_args(qp, "a2", 0, 0))
     be.rc["a1"] = 65
     capsys.readouterr()
@@ -1684,7 +1618,6 @@ def test_relaunch_failure_does_not_claim_there_was_no_free_gpu(tmp_path, capsys)
 
 
 def test_needs_fix_hint_limits_relaunch_to_path_import_arg_errors(tmp_path):
-    """D8: 자동 재발사는 경로·import·인자 오류만 — needs-fix 이벤트가 세션에 그 기준을 전한다."""
     qp, be = ready(tmp_path, 1, gpus={0: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
     run(be, *next_args(qp, "a1", 0, 2))
@@ -1693,7 +1626,6 @@ def test_needs_fix_hint_limits_relaunch_to_path_import_arg_errors(tmp_path):
 
 
 def test_dead_watcher_of_running_item_emits_watcher_lost_once_and_wait_event_reports_it(tmp_path, capsys, monkeypatch):
-    """#19: SIGKILL 로 죽은 와쳐는 종료 훅이 없어 사슬이 조용히 끊긴다 — 도는 판의 와쳐 PID 가 없으면 경고 이벤트."""
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
     p = subprocess.Popen(["true"])
@@ -1702,7 +1634,7 @@ def test_dead_watcher_of_running_item_emits_watcher_lost_once_and_wait_event_rep
     ls.write_text(json.dumps({"watcher_pid": p.pid, "watcher_start": ""}))
     set_state(qp, a1={"launch_state": str(ls)})
     lq.note_lost_watchers(qp, be)
-    lq.note_lost_watchers(qp, be)                                       # 같은 판은 한 번만
+    lq.note_lost_watchers(qp, be)
     assert len(events(qp, "watcher-lost")) == 1 and sum("와쳐가 죽었습니다" in n for n in be.notes) == 1
     monkeypatch.setattr(lq, "MIN_INTERVAL", 0.01)
     capsys.readouterr()
@@ -1712,7 +1644,6 @@ def test_dead_watcher_of_running_item_emits_watcher_lost_once_and_wait_event_rep
 
 
 def test_watcher_lost_mark_is_cleared_after_reattach_so_second_death_alerts_again(tmp_path):
-    """2026-10-01 P6 검수: reattach 뒤에도 watcher_lost 표시가 남아 두 번째 사망에는 알림이 없던 결함."""
     qp, be = ready(tmp_path, 2, gpus={0: gpu(*H100)})
     run(be, "start", qp, "--gpus", "0")
     p = subprocess.Popen(["true"])
@@ -1722,28 +1653,27 @@ def test_watcher_lost_mark_is_cleared_after_reattach_so_second_death_alerts_agai
     set_state(qp, a1={"launch_state": str(ls)})
     lq.note_lost_watchers(qp, be)
     assert len(events(qp, "watcher-lost")) == 1 and state(qp)["items"]["a1"].get("watcher_lost")
-    ls.write_text(json.dumps({"watcher_pid": os.getpid(), "watcher_start": ""}))   # reattach: 살아 있는 와쳐 PID
+    ls.write_text(json.dumps({"watcher_pid": os.getpid(), "watcher_start": ""}))
     lq.note_lost_watchers(qp, be)
     assert not state(qp)["items"]["a1"].get("watcher_lost"), "reattach 뒤에도 표시가 남음"
-    ls.write_text(json.dumps({"watcher_pid": p.pid, "watcher_start": ""}))         # 두 번째 사망
+    ls.write_text(json.dumps({"watcher_pid": p.pid, "watcher_start": ""}))
     lq.note_lost_watchers(qp, be)
     assert len(events(qp, "watcher-lost")) == 2 and sum("와쳐가 죽었습니다" in n for n in be.notes) == 2
     set_state(qp, a1={"launch_state": None})
 
 
 def test_next_is_not_blocked_by_log_dup_check_on_already_approved_queue(tmp_path):
-    """2026-10-01 P6 검수: 로그 경로 중복 검사는 승인 시점 검증이다 — 검사가 생기기 전에 승인돼 도는 목록의 next 는 막지 않는다."""
     shared = str(tmp_path / "logs" / "shared")
     items = [mk_item(tmp_path, "a1", log_dir=shared), mk_item(tmp_path, "a2", log_dir=shared)]
     raw = json.dumps({"name": "q1", "items": items}).encode()
     with pytest.raises(lq.QueueError, match="로그 경로가 같습니다"):
-        lq.parse_queue(raw, "q1")                                              # 승인 시점 검증은 그대로 거부
-    assert len(lq.parse_queue(raw, "q1", check_log_dup=False)["items"]) == 2   # 발사 경로(launch_one)는 이 호출을 쓴다
+        lq.parse_queue(raw, "q1")
+    assert len(lq.parse_queue(raw, "q1", check_log_dup=False)["items"]) == 2
     qp = mk_queue(tmp_path, [mk_item(tmp_path, "a1"), mk_item(tmp_path, "a2")])
     be = lq.FakeBackend({0: gpu(*H100)})
     assert run(be, "approve", qp, "--session", "test") == 0
     run(be, "start", qp, "--gpus", "0")
-    qp.write_bytes(raw)                                                        # 옛 코드로 승인된 중복 목록을 흉내: 해시만 맞춘다
+    qp.write_bytes(raw)
     st = state(qp)
     st["approved"]["sha256"] = lq.sha256(raw)
     lq.save_state(qp, st)
@@ -1753,7 +1683,6 @@ def test_next_is_not_blocked_by_log_dup_check_on_already_approved_queue(tmp_path
 
 
 def test_launch_script_binds_attempt_only_when_launch_set_supports_it(tmp_path, monkeypatch):
-    """#1: 시도 번호 결박 인자는 새 launch-set.sh 에만 넘긴다(옛 사본은 모르는 인자라 발사 전체가 64 로 거부된다)."""
     qp = mk_queue(tmp_path, [mk_item(tmp_path, "a1")])
     item = lq.parse_queue(qp.read_bytes(), "q1")["items"][0]
     old, new = tmp_path / "old.sh", tmp_path / "new.sh"
@@ -1767,20 +1696,43 @@ def test_launch_script_binds_attempt_only_when_launch_set_supports_it(tmp_path, 
     assert "--queue-attempt 3" in script.read_text()
 
 
-# ───────────── 묶음 B 셸 사본(launch-set.sh·train-watcher.sh)의 짝 시험 ─────────────
-# 가동 중인 와쳐 때문에 두 셸은 제자리 수정을 못 해 사본(.scratch/…/fix/B)에서 고쳤다. 교체 전에는 옛 셸이라 아래 시험이 의미가 없으므로 건너뛰고,
-# TW_SCRIPT_DIR 로 사본을 가리키면 돈다. 교체 뒤에는 기본 경로에서 자동으로 돈다(옛 셸에 돌리면 실제 발사·알림이 일어날 수 있어 «실패 확인» 대신 건너뜀을 택했다).
+PF = "--util-max 100 --sample-sec 60"
+
+
+def test_preflight_args_is_passed_verbatim_to_launch_script_only_when_present(tmp_path):
+    qp = mk_queue(tmp_path, [mk_item(tmp_path, "a1", preflight_args=PF), mk_item(tmp_path, "a2")])
+    items = lq.parse_queue(qp.read_bytes(), "q1")["items"]
+    with_pf = lq.write_launch_script(qp, items[0], 1, "tq0", 0)[0].read_text()
+    without = lq.write_launch_script(qp, items[1], 1, "tq0", 0)[0].read_text()
+    assert with_pf.count(f"--preflight-args {shlex.quote(PF)}") == 1 and with_pf.count("--preflight-args") == 1
+    assert "--preflight-args" not in without
+
+
+def test_table_shows_preflight_args(tmp_path, capsys):
+    qp = mk_queue(tmp_path, [mk_item(tmp_path, "a1", preflight_args=PF)])
+    assert run(lq.FakeBackend(six_gpus()), "table", qp) == 0
+    assert f"preflight_args: {PF}" in capsys.readouterr().out
+
+
+def test_preflight_args_rejects_blank_non_string_and_secret_shape(tmp_path):
+    for bad in ("", "   ", 5):
+        with pytest.raises(lq.QueueError, match="preflight_args"):
+            lq.parse_queue(json.dumps({"name": "q1", "items": [mk_item(tmp_path, "a1", preflight_args=bad)]}).encode(), "q1")
+    q = lq.parse_queue(json.dumps({"name": "q1", "items": [mk_item(tmp_path, "a1", preflight_args="--api-key VALUE")]}).encode(), "q1")
+    with pytest.raises(lq.QueueError, match="preflight_args"):
+        lq.check_secrets(q)
+
+
 NEW_SHELL = "--queue-attempt" in (SCRIPT_DIR / "launch-set.sh").read_text() and "--eval-timeout-h" in (SCRIPT_DIR / "train-watcher.sh").read_text()
 needs_new_shell = pytest.mark.skipif(not NEW_SHELL, reason="launch-set.sh·train-watcher.sh 교체 대기(감사 P6 묶음 B) — TW_SCRIPT_DIR=<사본 폴더> 로 실행")
 
 
 def _fake_home(tmp_path, preflight_stub=None):
-    """HOME 을 임시 폴더로 바꾼 가짜 하네스: TW·MG 는 빈 파일(발사 직전 단계에서 끝나게), 사전검사는 인자를 기록하고 76 으로 거부하는 스텁."""
     tools = tmp_path / "home" / ".claude" / "tools"
     (tools / "train-watcher").mkdir(parents=True)
     (tools / "mem-guard").mkdir(parents=True)
     (tools / "train-watcher" / "train-watcher.sh").write_text("exit 0\n")
-    (tools / "mem-guard" / "memguard-run.sh").write_text("exit 0\n")   # 곧바로 끝남 → launch-set 은 «학습이 ?s 안에 종료됨» exit 65 로 끝나고 state·와쳐를 만들지 않는다
+    (tools / "mem-guard" / "memguard-run.sh").write_text("exit 0\n")
     if preflight_stub:
         (tools / "train-watcher" / "gpu_preflight.py").write_text(preflight_stub)
     return tmp_path / "home"
@@ -1796,14 +1748,12 @@ def _run_launch_set(tmp_path, home, *extra, state="s.json"):
 @needs_new_shell
 @pytest.mark.parametrize("tok", ["--vram-gb 1", "--gpu=3", "--cpu-cores 99"])
 def test_preflight_args_cannot_carry_canonical_keys(tmp_path, tok):
-    """#14: --preflight-args 가 정본 인자(--gpu·--vram-gb·--cpu-cores)를 덮어쓰던 결함."""
     r = _run_launch_set(tmp_path, _fake_home(tmp_path), "--gpu", "2", "--preflight-args", tok)
     assert r.returncode == 64 and "--preflight-args" in r.stderr
 
 
 @needs_new_shell
 def test_preflight_canonical_args_come_last(tmp_path):
-    """#14: 약어(--vram)로 키 검사를 피해도 정본이 맨 뒤에 있어 argparse 의 «마지막 값이 이긴다» 로 정본이 이긴다."""
     stub = "import sys, pathlib\npathlib.Path(sys.argv[0]).with_name('argv.txt').write_text(' '.join(sys.argv[1:]))\nsys.exit(76)\n"
     home = _fake_home(tmp_path, stub)
     r = _run_launch_set(tmp_path, home, "--gpu", "2", "--vram-gb", "9", "--cpu-cores", "3", "--preflight-args", "--util-max 50 --vram 1")
@@ -1814,7 +1764,6 @@ def test_preflight_canonical_args_come_last(tmp_path):
 
 @needs_new_shell
 def test_unknown_gpu_warns_on_stderr_not_stdout(tmp_path):
-    """#16: GPU 를 몰라 사전검사를 건너뛸 때 경고가 표준출력에만 있어 파이프·로그에서 묻히던 것 — 표준에러로 명시."""
     r = _run_launch_set(tmp_path, _fake_home(tmp_path))
     assert "사전검사를 건너뜁니다" in r.stderr and "사전검사를 건너뜁니다" not in r.stdout
 
@@ -1829,16 +1778,15 @@ def test_queue_attempt_must_be_integer_and_is_baked_into_on_exit(tmp_path):
     func = re.search(r"^queue_on_exit\(\) \{.*?^\}", text, re.DOTALL | re.MULTILINE).group(0)
     run_fn = lambda *a: subprocess.run(["bash", "-c", f'{func}\nTW=/x/train-watcher.sh\nqueue_on_exit "$@"', "_", *a], check=False, capture_output=True, text=True).stdout
     assert run_fn("/q.json", "a1", "0", "3").endswith(' --attempt 3 --exit "$WATCH_EXIT"')
-    assert "--attempt" not in run_fn("/q.json", "a1", "0") and run_fn("/q.json", "a1", "0").endswith(' --exit "$WATCH_EXIT"')   # 옛 호출은 옛 문자열 그대로
+    assert "--attempt" not in run_fn("/q.json", "a1", "0") and run_fn("/q.json", "a1", "0").endswith(' --exit "$WATCH_EXIT"')
 
 
 @needs_new_shell
 def test_concurrent_launch_or_reattach_on_same_state_is_refused_with_67(tmp_path):
-    """#15: 같은 state 에 대한 동시 launch·reattach 에 잠금이 없어 «state 없음» 확인을 둘 다 통과하던 결함."""
     home = _fake_home(tmp_path)
     (tmp_path / "s.json").write_text("{}")
     with open(tmp_path / "s.json.lock", "a+") as held:
-        fcntl.flock(held, fcntl.LOCK_EX)                     # 다른 launch·reattach 가 잡고 있는 상태
+        fcntl.flock(held, fcntl.LOCK_EX)
         r = _run_launch_set(tmp_path, home, "--gpu", "0", "--force")
         assert r.returncode == 67 and "진행 중" in r.stderr
         re_ = subprocess.run(["bash", str(SCRIPT_DIR / "launch-set.sh"), "reattach", str(tmp_path / "s.json")], check=False, cwd=tmp_path,
@@ -1848,7 +1796,6 @@ def test_concurrent_launch_or_reattach_on_same_state_is_refused_with_67(tmp_path
 
 @needs_new_shell
 def test_reattach_appends_to_watcher_log_but_new_launch_truncates(tmp_path):
-    """#16: 재부착이 와쳐 로그를 비워 이전 와쳐의 종료·실패 기록이 사라지던 결함(첫 줄 nonce 는 유지돼야 verify 가 통과한다)."""
     text = (SCRIPT_DIR / "launch-set.sh").read_text()
     funcs = "\n".join(re.search(rf"^{n}\(\) \{{.*?(?:^\}}|\}}$)", text, re.DOTALL | re.MULTILINE).group(0) for n in ("alive", "proc_cmdline", "proc_start", "start_watcher"))
     dummy_tw = tmp_path / "tw.sh"
@@ -1860,15 +1807,14 @@ def test_reattach_appends_to_watcher_log_but_new_launch_truncates(tmp_path):
         drv = f'{funcs}\nTW={shlex.quote(str(dummy_tw))} WLOG={shlex.quote(str(wlog))} NONCE=abc TRAIN_PID=1 STARTED=x LOG=l DONE_RX=x EVAL_CMD=true TITLE=t TW_ARGS= DONE_LOG= ON_EXIT=\nstart_watcher; echo rc=$?'
         subprocess.run(["bash", "-c", drv], check=False, capture_output=True, text=True, timeout=30)
         return wlog.read_text()
-    kept = start("abc")                                      # 같은 발사의 재부착
+    kept = start("abc")
     assert kept.splitlines()[0].startswith("[launch-set] nonce=abc") and "이전 와쳐의 종료 기록" in kept and "reattach" in kept
-    fresh = start("other")                                   # nonce 가 다른 옛 로그는 새로 만든다
+    fresh = start("other")
     assert fresh.splitlines()[0].startswith("[launch-set] nonce=abc") and "이전 와쳐의 종료 기록" not in fresh
 
 
 @needs_new_shell
 def test_watcher_argument_validation(tmp_path):
-    """#20: --interval 0·비숫자가 검증 없이 통과해 PID 감시 루프가 CPU 를 태우던 것 / --eval-timeout-h 형식."""
     base = ["bash", str(SCRIPT_DIR / "train-watcher.sh"), "--pid", "1", "--log", str(tmp_path / "x.log"), "--done-regex", "x", "--eval-cmd", "true", "--no-notify"]
     for bad in (["--interval", "0"], ["--interval", "abc"], ["--timeout-h", "x"], ["--eval-timeout-h", "-1"], ["--eval-timeout-h", "1.2.3"]):
         r = subprocess.run([*base, *bad], check=False, capture_output=True, text=True, timeout=20)
@@ -1877,12 +1823,11 @@ def test_watcher_argument_validation(tmp_path):
 
 @needs_new_shell
 def test_watcher_marker_scope_eval_timeout_signal_and_early_exit(tmp_path):
-    """#17 eval 시간 초과(6, eval 은 안 죽임) · #18 재사용 로그의 옛 마커 무시 · #19 TERM 으로 죽을 때 종료 훅(7) · #20 PID 가 먼저 끝난 학습의 --done-log 마커."""
     done_log = tmp_path / "early.log"
     done_log.write_text("TRAIN_DONE (와쳐보다 먼저 끝난 학습)\n")
     gone = subprocess.Popen(["true"])
-    gone.wait()                                              # 이미 없는 PID
-    time.sleep(3)                                            # 마커 파일 mtime 이 «지금 -2초» 보다 오래되게(옛 코드는 이 조건에서 놓쳤다)
+    gone.wait()
+    time.sleep(3)
     hook = lambda n: f'echo "$WATCH_EXIT" >> {tmp_path / (n + ".txt")}'
     evalpid = tmp_path / "evalpid.txt"
     procs = {
@@ -1894,18 +1839,17 @@ def test_watcher_marker_scope_eval_timeout_signal_and_early_exit(tmp_path):
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=tmp_path),
     }
     time.sleep(2)
-    procs["term"].terminate()                                # 와쳐만 TERM(우리가 띄운 시험용 와쳐)
+    procs["term"].terminate()
     outs = {k: p.communicate(timeout=90)[0] for k, p in procs.items()}
     rcs = {k: p.returncode for k, p in procs.items()}
     assert rcs == {"stale": 2, "evto": 6, "term": 7, "early": 0}, (rcs, outs)
     got = {n: (tmp_path / f"{n}.txt").read_text().split() for n in ("stale", "evto", "term", "early")}
     assert got == {"stale": ["2"], "evto": ["6"], "term": ["7"], "early": ["0"]}, got
     pid = int(evalpid.read_text())
-    os.kill(pid, 0)                                          # eval 은 시간 초과 뒤에도 살아 있다(죽이지 않는다 — 신호 0 은 존재 확인뿐)
+    os.kill(pid, 0)
     assert "시간 초과" in (tmp_path / "evto.watch-report.md").read_text() and "신호" in (tmp_path / "term.watch-report.md").read_text()
 
 
-# ── 종단 시험: 가짜 tmux·nvidia-smi 를 PATH 에 두고 launch_queue → launch-set 사본 → 가짜 학습 → 와쳐 사본 → on-exit → 다음 판 ──
 FAKE_TMUX = """#!/bin/bash
 # 시험용 가짜 tmux: 호출을 기록하고, send-keys 의 명령은 그 세션의 cwd 에서 터미널과 분리해 실행한다.
 d="$FAKE_TMUX_DIR"
@@ -1945,7 +1889,7 @@ def test_e2e_chain_fake_tmux_and_smi_launches_second_item_when_first_ends(tmp_pa
     for src, name in ((SCRIPT_DIR, "launch-set.sh"), (SCRIPT_DIR, "train-watcher.sh"), (TW_DIR, "launch_queue.py"), (TW_DIR, "placement_table.json")):
         shutil.copy(src / name, tools / name)
     pre = (TW_DIR / "gpu_preflight.py").read_text()
-    for old, new in (('"PATH": "/usr/bin:/bin"', f'"PATH": "{fakebin}:/usr/bin:/bin"'),     # 가짜 nvidia-smi 가 잡히게(실제 nvidia-smi 는 부르지 않는다)
+    for old, new in (('"PATH": "/usr/bin:/bin"', f'"PATH": "{fakebin}:/usr/bin:/bin"'),
                      ('"--sample-sec", type=int, default=60', '"--sample-sec", type=int, default=1'), ('"--cpu-reserve", type=float, default=8.0', '"--cpu-reserve", type=float, default=0.0')):
         assert old in pre, old
         pre = pre.replace(old, new)
@@ -1956,7 +1900,8 @@ def test_e2e_chain_fake_tmux_and_smi_launches_second_item_when_first_ends(tmp_pa
     for n, body in (("tmux", FAKE_TMUX), ("nvidia-smi", FAKE_SMI_E2E)):
         (fakebin / n).write_text(body)
         (fakebin / n).chmod(0o755)
-    (proj / "run.sh").write_text('echo "start $1"\nsleep 26\necho TRAIN_DONE\n')   # launch-set 의 settle 10초 + 와쳐 5초 + verify 가 끝날 때까지 살아 있어야 한다
+    # WHY: sleep 26 은 launch-set 의 settle 10초 + 와쳐 5초 + verify 가 끝날 때까지 가짜 학습이 살아 있게 하는 값이다.
+    (proj / "run.sh").write_text('echo "start $1"\nsleep 26\necho TRAIN_DONE\n')
     (proj / ".claude" / "train.env").write_text("TRAIN_TMUX_PREFIX=e2e\n")
     items = [mk_item(tmp_path, i, argv=["bash", "run.sh", "{GPU}"], log_dir=str(proj / "logs" / i), vram_gb=1, cpu_cores=0.01,
                      memguard_args="--high 1G --max 2G --reserve 1G --swap-max none", watcher_args="--interval 1") for i in ("a1", "a2")]
@@ -1978,25 +1923,23 @@ def test_e2e_chain_fake_tmux_and_smi_launches_second_item_when_first_ends(tmp_pa
         time.sleep(3)
     assert {k: v["status"] for k, v in st["items"].items()} == {"a1": "done", "a2": "done"}, (st, (fdir / "e2e0-0.out").read_text() if (fdir / "e2e0-0.out").exists() else "")
     calls = [ln.split() for ln in (fdir / "calls.log").read_text().splitlines()]
-    assert [c[1] for c in calls if c[0] == "new-session"] == ["e2e0"] and [c[1] for c in calls if c[0] == "new-window"] == ["e2e0:1"]   # 같은 GPU 0 의 둘째 판은 새 세션이 아니라 새 창
+    assert [c[1] for c in calls if c[0] == "new-session"] == ["e2e0"] and [c[1] for c in calls if c[0] == "new-window"] == ["e2e0:1"]
     ls2 = json.loads((proj / "logs" / "a2" / "launch-state-e2e0-a2-1.json").read_text())
-    assert ls2["queue_item"] == "a2" and ls2["queue_attempt"] == "1"      # 시도 번호가 on-exit 에 결박돼 있다
+    assert ls2["queue_item"] == "a2" and ls2["queue_attempt"] == "1"
     assert "WATCH_EXIT=0" in (proj / "logs" / "a1" / "watcher-e2e0-a1-1.log").read_text()
     assert "자동 발사: 판 a2" in (tmp_path / "notes.txt").read_text()
-    for _ in range(20):   # a2 의 종료 훅(next)이 상태를 done 으로 적은 직후 maybe_finish 가 queue-finished 를 낸다
+    for _ in range(20):
         if list(qp.with_name("q.events").glob("*queue-finished*")):
             break
         time.sleep(1)
     assert list(qp.with_name("q.events").glob("*queue-finished*"))
 
 
-# ───────────── launch-set.sh 심사 시각 점검 보고서(--design-review · intent 옆 .review.md, 2026-10-12) ─────────────
 has_design_review = pytest.mark.skipif("--design-review" not in (SCRIPT_DIR / "launch-set.sh").read_text(), reason="launch-set.sh 에 --design-review 가 아직 없음")
 DR_WARN = "경고: 심사 시각 점검 보고서 없음("
 
 
 def _dr_launch(tmp_path, *extra):
-    """Run launch-set.sh in a fake HOME whose memguard just execs the command: the run is rejected after start (no memguard scope) and leaves a status=rejected state."""
     home = _fake_home(tmp_path)
     (home / ".claude" / "tools" / "mem-guard" / "memguard-run.sh").write_text('while [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n')
     cmd = ["bash", str(SCRIPT_DIR / "launch-set.sh"), "launch", "--name", "n", "--log", "l.log", "--done-regex", "x", "--eval-cmd", "true",
@@ -2039,7 +1982,7 @@ def test_design_review_missing_warns_on_stderr_and_launch_proceeds(tmp_path):
     home = _fake_home(tmp_path)
     r = _run_launch_set(tmp_path, home, "--intent", "intent/x.md")
     assert f"{DR_WARN}intent/x.review.md)" in r.stderr and DR_WARN not in r.stdout
-    assert r.returncode == 65 and "종료됨" in r.stderr   # 경고 뒤에도 발사 경로가 계속 진행돼 학습 시작 검사까지 갔다(차단 아님)
+    assert r.returncode == 65 and "종료됨" in r.stderr
     r = _run_launch_set(tmp_path, home, "--design-review", "nope.review.md")
     assert f"{DR_WARN}nope.review.md)" in r.stderr and r.returncode == 65
 
@@ -2061,7 +2004,7 @@ def test_old_state_without_design_review_fields_verifies_and_reattach_does_not_c
     state.write_text(json.dumps({"schema": 3, "name": "n", "status": "launched", "host": "other-host", "train_pid": 999999, "watcher_pid": 0, "eval_cmd": "true", "intent": "", "intent_sha256": ""}))
     state.chmod(0o600)
     v = subprocess.run(["bash", str(SCRIPT_DIR / "launch-set.sh"), "verify", str(state)], check=False, cwd=tmp_path, capture_output=True, text=True, timeout=30)
-    assert v.returncode == 1 and "design_review 미기록" in v.stdout and "VERIFY FAIL" in v.stdout   # 끝까지 돌았고 새 항목은 참고(⚠)로만 나온다
+    assert v.returncode == 1 and "design_review 미기록" in v.stdout and "VERIFY FAIL" in v.stdout
     assert "판정에 미포함" in next(ln for ln in v.stdout.splitlines() if "design_review" in ln)
     re_ = subprocess.run(["bash", str(SCRIPT_DIR / "launch-set.sh"), "reattach", str(state), "--confirm-eval", "true"], check=False, cwd=tmp_path, capture_output=True, text=True, timeout=30)
     assert re_.returncode == 65 and "host 불일치" in re_.stdout and "unbound" not in re_.stderr

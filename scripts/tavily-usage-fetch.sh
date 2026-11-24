@@ -8,13 +8,12 @@ CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/coralline"
 mkdir -p "$CACHE_DIR"
 CACHE="$CACHE_DIR/tavily-usage"
 
-# 동시 실행 방지 (이미 갱신 중이면 조용히 종료)
 if command -v flock >/dev/null 2>&1; then
     exec 9>"$CACHE_DIR/tavily-usage.lock" 2>/dev/null || exit 0
     flock -n 9 || exit 0
 else
-    # flock 부재 시 mkdir 원자성 기반 대체 락 — 가드 없이 진행하지 않는다.
-    # 비정상 종료(kill -9 등)로 남은 stale 락은 2분 초과 시 회수
+    # NEVER: flock 부재 시에도 가드 없이 진행하지 않는다(mkdir 원자성 기반 대체 락).
+    # WHY: 비정상 종료(kill -9 등)로 남은 stale 락은 2분 초과 시 회수
     # (정상 실행은 curl --max-time 10 이내 종료하므로 2분이면 충분히 보수적).
     LOCK_D="$CACHE_DIR/tavily-usage.lock.d"
     if ! mkdir "$LOCK_D" 2>/dev/null; then
@@ -25,16 +24,17 @@ else
     trap 'rmdir "$LOCK_D" 2>/dev/null || true' EXIT
 fi
 
-# 실패(429 rate-limit·스키마 변경 등) 시에도 캐시 mtime을 advance시켜,
+# WHY: 실패(429 rate-limit·스키마 변경 등) 시에도 캐시 mtime을 advance시켜,
 # statusline이 매 렌더마다 재시도(amplification)하여 /usage를 두드리는 것을 막는다 — backoff.
 # 성공 시에는 아래 mv가 mtime을 다시 갱신하므로 무해.
 touch "$CACHE" 2>/dev/null || true
 
 SECRETS="$HOME/.claude/mcp-secrets.env"
+# shellcheck disable=SC1090
 [ -f "$SECRETS" ] && { set -a; . "$SECRETS"; set +a; }
 [ -n "${TAVILY_API_KEY:-}" ] || exit 0
 
-# API 키는 curl 설정으로 표준입력(-K -)에 실어 보낸다: -H 인자는 ps 에 그대로 보인다(2026-10-01 감사 D).
+# WHY: API 키는 curl 설정으로 표준입력(-K -)에 실어 보낸다: -H 인자는 ps 에 그대로 보인다(2026-10-01 감사 D).
 KEY_ESC="${TAVILY_API_KEY//\\/\\\\}"; KEY_ESC="${KEY_ESC//\"/\\\"}"
 resp="$(printf 'header = "Authorization: Bearer %s"\n' "$KEY_ESC" | curl -s -K - --max-time 10 https://api.tavily.com/usage)" || exit 0
 out="$(printf '%s' "$resp" | python3 -c '

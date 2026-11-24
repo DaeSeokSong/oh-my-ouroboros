@@ -17,12 +17,10 @@ export function lineWidth(segs) {
   return segs.reduce((a, s) => a + cellWidth(s.text), 0)
 }
 
-// clip: 세그먼트를 앞에서부터 담다가 넘치는 세그먼트를 셀 폭 기준으로 자르고 끝에 «…» 를 붙인다(폭 ≤ limit 보장).
-// 넘치지 않으면 row 를 그대로 돌려준다. 순수 함수.
 export function clip(row, limit) {
   if (limit < 1) return []
   if (lineWidth(row) <= limit) return row
-  const room = limit - 1 // «…» 1칸 확보
+  const room = limit - 1
   const out = []
   let used = 0
   for (const s of row) {
@@ -41,7 +39,6 @@ export function clip(row, limit) {
   return out
 }
 
-// splitAt: 앞에서부터 셀 폭 limit 칸까지를 head, 나머지를 rest 로 가른다(세그먼트 tone 유지, 한 세그먼트가 걸치면 둘로 쪼갠다). 순수 함수.
 export function splitAt(row, limit) {
   const head = [], rest = []
   let used = 0, full = false

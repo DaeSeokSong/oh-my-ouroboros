@@ -1,4 +1,4 @@
-"""harness-usage-check.sh 의 G2·G5-1 추가분 + agent-crosscheck.sh 회귀 테스트 (2026-10-17 신설).
+"""harness-usage-check.sh 의 G2·G5-1 추가분 + agent-crosscheck.sh 회귀 테스트.
 
 대상: ① 7일 pending 자동 만료 호출·maintenance.log·잠금 실패 무시 ② CANDIDATES_PENDING digest 하루 1회
       ③ T41_REPEAT 때 후보 note 에 effect 기록(상태 불변·사람 note 보존) ④ MEMORY_INDEX_LONG(160줄)
@@ -8,8 +8,10 @@
 격리: 임시 HOME 에 scripts/ 를 **복사본**으로 두고(agent-crosscheck 는 시험 목적별 stub 또는 실물) cwd 는 임시 프로젝트 폴더.
       SessionStart 경로의 실행 환경(git·systemctl·crontab)은 실제 것을 쓰므로 단언은 대상 줄만 본다.
 실행: python3 ~/.claude/scripts/tests/test_usage_check_t41_note.py → 실패 0 이면 exit 0
+REF: knowledge/harness/code-history/scripts__tests__test_usage_check_t41_note.py.md
 """
 import fcntl
+import json
 import os
 import shutil
 import socket
@@ -21,6 +23,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent.parent
+USAGE_SRC = Path(os.environ.get("USAGE_CHECK_SH") or SCRIPTS / "harness-usage-check.sh")
 HDR7 = "id\tsource\t생성일\tbench_id\tstatus\t요약\tnote\n"
 TODAY = date.today().isoformat()
 results = []
@@ -34,7 +37,6 @@ def d(n):
     return (date.today() - timedelta(days=n)).isoformat()
 
 
-# stub: `latest` 는 실물(agent-crosscheck-real.sh)에 위임하고(신선도 판정은 실물 로직을 시험), --auto 는 실행 표지만 남긴다
 STUB = ('#!/usr/bin/env bash\n'
         'if [ "${1:-}" = latest ]; then exec bash "$HOME/.claude/scripts/agent-crosscheck-real.sh" latest; fi\n'
         'printf "%s\\n" "$*" > "$HOME/.claude/_usage/stub-ran"\n')
@@ -55,8 +57,8 @@ def make_env(tmp, rows=(), stub_crosscheck=True, projname="proj"):
         (claude / sub).mkdir(parents=True)
     for n in ("harness-usage-check.sh", "candidates-append.sh", "decisions-prune.sh", "agent-crosscheck.sh", "role-alias.sh",
               "harness_registry.py"):
-        shutil.copy(SCRIPTS / n, claude / "scripts" / n)
-    # The fixed short-term root now comes from the host registry (config/hosts/<hostname>.json, 2026-11-10).
+        shutil.copy(USAGE_SRC if n == "harness-usage-check.sh" else SCRIPTS / n, claude / "scripts" / n)
+    # WHY: The fixed short-term root now comes from the host registry (config/hosts/<hostname>.json, 2026-11-10).
     (claude / "config/hosts").mkdir(parents=True)
     (claude / "config/hosts" / f"{socket.gethostname()}.json").write_text(
         '{"paths": {"short_term_root": "~/.claude/projects/-home-user-workspace/memory/"}}', encoding="utf-8")
@@ -64,7 +66,6 @@ def make_env(tmp, rows=(), stub_crosscheck=True, projname="proj"):
     if stub_crosscheck:
         (claude / "scripts/agent-crosscheck.sh").write_text(STUB, encoding="utf-8")
     (claude / "_evolve/candidates.tsv").write_text(HDR7 + "".join(r + "\n" for r in rows), encoding="utf-8")
-    # 교차검증이 신선하다고 두어 기본 상태에서 crosscheck 분기가 조용하게 한다
     write_cc(home)
     proj = Path(tmp) / projname
     proj.mkdir()
@@ -165,7 +166,7 @@ def test_digest_once_per_day():
         check("digest: 오늘 선점 디렉터리가 생김(mkdir 원자 마커)", marker.is_dir())
         out2 = run_usage(home, proj)
         check("digest: 같은 날 두 번째는 출력 안 함", "  · " not in out2 and "→ 첫 작업성" not in out2 and "CANDIDATES_PENDING" in out2, out2)
-        marker.rmdir()   # 다음 날을 흉내(어제 것은 치워지고 오늘 것은 없는 상태)
+        marker.rmdir()
         out3 = run_usage(home, proj)
         check("digest: 마커가 지난 날짜면 다시 출력", "  · T40-1" in out3, out3)
         check("digest: 대장은 변하지 않음(상태 불변)", all(r[4] == "pending" for r in cand_rows(home)))
@@ -196,30 +197,25 @@ def test_t41_effect_note():
         check("effect: 사람이 남긴 note 는 덮어쓰지 않음", r["T41-c"][6] == "사람이 남긴 판정 기록", str(r["T41-c"]))
         check("effect: 상태는 전부 pending 그대로", all(x[4] == "pending" for x in r.values()), str([x[4] for x in r.values()]))
         check("effect: 하루 1회 선점 디렉터리", (home / f".claude/_usage/t41-effect-{TODAY}.d").is_dir())
-        # 같은 날 spawn 이 늘어도 다시 쓰지 않는다
         with open(home / ".claude/_audit/agent-spawn.log", "a", encoding="utf-8") as f:
             f.write(f"{TODAY}T02:00:00+09:00\tpost\tqa \tn9 \tsonnet \td\n")
         run_usage(home, proj)
         check("effect: 같은 날 두 번째 실행은 기록 안 함", {x[0]: x for x in cand_rows(home)}["T41-b"][6] == "effect:quiet n_spawn=2")
-        # 마커를 지워 다음 날을 흉내
-        shutil.rmtree(home / f".claude/_usage/t41-effect-{TODAY}.d")   # done 표지가 든 선점 디렉터리를 치워 다음 날을 흉내
+        shutil.rmtree(home / f".claude/_usage/t41-effect-{TODAY}.d")
         run_usage(home, proj)
         check("effect: 다음 날에는 갱신(소집 3건)", {x[0]: x for x in cand_rows(home)}["T41-b"][6] == "effect:quiet n_spawn=3")
-    # ② 3회 문턱 아래 재발(1건)이어도 미결 T41 후보가 있으면 effect:recurred 가 기록된다(T41_REPEAT 와 무관)
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [rows[0]])
         (home / ".claude/_audit/history.md").write_text("# history\n" + hist_lines("coder/구현 정확성", 0), encoding="utf-8")
         out = run_usage(home, proj)
         row = cand_rows(home)[0]
         check("effect: T41_REPEAT 없이(재발 1건) 미결 T41 이 있으면 recurred k=1 기록", "T41_REPEAT" not in out and row[6] == "effect:recurred k=1", f"{row} {out}")
-    # 미결 T41 이 없으면(T12 뿐) 기록도 선점도 하지 않는다
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [f"T12-1\tT12\t{d(1)}\t-\tpending\t교정"])
         (home / ".claude/_audit/history.md").write_text("# history\n", encoding="utf-8")
         run_usage(home, proj)
         row = cand_rows(home)[0]
         check("effect: 미결 T41 이 없으면 note 를 쓰지 않고 선점도 안 함", (len(row) < 7 or row[6] == "") and not (home / f".claude/_usage/t41-effect-{TODAY}.d").exists(), str(row))
-    # 50칸 상한: 이미 recurred 인 행 50개가 새 후보의 효과 기록을 막지 않는다
     axis = "coder/구현 정확성"
     with tempfile.TemporaryDirectory() as tmp:
         rr = [f"T41-r{i:02d}\tT41\t{d(2)}\t-\tpending-bench\t{axis}: 재발 {i}\teffect:recurred k=9" for i in range(50)]
@@ -238,19 +234,16 @@ def hist_lines(axis, *days_ago):
 
 def test_effect_aggregation_and_batch():
     axis = "coder/구현 정확성"
-    # 재발 수: 20일 전 생성(pending-approval 이라 expire 대상 아님)·18/17/16일 전 재발 3건 → 전체 기간 집계 k=3 (14일 창이면 0 이었을 것)
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [f"T41-old\tT41\t{d(20)}\t-\tpending-approval\t{axis}: RESULT: FAIL"])
         (home / ".claude/_audit/history.md").write_text("# h\n" + hist_lines(axis, 18, 17, 16), encoding="utf-8")
         out = run_usage(home, proj)
         check("effect: 20일 전 생성·재발 3건 → recurred k=3", "T41_REPEAT" in out and cand_rows(home)[0][6] == "effect:recurred k=3", str(cand_rows(home)[0]) + out)
-    # 생성일 당일 기록은 후보 자신이라 1건 제외: 당일 2건 + 이후 1건 → k=2
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [f"T41-self\tT41\t{d(10)}\t-\tpending-bench\t{axis}: RESULT: FAIL"])
         (home / ".claude/_audit/history.md").write_text("# h\n" + hist_lines(axis, 10, 10, 5), encoding="utf-8")
         run_usage(home, proj)
         check("effect: 생성일 당일 2건(자기 1건 제외)+이후 1건 → k=2", cand_rows(home)[0][6] == "effect:recurred k=2", str(cand_rows(home)[0]))
-    # 앞 10건 고정 금지: 보호 비고 행 10개 뒤의 11번째가 갱신된다
     with tempfile.TemporaryDirectory() as tmp:
         rows = [f"T41-h{i:02d}\tT41\t{d(2)}\t-\tpending-bench\t{axis}: 사람 {i}\t사람 판정 {i}" for i in range(10)]
         rows.append(f"T41-last\tT41\t{d(2)}\t-\tpending-bench\tqa/범위 준수: BLOCKED")
@@ -260,7 +253,6 @@ def test_effect_aggregation_and_batch():
         r = {x[0]: x for x in cand_rows(home)}
         check("effect: 보호 행 10개 뒤의 11번째도 갱신", r["T41-last"][6].startswith("effect:"), str(r["T41-last"]))
         check("effect: 보호 행 10개는 그대로", all(r[f"T41-h{i:02d}"][6] == f"사람 판정 {i}" for i in range(10)))
-    # 잠금 경합: 일괄 갱신이 실패하면 오늘 선점을 풀어 다음 세션이 재시도한다(기록은 성공 뒤에만)
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [f"T41-c\tT41\t{d(2)}\t-\tpending-bench\t{axis}: RESULT: FAIL"])
         (home / ".claude/_audit/history.md").write_text("# h\n" + hist_lines(axis, 1, 1, 1), encoding="utf-8")
@@ -309,7 +301,6 @@ def test_memory_index_long_and_prune():
         out = run_usage(home, proj)
         check("MEMORY.md 161줄은 MEMORY_INDEX_LONG(161줄)", "MEMORY_INDEX_LONG(161줄)" in out, out)
     with tempfile.TemporaryDirectory() as tmp:
-        # cwd 에 `.` 가 든 경우: Claude Code 규칙은 `/` 와 `.` 를 모두 `-` 로 바꾼다(`/home/u/.claude` → `-home-u--claude`)
         home, proj = make_env(tmp, projname=".dot.proj")
         md = mem_dir(home, proj)
         check("시험 전제: 폴더 이름에 '.' 가 '-' 로 바뀌어 있음", "--dot-proj" in str(md) and "." not in md.parent.name, str(md))
@@ -339,7 +330,6 @@ def test_memory_index_long_and_prune():
 
 
 def test_prune_targets_fixed_root_and_cwd_project():
-    """decisions 정리 대상: short-term 고정 루트(-home-user-workspace) + cwd 기반 현재 프로젝트, 같으면 1회."""
     stub = '#!/usr/bin/env bash\nprintf "%s\\n" "$1" >> "$HOME/.claude/_usage/prune-calls"\n'
 
     def calls(home):
@@ -364,15 +354,14 @@ def test_prune_targets_fixed_root_and_cwd_project():
     with tempfile.TemporaryDirectory() as tmp:
         home, _ = make_env(tmp)
         setup_stub(home)
-        run_usage(home, Path("~/workspace"))   # cwd 에서 유도한 프로젝트 이름이 고정 루트와 같다(HOME 만 임시)
+        run_usage(home, Path("~/workspace"))
         fixed = str(home / ".claude/projects/-home-user-workspace/memory")
         check("두 폴더가 같으면 prune 을 한 번만 호출", calls(home) == [fixed], str(calls(home)))
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp)
-        (home / ".claude/scripts/decisions-prune.sh").write_text(stub, encoding="utf-8")   # 어느 폴더에도 decisions.md 없음
+        (home / ".claude/scripts/decisions-prune.sh").write_text(stub, encoding="utf-8")
         run_usage(home, proj)
         check("decisions.md 가 없는 폴더는 호출하지 않음", calls(home) == [], str(calls(home)))
-    # 실물 스크립트로: 고정 루트와 현재 프로젝트 둘 다 실제로 정리되고 마커가 폴더별로 생긴다
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp)
         cur = mem_dir(home, proj)
@@ -395,7 +384,6 @@ def test_crosscheck_background_launch():
         home, proj = make_env(tmp)
         out = run_usage(home, proj)
         check("crosscheck 신선하면 자동 실행·경보 없음", "CROSSCHECK" not in out and not stub_marker(home).exists(), out)
-        # 오래된 ts + **새 mtime**(방금 파일을 만진 것과 같음): mtime 으로 보면 신선하지만 latest 는 stale 로 본다
         write_cc(home, days=10)
         out = run_usage(home, proj)
         check("ts 가 7일 초과면 mtime 이 새것이어도 CROSSCHECK_AUTO 한 줄(경보 아님)", "CROSSCHECK_AUTO(10d)" in out and "CROSSCHECK_STALE" not in out, out)
@@ -441,7 +429,6 @@ def test_crosscheck_background_launch():
 
 
 def make_cc_home(tmp):
-    """실물 agent-crosscheck.sh 용: 로그 1건 + transcript 의 Agent tool_use 1건(일치 판정이 되는 최소 구성)."""
     home = Path(tmp) / "home"
     claude = home / ".claude"
     for sub in ("_evolve", "_usage", "_audit", "projects/p1"):
@@ -452,7 +439,6 @@ def make_cc_home(tmp):
 
 
 def agent_line(ts, *ids):
-    """실제 transcript 형식의 assistant 한 줄: message.content 에 Agent tool_use 가 ids 개수만큼 든다."""
     blocks = ",".join(f'{{"type":"tool_use","name":"Agent","id":"{i}","input":{{}}}}' for i in ids)
     return f'{{"timestamp":"{ts}","type":"assistant","message":{{"content":[{{"type":"text","text":"x"}},{blocks}]}}}}\n'
 
@@ -463,7 +449,6 @@ def cc(home, *args):
 
 
 def test_crosscheck_without_jq_alerts():
-    # 검수팀 8: jq 가 없으면 transcript 계수를 못 하므로 0건으로 세어 «일치» 로 오판하지 않고 «분모 미상: jq 없음» 으로 exit 2, 행도 append 하지 않는다.
     with tempfile.TemporaryDirectory() as tmp:
         home = make_cc_home(tmp)
         env = dict(os.environ, HOME=str(home), PATH=build_path_without(tmp, "jq"))
@@ -533,8 +518,8 @@ def test_pending_type_counts_and_unjudged_alarm():
     rows = [f"T12-{i}\tT12\t{d(1)}\t-\tpending\t교정 {i}" for i in (1, 2)] + [
         f"T40-1\tT40\t{d(2)}\t-\tpending-bench\t반복 패턴",
         f"T41-1\tT41\t{d(2)}\t-\tpending\tcoder/구현 정확성: a", f"T41-2\tT41\t{d(2)}\t-\tpending-approval\tqa/범위 준수: b",
-        f"T41-3\tT41\t{d(40)}\t-\tpending\tqa/범위 준수: c\t사람이 보는 중",    # 7일 초과지만 보호 note 라 만료 안 됨(마커 없이 30일 초과 → ④ 경보 조건)
-        f"T12-9\tT12\t{d(1)}\t-\taccepted\t끝난 것"]                            # 미결 집계에서 제외
+        f"T41-3\tT41\t{d(40)}\t-\tpending\tqa/범위 준수: c\t사람이 보는 중",
+        f"T12-9\tT12\t{d(1)}\t-\taccepted\t끝난 것"]
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, rows)
         out = run_usage(home, proj)
@@ -642,10 +627,10 @@ def test_crosscheck_counts_multiple_agents_per_line():
         home = make_cc_home(tmp)
         (home / ".claude/_audit/agent-spawn.log").write_text("".join(f"2026-10-01T00:00:0{i}+09:00\tpost\tcoder \tn{i} \tsonnet \td\n" for i in range(2)), encoding="utf-8")
         (home / ".claude/projects/p1/s.jsonl").write_text(
-            agent_line("2026-10-02T00:00:00.000Z", "toolu_AAA1", "toolu_AAA2")        # 한 줄에 Agent 2개
-            + agent_line("2026-10-02T00:00:01.000Z", "toolu_AAA2")                    # 같은 id 중복 → 1회만
-            + agent_line("2026-09-01T00:00:00.000Z", "toolu_OLD1")                    # D 이전 → 제외
-            + '{"timestamp":"2026-10-02T00:00:02.000Z","type":"user","message":{"content":"\\"name\\":\\"Agent\\" 언급뿐"}}\n',  # 문자열 언급은 계수 안 함
+            agent_line("2026-10-02T00:00:00.000Z", "toolu_AAA1", "toolu_AAA2")
+            + agent_line("2026-10-02T00:00:01.000Z", "toolu_AAA2")
+            + agent_line("2026-09-01T00:00:00.000Z", "toolu_OLD1")
+            + '{"timestamp":"2026-10-02T00:00:02.000Z","type":"user","message":{"content":"\\"name\\":\\"Agent\\" 언급뿐"}}\n',
             encoding="utf-8")
         r = cc(home)
         check("C1: 한 jsonl 줄에 Agent tool_use 2개 → transcript_agent_uniq=2·일치", "transcript_agent_uniq=2" in r.stdout and "판정=일치" in r.stdout and r.returncode == 0, r.stdout)
@@ -669,7 +654,6 @@ def test_crosscheck_auto_success_marker():
 
 
 def build_path_without(tmp, *names):
-    """/usr/bin 의 모든 실행 파일을 링크한 PATH 전용 폴더에서 names 만 뺀다(그 명령이 없는 환경 모의)."""
     bindir = Path(tmp) / "bin-without"
     bindir.mkdir()
     for p in Path("/usr/bin").iterdir():
@@ -679,7 +663,6 @@ def build_path_without(tmp, *names):
 
 
 def make_repo(tmp):
-    """커밋 1개짜리 임시 저장소 → (경로, 짧은 해시). attach-commit 이 해시 실재를 확인하는 HARNESS_GIT_DIR 용."""
     repo = Path(tmp) / "repo"
     repo.mkdir()
     genv = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null")
@@ -734,7 +717,6 @@ def test_attach_retry_discards_impossible_lines():
                                     f"R-4\tT12\t{d(1)}\t-\texpired\t해시가 깨진 만료"])
         q = home / ".claude/_usage/candidates-attach-retry.tsv"
         q.write_text(f"R-1\t{h}\nR-2\t{h}\nNOPE-9\t{h}\nR-3\t{h}\nR-4\tzzzz\n", encoding="utf-8")
-        # 기대값 변경 근거(2026-10-17 team-lead 승인): 배수는 세션당 2줄 상한(바깥 훅 15초)이라 5줄 큐를 «2줄 → 2줄 → 1줄» 세션 3번으로 나눠 같은 최종 결과를 확인한다.
         run_usage(home, proj, HARNESS_GIT_DIR=str(repo))
         check("(b) 첫 세션은 2줄만 처리(R-1 rejected·R-2 expired 연결)하고 3줄이 큐에 남음", q.read_text(encoding="utf-8") == f"NOPE-9\t{h}\nR-3\t{h}\nR-4\tzzzz\n", repr(q.read_text(encoding="utf-8")))
         run_usage(home, proj, HARNESS_GIT_DIR=str(repo))
@@ -775,7 +757,6 @@ def test_retry_queue_keeps_transient_failures():
 
 
 def test_retry_accepted_attach_permanent_failure_discarded():
-    # 검수팀 재확인 2: accepted 줄의 attach-commit 이 exit 1(영구 실패)이면 폐기 로그를 남기고 지워 뒷줄이 세션당 2줄 상한에 막히지 않는다. exit 3 은 일시 실패라 큐에 남는다.
     stub = ('#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$HOME/.claude/_usage/stub-calls"\n'
             'case "$1" in attach-commit) exit "${STUB_ATTACH_RC:-0}";; expire) echo "expire: 0건을 expired 로 바꿈";; esac\nexit 0\n')
     rows = [f"Q-A\tT12\t{d(1)}\t-\taccepted\t선승인", f"Q-B\tT12\t{d(1)}\t-\tpending\t미결 B", f"Q-C\tT12\t{d(1)}\t-\tpending\t미결 C"]
@@ -821,7 +802,6 @@ def test_retry_queue_keeps_storage_failures():
 
 
 def test_retry_rewrite_keeps_concurrent_updates():
-    # 배수(set 호출) 도중 post-commit 이 같은 id 의 해시를 교체하고 새 id 를 덧붙이는 경합을 대역 candidates-append 가 흉내낸다.
     stub = ('#!/usr/bin/env bash\nQ="$HOME/.claude/_usage/candidates-attach-retry.tsv"\n'
             'case "$1" in\n'
             '  set) awk -F"\\t" -v OFS="\\t" \'$1=="R-1" {$2="bbbbbbb"} {print}\' "$Q" > "$Q.x" && mv "$Q.x" "$Q"; printf "R-NEW\\tccccccc\\n" >> "$Q"; exit 0 ;;\n'
@@ -840,7 +820,6 @@ def test_retry_rewrite_keeps_concurrent_updates():
 
 
 def test_retry_queue_keeps_lines_when_ledger_unreadable():
-    # Grok 16차 1: 대장 읽기 실패(권한 0)·상태 조회 awk 실패를 «id 없음» 폐기로 오인하지 않고 큐 줄을 보존한다.
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [f"R-1\tT12\t{d(1)}\t-\tpending\t미결"])
         q = home / ".claude/_usage/candidates-attach-retry.tsv"
@@ -866,7 +845,6 @@ def test_retry_queue_keeps_lines_when_ledger_unreadable():
 
 
 def test_retry_drain_limited_to_two_per_session():
-    # 검수팀 코드 검수 5: 바깥 훅 15초 안에 들도록 세션당 2줄만 처리하고 나머지는 큐에 남긴다.
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [f"R-{i}\tT12\t{d(1)}\t-\tpending\t미결 {i}" for i in (1, 2, 3)])
         stub = '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$HOME/.claude/_usage/stub-calls"\ncase "$1" in expire) echo "expire: 0건을 expired 로 바꿈";; esac\nexit 0\n'
@@ -882,7 +860,6 @@ def test_retry_drain_limited_to_two_per_session():
 
 
 def test_digest_axis_normalized():
-    # Grok 16차 3: history 의 sec-g1/x 와 후보의 security/x 가 같은 축으로 비교돼 우선순위 0(같은 날짜면 T12 보다 먼저)을 받는다.
     hist = "# h\n" + "".join(f"- {TODAY} T41: sec-g1/x — RESULT: FAIL {i}\n" for i in range(3))
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [f"T12-a\tT12\t{d(3)}\t-\tpending\t교정 요약", f"T41-s\tT41\t{d(3)}\t-\tpending\tsecurity/x: 보안 약점"])
@@ -897,13 +874,13 @@ def test_expire_waits_for_effect_done():
     axis = "coder/구현 정확성"
     row = f"T41-q\tT41\t{d(8)}\t-\tpending\t{axis}: 조용한 후보\teffect:quiet n_spawn=0"
     logs = lambda h: (h / ".claude/_usage/maintenance.log").read_text(encoding="utf-8")
-    with tempfile.TemporaryDirectory() as tmp:   # a) 다른 세션이 효과를 집계하는 중(선점 디렉터리만 있고 done 없음) → 이번 세션은 만료하지 않는다
+    with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [row])
         (home / ".claude/_audit/history.md").write_text("# h\n", encoding="utf-8")
         (home / f".claude/_usage/t41-effect-{TODAY}.d").mkdir()
         run_usage(home, proj)
         check("① 선점만 있고 done 없음 → 8일 된 후보를 만료하지 않고 maintenance.log 한 줄", cand_rows(home)[0][4] == "pending" and "expire 건너뜀: T41 효과 기록이 아직 끝나지 않음" in logs(home), f"{cand_rows(home)[0]}")
-    with tempfile.TemporaryDirectory() as tmp:   # b) done 이 생기면 만료가 돈다
+    with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [row])
         (home / ".claude/_audit/history.md").write_text("# h\n", encoding="utf-8")
         dd = home / f".claude/_usage/t41-effect-{TODAY}.d"
@@ -911,7 +888,7 @@ def test_expire_waits_for_effect_done():
         (dd / "done").touch()
         run_usage(home, proj)
         check("① done 이 있으면 만료 실행", cand_rows(home)[0][4] == "expired", str(cand_rows(home)[0]))
-    with tempfile.TemporaryDirectory() as tmp:   # c) 선점 세션이 죽어 10분 넘게 done 이 없으면 만료 허용
+    with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [row])
         (home / ".claude/_audit/history.md").write_text("# h\n", encoding="utf-8")
         dd = home / f".claude/_usage/t41-effect-{TODAY}.d"
@@ -920,12 +897,12 @@ def test_expire_waits_for_effect_done():
         run_usage(home, proj)
         check("① ② 선점 디렉터리가 10분 넘게 done 없이 남으면(기록 세션 중단) 뒤 세션이 승계해 기록하고 done 을 만든 뒤 만료",
               cand_rows(home)[0][4] == "expired" and (dd / "done").exists(), f"{cand_rows(home)[0]} {(dd / 'done').exists()}")
-    with tempfile.TemporaryDirectory() as tmp:   # d) 미결 T41 이 없으면 보호할 효과 기록이 없어 바로 만료
+    with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [f"T12-o\tT12\t{d(8)}\t-\tpending\t오래된 교정"])
         (home / f".claude/_usage/t41-effect-{TODAY}.d").mkdir()
         run_usage(home, proj)
         check("① 미결 T41 이 없으면 done 없이도 만료", cand_rows(home)[0][4] == "expired", str(cand_rows(home)[0]))
-    with tempfile.TemporaryDirectory() as tmp:   # e) 단독 세션: 효과 기록이 끝나면 done 이 생기고 만료가 이어서 돈다
+    with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [row])
         (home / ".claude/_audit/history.md").write_text("# h\n", encoding="utf-8")
         run_usage(home, proj)
@@ -945,11 +922,11 @@ def test_expire_skips_ids_in_retry_queue():
         ret = [i for i, c in enumerate(calls) if c.startswith("set R-8")]
         check("② 순서: 재시도 큐 배수(set R-8) 다음에 expire", ret and exp and ret[0] < exp[0], str(calls))
         check("② 배수에 실패해 큐에 남은 id 는 expire --skip-ids 로 제외", exp and "--skip-ids R-8" in calls[exp[0]], str(calls))
-    with tempfile.TemporaryDirectory() as tmp:   # 실물 expire: 큐의 id 는 8일이 지나도 pending 으로 남는다
+    with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [f"R-8\tT12\t{d(8)}\t-\tpending\t큐에 남는 후보", f"R-9\tT12\t{d(8)}\t-\tpending\t다른 후보"])
         q = home / ".claude/_usage/candidates-attach-retry.tsv"
         q.write_text("R-8\tabc1234\n", encoding="utf-8")
-        fd = os.open(str(home / ".claude/_evolve/candidates.lock"), os.O_CREAT | os.O_RDWR)   # set 이 잠금 실패(rc 3)로 큐에 남게 한다
+        fd = os.open(str(home / ".claude/_evolve/candidates.lock"), os.O_CREAT | os.O_RDWR)
         fcntl.flock(fd, fcntl.LOCK_EX)
         try:
             run_usage(home, proj)
@@ -1115,7 +1092,6 @@ def test_effect_awk_failure_is_not_done():
         (home / ".claude/_audit/history.md").write_text("# h\n", encoding="utf-8")
         shim = Path(tmp) / "shim"
         shim.mkdir()
-        # 효과 계산 awk 만(입력에 프로세스 치환 /dev/fd/N 이 있는 호출) 실패시키는 awk 대역 — 입력 파일을 읽을 수 없는 상황을 흉내
         (shim / "awk").write_text('#!/bin/bash\nfor a in "$@"; do case "$a" in /dev/fd/*) echo "awk: cannot open $a" >&2; exit 2;; esac; done\nexec /usr/bin/awk "$@"\n', encoding="utf-8")
         (shim / "awk").chmod(0o755)
         out = run_usage(home, proj, PATH=f"{shim}:{os.environ['PATH']}")
@@ -1131,7 +1107,6 @@ def test_effect_awk_failure_is_not_done():
 def test_takeover_failure_still_allows_expire():
     axis = "coder/구현 정확성"
     with tempfile.TemporaryDirectory() as tmp:
-        # history 가 계속 안 읽히는 환경(파일 없음). 10분 넘은 선점(failed 표지, done 없음)을 이 세션이 승계해 기록을 다시 시도하지만 또 실패한다.
         home, proj = make_env(tmp, [f"T41-q\tT41\t{d(2)}\t-\tpending-bench\t{axis}: 기록 실패 중인 후보\teffect:quiet n_spawn=0", f"T12-o\tT12\t{d(8)}\t-\tpending\t오래된 교정"])
         edir = home / f".claude/_usage/t41-effect-{TODAY}.d"
         edir.mkdir()
@@ -1145,7 +1120,6 @@ def test_takeover_failure_still_allows_expire():
         check("Grok8①: 그래도 만료는 돈다(8일 넘은 pending T12 가 expired)·maintenance.log 에 «승계했으나 … 다시 실패»", r["T12-o"][4] == "expired" and "10분 지난 선점을 승계했으나 효과 기록이 다시 실패함" in log,
               f"{r['T12-o']} {log[-300:]}")
         check("Grok8①: 효과 기록 실패 대상(pending-bench T41)은 그대로", r["T41-q"][4] == "pending-bench" and r["T41-q"][6] == "effect:quiet n_spawn=0", str(r["T41-q"]))
-        # 승계하지 않은 보통 세션은 종전 그대로: 선점이 10분 미만이면 만료를 보류한다
         home2, proj2 = make_env(Path(tmp) / "n", [f"T41-q\tT41\t{d(2)}\t-\tpending-bench\t{axis}: x\teffect:quiet n_spawn=0", f"T12-o\tT12\t{d(8)}\t-\tpending\t오래된 교정"])
         (home2 / f".claude/_usage/t41-effect-{TODAY}.d").mkdir()
         run_usage(home2, proj2)
@@ -1153,7 +1127,6 @@ def test_takeover_failure_still_allows_expire():
 
 
 def awk_shim(tmp, needles):
-    """프로그램 문자열에 needles 가 전부 든 awk 호출만 실패(rc 2)시키는 awk 대역을 만든 PATH 접두를 돌려준다."""
     shim = Path(tmp) / "awk-shim"
     shim.mkdir()
     cond = " && ".join(f'[[ "$*" == *\'{n}\'* ]]' for n in needles)
@@ -1166,7 +1139,6 @@ def test_grok9_effect_fail_paths():
     axis = "coder/구현 정확성"
     t41 = f"T41-q\tT41\t{d(2)}\t-\tpending-bench\t{axis}: 후보\teffect:quiet n_spawn=0"
     old = f"T12-o\tT12\t{d(8)}\t-\tpending\t오래된 교정"
-    # 2: 문구 분리 — 승계 뒤 재실패 턴은 «만료를 허용함», 보통 실패 턴은 «만료는 보류됨»
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [t41, old])
         edir = home / f".claude/_usage/t41-effect-{TODAY}.d"
@@ -1177,10 +1149,9 @@ def test_grok9_effect_fail_paths():
         check("Grok9 2: 승계 뒤 재실패 턴의 경보는 «이번 세션은 승계 뒤 재실패라 만료를 허용함» (만료 보류 문구 아님)",
               "이번 세션은 승계 뒤 재실패라 만료를 허용함" in out and "7일 만료는 보류됨" not in out and {x[0]: x for x in cand_rows(home)}["T12-o"][4] == "expired", out[-400:])
     with tempfile.TemporaryDirectory() as tmp:
-        home, proj = make_env(tmp, [t41, old])   # history 없음 → 새 선점 세션의 보통 실패
+        home, proj = make_env(tmp, [t41, old])
         out = run_usage(home, proj)
         check("Grok9 2: 승계가 아닌 보통 실패 턴의 경보는 «7일 만료는 보류됨»", "7일 만료는 보류됨" in out and "만료를 허용함" not in out and {x[0]: x for x in cand_rows(home)}["T12-o"][4] == "pending", out[-400:])
-    # 4: 소집 로그 집계 awk 실패
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [t41, old])
         (home / ".claude/_audit/history.md").write_text("# h\n", encoding="utf-8")
@@ -1190,7 +1161,6 @@ def test_grok9_effect_fail_paths():
         check("Grok9 4: 소집 로그 집계 awk 실패 → failed 원인 «spawn 집계 실패(awk rc=2)»·done 없음·경보", (edir / "failed").exists() and not (edir / "done").exists()
               and "spawn 집계 실패(awk rc=2)" in (edir / "failed").read_text(encoding="utf-8") and "T41_EFFECT_FAIL(spawn 집계 실패(awk rc=2))" in out, f"{list(edir.glob('*'))} {out[-300:]}")
         check("Grok9 4: 집계 실패 턴은 효과 기록 없음(비고 불변)·만료 보류", cand_rows(home)[0][6] == "effect:quiet n_spawn=0" and {x[0]: x for x in cand_rows(home)}["T12-o"][4] == "pending", str(cand_rows(home)))
-    # 5: T41_PEND awk 실패 → 미결 0 으로 읽지 않고 만료 보류
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [t41, old])
         (home / ".claude/_audit/history.md").write_text("# h\n", encoding="utf-8")
@@ -1198,19 +1168,17 @@ def test_grok9_effect_fail_paths():
         log = (home / ".claude/_usage/maintenance.log").read_text(encoding="utf-8")
         check("Grok9 5: 미결 T41 수를 세는 awk 실패 → 만료 보류(T12 pending)·maintenance.log «미결 T41 수를 세지 못함(awk rc=2)»",
               {x[0]: x for x in cand_rows(home)}["T12-o"][4] == "pending" and "미결 T41 수를 세지 못함(awk rc=2)" in log, f"{cand_rows(home)} {log[-250:]}")
-    # 6: done 생성 실패(깨진 심볼릭 링크로 흉내) → failed «done 생성 실패»·그 턴 만료 안 함(승계 턴이어도 --force 금지)
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [t41, old])
         (home / ".claude/_audit/history.md").write_text("# h\n", encoding="utf-8")
         edir = home / f".claude/_usage/t41-effect-{TODAY}.d"
         edir.mkdir()
-        (edir / "done").symlink_to(Path(tmp) / "no-such-dir" / "x")   # -e 는 거짓이지만 쓰기는 실패
+        (edir / "done").symlink_to(Path(tmp) / "no-such-dir" / "x")
         set_mtime(edir, minutes=20)
         out = run_usage(home, proj)
         log = (home / ".claude/_usage/maintenance.log").read_text(encoding="utf-8")
         check("Grok9 6: done 생성 실패 → failed 원인 «done 생성 실패»·경보", "done 생성 실패" in (edir / "failed").read_text(encoding="utf-8") and "T41_EFFECT_FAIL(done 생성 실패)" in out, f"{list(edir.glob('*'))} {out[-250:]}")
         check("Grok9 6: 승계 턴이어도 그 턴은 만료하지 않음(T12 pending·--force 없음)·로그 «done 을 만들지 못함»", {x[0]: x for x in cand_rows(home)}["T12-o"][4] == "pending" and "done)를 만들지 못함" in log, f"{cand_rows(home)} {log[-250:]}")
-    # 7: CUT14D 를 못 구함 → 승계 턴이어도 --force 만료로 가지 않고 보류
     with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [t41, old])
         (home / ".claude/_audit/history.md").write_text("# h\n", encoding="utf-8")
@@ -1229,7 +1197,7 @@ def test_grok9_effect_fail_paths():
 def test_effect_spawn_log_unreadable_fails_closed():
     axis = "coder/구현 정확성"
     row = f"T41-q\tT41\t{d(8)}\t-\tpending\t{axis}: 조용했던 후보\teffect:quiet n_spawn=0"
-    with tempfile.TemporaryDirectory() as tmp:   # 없는 소집 로그는 소집 0 으로 정상(done)
+    with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [row])
         (home / ".claude/_audit/history.md").write_text("# h\n", encoding="utf-8")
         run_usage(home, proj)
@@ -1255,7 +1223,7 @@ def test_effect_spawn_log_unreadable_fails_closed():
 def test_effect_history_unreadable_fails_closed():
     axis = "coder/구현 정확성"
     row = f"T41-q\tT41\t{d(8)}\t-\tpending\t{axis}: 조용했던 후보\teffect:quiet n_spawn=0"
-    with tempfile.TemporaryDirectory() as tmp:   # 파일 없음 → grep rc=2
+    with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [row])
         out = run_usage(home, proj)
         edir = home / f".claude/_usage/t41-effect-{TODAY}.d"
@@ -1265,7 +1233,7 @@ def test_effect_history_unreadable_fails_closed():
         check("Grok7①②: 경보 T41_EFFECT_FAIL 이 원인을 보여 주고 maintenance.log 에 «history 읽기 실패(grep rc=2)»", "T41_EFFECT_FAIL(history 읽기 실패(grep rc=2))" in out and "history 읽기 실패(grep rc=2)" in log, f"{out[-300:]} {log[-200:]}")
         check("Grok7①: fail-open 방지 — 8일 된 quiet 행이 effect 기록 없이 만료되지 않음(pending 유지·비고 불변)", cand_rows(home)[0][4] == "pending" and cand_rows(home)[0][6] == "effect:quiet n_spawn=0", str(cand_rows(home)[0]))
     if os.geteuid() != 0:
-        with tempfile.TemporaryDirectory() as tmp:   # 권한 0 → grep rc=2
+        with tempfile.TemporaryDirectory() as tmp:
             home, proj = make_env(tmp, [row])
             hist = home / ".claude/_audit/history.md"
             hist.write_text("# h\n", encoding="utf-8")
@@ -1276,7 +1244,7 @@ def test_effect_history_unreadable_fails_closed():
                 os.chmod(hist, 0o644)
             edir = home / f".claude/_usage/t41-effect-{TODAY}.d"
             check("Grok7①: history 권한 0 도 같은 실패 경로(done 없음·pending 유지)", (edir / "failed").exists() and not (edir / "done").exists() and cand_rows(home)[0][4] == "pending" and "history 읽기 실패" in out, f"{list(edir.glob('*'))} {out[-200:]}")
-    with tempfile.TemporaryDirectory() as tmp:   # 매치 없음(rc=1)은 빈 history — 정상 경로(done)
+    with tempfile.TemporaryDirectory() as tmp:
         home, proj = make_env(tmp, [row])
         (home / ".claude/_audit/history.md").write_text("# h\n", encoding="utf-8")
         run_usage(home, proj)
@@ -1305,6 +1273,268 @@ for fn in (test_unjudged_alarm_without_marker_needs_old_candidate, test_attach_r
            test_expire_in_usage_check, test_maintenance_log_rotation, test_digest_once_per_day, test_digest_parallel_single_output, test_t41_effect_note, test_effect_aggregation_and_batch, test_memory_index_long_and_prune,
            test_prune_targets_fixed_root_and_cwd_project, test_crosscheck_background_launch, test_crosscheck_latest_and_auto):
     fn()
+
+
+def test_artifact_delete_pending():
+    with tempfile.TemporaryDirectory() as tmp:
+        home, proj = make_env(tmp)
+        out = run_usage(home, proj)
+        check("W6: 대기 목록이 없으면 ARTIFACT_DELETE_PENDING 경보 없음", "ARTIFACT_DELETE_PENDING" not in out, out[-300:])
+        pend = home / ".claude/_usage/decision-popup/artifact-delete-pending.tsv"
+        pend.parent.mkdir(parents=True)
+        pend.write_text(f"2026-11-24T00:00:00Z\ts1\t{proj}\thttps://claude.ai/artifact/a1\t\n"
+                        f"2026-11-24T00:00:01Z\ts1\t{proj}\thttps://claude.ai/artifact/a1\t{'f' * 32}\n"
+                        f"2026-11-24T00:00:02Z\ts2\t{proj}-other\thttps://claude.ai/artifact/b2\t\n"
+                        f"2026-11-24T00:00:03Z\ts3\t{proj}\t\t\n"
+                        "깨진 줄\n", encoding="utf-8")
+        out = run_usage(home, proj)
+        check("W6: cwd 가 같은 url 있는 줄만 세어 «⚠ ARTIFACT_DELETE_PENDING: 2건» · 대기 목록 경로 · «사용자가 지시한 것만» (삭제를 권하는 문구 없음)",
+              "⚠ ARTIFACT_DELETE_PENDING: 2건." in out and "~/.claude/_usage/decision-popup/artifact-delete-pending.tsv" in out
+              and "사용자가 지시한 것만 지울 것" in out and "지시가 아님" in out and "지울 수 있습니다" not in out
+              and "꺼진 세션에서 지울 것" not in out and "USAGE OK" not in out, out[-400:])
+        other = Path(tmp) / "elsewhere"
+        other.mkdir()
+        out = run_usage(home, other)
+        check("W6: 다른 폴더에서 연 세션에는 경보 없음", "ARTIFACT_DELETE_PENDING" not in out, out[-300:])
+
+
+test_artifact_delete_pending()
+
+
+def aw_env(tmp):
+    home, proj = make_env(tmp)
+    claude = home / ".claude"
+    genv = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null")
+    subprocess.run(["git", "init", "-q"], cwd=str(claude), env=genv, check=True, capture_output=True)
+    (claude / "sub").mkdir()
+    fakebin = Path(tmp) / "fakebin"
+    fakebin.mkdir()
+    stub = fakebin / "uv"
+    stub.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$HOME/.claude/_usage/aw-stub-ran"\n', encoding="utf-8")
+    stub.chmod(0o755)
+    aw_dir = claude / "_usage/articles-watch"
+    aw_dir.mkdir(parents=True)
+    return home, proj, claude, fakebin, aw_dir
+
+
+def aw_run(home, cwd, fakebin):
+    return run_usage(home, cwd, PATH=f"{fakebin}{os.pathsep}{os.environ['PATH']}")
+
+
+def test_articles_watch_alerts():
+    led = "url\tfirst_seen\tstatus\tnote\n"
+    state_ok = '{\n "time": "2026-11-24T00:00:00+09:00",\n "ok": true,\n "found": 3,\n "new": 2,\n "error": ""\n}\n'
+    with tempfile.TemporaryDirectory() as tmp:
+        home, proj, claude, stub, aw_dir = aw_env(tmp)
+        ran = claude / "_usage/aw-stub-ran"
+        (aw_dir / "ledger.tsv").write_text(led + "https://claude.com/resources/articles/a\t2026-11-24\tnew\t\n"
+                                           "https://claude.com/resources/articles/b\t2026-11-24\tnew\t\n"
+                                           "https://claude.com/resources/articles/c\t2026-11-24\treviewed\tx\n", encoding="utf-8")
+        (aw_dir / "last-check.json").write_text(state_ok, encoding="utf-8")
+        out = aw_run(home, claude / "sub", stub)
+        check("W5: 신선한 상태 + new 2건 → «⚠ ARTICLES_NEW: 2건» · 절차 문서 · URL 없음 · 조회 안 띄움",
+              "⚠ ARTICLES_NEW: 2건" in out and "rules-lazy/articles-watch.md" in out and "claude.com/resources" not in out
+              and "ARTICLES_WATCH_FAIL" not in out and not wait_for(ran, 1.0), out[-400:])
+        out = aw_run(home, proj, stub)
+        check("W5: 하네스 밖 cwd 에서는 new 가 있어도 경보 없음", "ARTICLES_" not in out, out[-300:])
+        (aw_dir / "last-check.json").unlink()
+        out = aw_run(home, proj, stub)
+        check("W5: 하네스 밖 cwd 에서는 상태 파일이 없어도 조회를 띄우지 않음", not wait_for(ran, 1.0) and not (aw_dir / "check-attempt").exists(), out[-300:])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        home, proj, claude, stub, aw_dir = aw_env(tmp)
+        ran = claude / "_usage/aw-stub-ran"
+        (aw_dir / "ledger.tsv").write_text(led + "https://claude.com/resources/articles/a\t2026-11-24\tnew\t\n", encoding="utf-8")
+        out = aw_run(home, claude, stub)
+        check("W5: 상태 파일 없음 → 백그라운드로 uv run … articles_watch.py check --state-dir 를 띄우고 이번 세션엔 경보 없음(표지 없던 첫 시도라 «점검 미완료» 아님)",
+              wait_for(ran) and ran.read_text(encoding="utf-8").strip() == f"run --no-project python {claude}/scripts/articles_watch.py check --state-dir {aw_dir}"
+              and "ARTICLES_" not in out, out[-300:])
+        aw_run(home, claude, stub)
+        time.sleep(1.0)
+        check("W5: 30분 안 재시도 방지 표지로 두 번째 세션은 다시 띄우지 않음", len(ran.read_text(encoding="utf-8").splitlines()) == 1)
+        (aw_dir / "check-attempt").unlink()
+        (aw_dir / "last-check.json").write_text(state_ok, encoding="utf-8")
+        set_mtime(aw_dir / "last-check.json", days=8)
+        aw_run(home, claude, stub)
+        check("W5: 마지막 점검이 7일 넘으면 다시 조회를 띄움", wait_for(ran) and len(ran.read_text(encoding="utf-8").splitlines()) == 2)
+        (aw_dir / "check-attempt").unlink()
+        set_mtime(aw_dir / "last-check.json", days=6)
+        out = aw_run(home, claude, stub)
+        time.sleep(1.0)
+        check("W5: 6일 전 점검이면 조회를 띄우지 않고 경보만", len(ran.read_text(encoding="utf-8").splitlines()) == 2 and "ARTICLES_NEW: 1건" in out, out[-300:])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        home, proj, claude, stub, aw_dir = aw_env(tmp)
+        ran = claude / "_usage/aw-stub-ran"
+        evil = "http_status=503 \\u001b[31m `rm -rf` https://evil.example/x " + "z" * 100
+        (aw_dir / "last-check.json").write_text(
+            '{\n "time": "2026-11-24T00:00:00+09:00",\n "ok": false,\n "found": 0,\n "new": 0,\n "error": "' + evil + '"\n}\n', encoding="utf-8")
+        out = aw_run(home, claude, stub)
+        line = next((ln for ln in out.splitlines() if "ARTICLES_WATCH_FAIL" in ln), "")
+        err = line.split("ARTICLES_WATCH_FAIL: ", 1)[-1].split(" (마지막")[0]
+        check("W5: 실패 상태 → «⚠ ARTICLES_WATCH_FAIL: http_status=503…» · 오류 문구는 60자 이하·가림(백틱·ESC·URL 전체 없음)",
+              line.startswith("⚠ ARTICLES_WATCH_FAIL: http_status=503") and len(err) <= 60 and "`" not in line and "\x1b" not in line
+              and "://" not in line and "evil.example" not in line and "ARTICLES_NEW" not in out and not wait_for(ran, 1.0), line)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        home, proj, claude, stub, aw_dir = aw_env(tmp)
+        ran = claude / "_usage/aw-stub-ran"
+        out = run_usage(home, claude, PATH=build_path_without(tmp, "uv"))
+        check("W5: uv 가 없으면 «⚠ ARTICLES_WATCH_FAIL: uv 없음» 경보, 조회는 뜨지 않음",
+              not wait_for(ran, 1.5) and "⚠ ARTICLES_WATCH_FAIL: uv 없음" in out, out[-300:])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        home, proj, claude, stub, aw_dir = aw_env(tmp)
+        ran = claude / "_usage/aw-stub-ran"
+        (aw_dir / "check-attempt").write_text("", encoding="utf-8")
+        set_mtime(aw_dir / "check-attempt", minutes=40)
+        out = aw_run(home, claude, stub)
+        check("W5: 표지 40분 전 + 상태 파일 없음 → «⚠ ARTICLES_WATCH_FAIL: 점검 미완료» 경보 + 이 세션에서 다시 띄움",
+              "⚠ ARTICLES_WATCH_FAIL: 점검 미완료(조회가 상태를 남기지 못함)" in out and wait_for(ran), out[-300:])
+        (aw_dir / "check-attempt").unlink()
+        ran.unlink()
+        (aw_dir / "last-check.json").write_text(state_ok, encoding="utf-8")
+        set_mtime(aw_dir / "last-check.json", days=8)
+        (aw_dir / "check-attempt").write_text("", encoding="utf-8")
+        set_mtime(aw_dir / "check-attempt", minutes=40)
+        out = aw_run(home, claude, stub)
+        check("W5: 상태 파일이 표지보다 오래돼도(8일 전) «점검 미완료» 경보 + 재시도", "점검 미완료" in out and wait_for(ran), out[-300:])
+        (aw_dir / "check-attempt").unlink()
+        ran.unlink()
+        set_mtime(aw_dir / "last-check.json", days=8)
+        (aw_dir / "check-attempt").write_text("", encoding="utf-8")
+        set_mtime(aw_dir / "check-attempt", days=9)
+        out = aw_run(home, claude, stub)
+        check("W5: 표지보다 새로운 상태 파일(정상 종료)은 7일이 지나도 «점검 미완료» 가 아니고 다시 띄움", "점검 미완료" not in out and wait_for(ran), out[-300:])
+
+
+test_articles_watch_alerts()
+
+
+def test_deadline_alerts():
+    with tempfile.TemporaryDirectory() as tmp:
+        home, proj, claude, stub, aw_dir = aw_env(tmp)
+        (aw_dir / "last-check.json").write_text('{\n "ok": true,\n "new": 0,\n "error": ""\n}\n', encoding="utf-8")
+        cfg_path = claude / "config/agent-prompt-gate.json"
+        base = json.loads((SCRIPTS.parent / "config/agent-prompt-gate.json").read_text(encoding="utf-8"))
+        mark_ctx = claude / "_usage/context-loss-report-last"
+        mark_mem = claude / "_usage/memory-review-last"
+
+        def cfg(reg, mode="observe", done=False):
+            cfg_path.write_text(json.dumps({**base, "registered": reg, "mode": mode, "report_7d_done": done}), encoding="utf-8")
+
+        def lines(out, name):
+            return [ln for ln in out.splitlines() if f"⚠ {name}:" in ln]
+
+        cfg(d(40))
+        out = aw_run(home, proj, stub)
+        check("W4: 하네스 밖 cwd 면 세 경보 모두 없음",
+              not any(lines(out, n) for n in ("AGENT_PROMPT_GATE_REPORT_DUE", "CONTEXT_LOSS_REPORT_DUE", "MEMORY_REVIEW_DUE")), out[-400:])
+
+        for reg in ("", "2026/11/01", "2026-02-30", "x2026-01-01", 20261101):
+            cfg(reg)
+            out = aw_run(home, claude, stub)
+            check(f"W4: registered={reg!r} 이면 7일 · 30일 경보 없음",
+                  not lines(out, "AGENT_PROMPT_GATE_REPORT_DUE") and not lines(out, "CONTEXT_LOSS_REPORT_DUE"), out[-400:])
+        check("W11: memory 표지 없음 → «⚠ MEMORY_REVIEW_DUE: … 한 번도 안 함» · 절 이름 · 백틱 없음",
+              lines(out, "MEMORY_REVIEW_DUE") == ["⚠ MEMORY_REVIEW_DUE: 메모리 · 지식 노트 정리 한 번도 안 함 → rules-lazy/memory-write.md § 정기 정리 (30일)"],
+              out[-400:])
+
+        cfg(d(6))
+        out = aw_run(home, claude, stub)
+        check("W4: 등록 +6일 → 7일 경보 없음", not lines(out, "AGENT_PROMPT_GATE_REPORT_DUE"), out[-400:])
+        cfg(d(7))
+        out = aw_run(home, claude, stub)
+        got = lines(out, "AGENT_PROMPT_GATE_REPORT_DUE")
+        check("W4: 등록 +7일 · observe · 미보고 → «등록 7일째» 경보와 --report --days 7 · report_7d_done 안내, 30일 경보 없음",
+              len(got) == 1 and "등록 7일째" in got[0] and "agent-prompt-gate.py --report --days 7" in got[0] and "report_7d_done" in got[0]
+              and "`" not in got[0] and not lines(out, "CONTEXT_LOSS_REPORT_DUE"), out[-400:])
+        cfg(d(7), mode="enforce")
+        out = aw_run(home, claude, stub)
+        check("W4: mode=enforce 면 7일 경보 없음", not lines(out, "AGENT_PROMPT_GATE_REPORT_DUE"), out[-400:])
+        cfg(d(7), done=True)
+        out = aw_run(home, claude, stub)
+        check("W4: report_7d_done=true 면 7일 경보 없음", not lines(out, "AGENT_PROMPT_GATE_REPORT_DUE"), out[-400:])
+        cfg(d(7), done="true")
+        out = aw_run(home, claude, stub)
+        check("W4: report_7d_done 이 문자열 \"true\" 면 참이 아니라 경보 유지", len(lines(out, "AGENT_PROMPT_GATE_REPORT_DUE")) == 1, out[-400:])
+
+        cfg(d(30), done=True)
+        out = aw_run(home, claude, stub)
+        got = lines(out, "CONTEXT_LOSS_REPORT_DUE")
+        check("W4: 등록 +30일 · 표지 없음 → «등록 30일째» 맥락 누락 경보와 touch 안내",
+              len(got) == 1 and "등록 30일째" in got[0] and "touch ~/.claude/_usage/context-loss-report-last" in got[0], out[-400:])
+        mark_ctx.write_text("", encoding="utf-8")
+        out = aw_run(home, claude, stub)
+        check("W4: 표지가 있으면 30일 경보 없음", not lines(out, "CONTEXT_LOSS_REPORT_DUE"), out[-400:])
+
+        mark_mem.write_text("", encoding="utf-8")
+        set_mtime(mark_mem, days=29)
+        out = aw_run(home, claude, stub)
+        check("W11: memory 표지 29일 → 경보 없음", not lines(out, "MEMORY_REVIEW_DUE"), out[-400:])
+        set_mtime(mark_mem, days=31)
+        out = aw_run(home, claude, stub)
+        check("W11: memory 표지 31일 → «31일째» 경보", any("정리 31일째" in ln for ln in lines(out, "MEMORY_REVIEW_DUE")), out[-400:])
+
+        mark_ctx.unlink()
+        cfg(d(40))
+        out = run_usage(home, claude, PATH=f"{stub}{os.pathsep}{build_path_without(tmp, 'jq')}")
+        check("W4: jq 가 없으면 7일 · 30일 경보는 조용히 건너뜀(메모리 경보는 그대로)",
+              not lines(out, "AGENT_PROMPT_GATE_REPORT_DUE") and not lines(out, "CONTEXT_LOSS_REPORT_DUE") and lines(out, "MEMORY_REVIEW_DUE"),
+              out[-400:])
+
+
+test_deadline_alerts()
+
+
+def test_rule_reduction_window_alert():
+    with tempfile.TemporaryDirectory() as tmp:
+        home, proj, claude, stub, aw_dir = aw_env(tmp)
+        (aw_dir / "last-check.json").write_text('{\n "ok": true,\n "new": 0,\n "error": ""\n}\n', encoding="utf-8")
+        win = claude / "_usage/rule-reduction-window"
+        name = "RULE_REDUCTION_WINDOW_DUE"
+
+        def got(content=None, cwd=None):
+            if content is not None:
+                if win.is_symlink() or win.exists():
+                    win.unlink()
+                win.write_text(content, encoding="utf-8")
+            out = aw_run(home, cwd or claude, stub)
+            return [ln for ln in out.splitlines() if f"⚠ {name}:" in ln], out
+
+        lines, out = got()
+        check("RR: 창 파일 없음 → 경보 없음", lines == [], out[-300:])
+        lines, out = got(f"base\t{d(-1)}\n")
+        check("RR: 끝 날짜 내일 → 경보 없음", lines == [], out[-300:])
+        lines, out = got(f"base\t{TODAY}\n")
+        check("RR: 끝 날짜 오늘 → «⚠ RULE_REDUCTION_WINDOW_DUE: base 창 끝(오늘) → rule_reduction_metrics.py 로 집계» 한 줄 · 백틱 없음",
+              lines == [f"⚠ {name}: base 창 끝({TODAY}) → rule_reduction_metrics.py 로 집계"] and "`" not in lines[0], out[-300:])
+        lines, out = got(f"after.2-x\t{d(3)}")
+        check("RR: 끝 날짜 사흘 전 · 개행 없음 → 경보", lines == [f"⚠ {name}: after.2-x 창 끝({d(3)}) → rule_reduction_metrics.py 로 집계"], out[-300:])
+        lines, out = got(f"base\t{d(1)}\r\n")
+        check("RR: CRLF 로 저장된 표지(끝 CR) → CR 을 떼고 경보, 값에 CR 없음",
+              lines == [f"⚠ {name}: base 창 끝({d(1)}) → rule_reduction_metrics.py 로 집계"] and "\r" not in lines[0], out[-300:])
+        lines, out = got(f"base\t{TODAY}\n", cwd=proj)
+        check("RR: 하네스 밖 cwd 면 경보 없음", lines == [], out[-300:])
+        for bad in (f"a b\t{TODAY}\n", f"../x\t{TODAY}\n", f"{'x' * 41}\t{TODAY}\n", f"\t{TODAY}\n", "base\t2026-02-30\n",
+                    "base\t2026/01/01\n", f"base\t{TODAY}\textra\n", f"base\t{TODAY}x\n", f"base {TODAY}\n", f"`rm`\t{TODAY}\n",
+                    f"base\t{TODAY}\r\rx\n", f"\x1b[31m\t{TODAY}\n"):
+            lines, out = got(bad)
+            check(f"RR: 형식이 틀린 창 파일 {bad!r} → 경보 없음(값을 싣지 않음)", lines == [], out[-300:])
+        target = Path(tmp) / "target"
+        target.write_text(f"base\t{TODAY}\n", encoding="utf-8")
+        win.unlink()
+        win.symlink_to(target)
+        lines, out = got()
+        check("RR: 창 파일이 링크면 읽지 않음 → 경보 없음", lines == [], out[-300:])
+        win.unlink()
+        win.mkdir()
+        lines, out = got()
+        check("RR: 창 파일 자리가 폴더면 경보 없음", lines == [], out[-300:])
+        win.rmdir()
+
+
+test_rule_reduction_window_alert()
 
 fail = 0
 for name, ok, detail in results:

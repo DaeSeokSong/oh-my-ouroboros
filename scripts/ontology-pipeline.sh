@@ -8,8 +8,7 @@
 #   Claude는 시맨틱 추출 단계에서만 헤드리스 세션으로 참여한다 (ontology-refresh.sh 참조).
 #
 # 범위 제한: CLAUDE_DIR 하드코딩, graphify-out/ 밖 쓰기 없음(로그 제외).
-#   git commit/push는 이 스크립트 어디에도 없다 — 커밋·push 모두 사용자 직접
-#   (2026-08-05 자동 커밋 폐지: 커밋 시점을 기계가 정하면 pull 순서 통제 불가 → 멀티서버 충돌).
+#   git commit/push는 이 스크립트 어디에도 없다 — 커밋·push 모두 사용자 직접.
 #   스테이징은 graphify-out/ 경로만 add — 다른 미커밋 변경을 절대 쓸어담지 않는다.
 #
 # 서브커맨드:
@@ -21,8 +20,7 @@
 #             graphify-out/만 스테이징 + .commit-msg 준비 + ntfy (커밋·push는 사용자).
 #
 # 종료 코드: 0=완료  1=오류(pull 실패·빈 그래프·shrink-guard 등)  2=detect 스킵(미push 백로그 — 오류 아님)  3=사용법 오류
-# (2=스킵을 0과 분리한 이유: 스킵인데 0을 주면 호출자(refresh.sh)가 finalize로 진행해
-#  .graphify_detect.json 부재 크래시 + 매 주기 헛 실패 알림 — 2026-07-10 qa 정독 P0)
+# REF: knowledge/harness/code-history/scripts__ontology-pipeline.sh.md
 
 set -uo pipefail
 
@@ -30,15 +28,12 @@ CLAUDE_DIR="$HOME/.claude"
 LOG="$CLAUDE_DIR/ontology-refresh.log"
 ACTION="${1:-}"
 
-# systemd 경유(ontology-refresh.service, StandardOutput=append:LOG) 시 stdout이 같은 LOG에 다시
+# WHY: systemd 경유(ontology-refresh.service, StandardOutput=append:LOG) 시 stdout이 같은 LOG에 다시
 # 붙어 tee는 이중 기록이 된다(2026-07-13 실측) — systemd가 주입하는 INVOCATION_ID로 분기.
 tee_log() { if [ -n "${INVOCATION_ID:-}" ]; then cat; else tee -a "$LOG"; fi; }
 log() { echo "[$(date -Iseconds)] [pipeline] $*" | tee_log; }
-# refresh.sh와 동일 채널 — 종전엔 finalize의 git add/commit 실패 경로가 미정의 함수를 호출하는
-# 잠복 버그였다 (refresh.sh에만 정의돼 있었음, 2026-07-27 수정)
 notify_fail() { bash "$CLAUDE_DIR/scripts/claude-notify.sh" "ontology" "온톨로지 갱신 실패: $1 (로그: ontology-refresh.log)" 2>/dev/null || true; }
-# 커밋 대기 알림 (2026-08-05 사용자 결정 — 자동 커밋 폐지와 한 쌍, 종전 "ntfy는 실패 전용" 결정을 대체)
-# stdout도 버린다 — claude-notify.sh의 터미널 벨(printf '\a')이 stdout으로 새어 로그에 BEL(0x07)이
+# WHY: stdout도 버린다 — claude-notify.sh의 터미널 벨(printf '\a')이 stdout으로 새어 로그에 BEL(0x07)이
 # 섞이면 usage-check 성공 라인 앵커(^\[)가 깨져 TIMER_PARSE 허위 경고 (2026-08-15 실사고)
 notify_action() { bash "$CLAUDE_DIR/scripts/claude-notify.sh" "ontology" "$1" >/dev/null 2>&1 || true; }
 
@@ -66,13 +61,8 @@ case "$ACTION" in
   detect)
     log "detect 시작"
 
-    # 멀티서버 가드 1 — behind 빌드 금지 (2026-08-03 사용자 지시: push-pull 겹침 방지 강화).
-    # 종전엔 pull 실패를 전부 "로컬 상태로 빌드"로 처리해, 원격이 앞선(behind) 서버가
-    # 낡은 상태 위에 커밋을 쌓아 발산을 만들었다 (divergence 반복 실사고의 발생원).
-    # 원인 3분류: ⓐ fetch 자체 불가(인증·네트워크) → 원격 상태를 알 수 없으니 기존
-    # best-effort 유지(로컬 빌드 — 미push 가드가 발산을 1커밋으로 상한) ⓑ fetch 가능 +
-    # behind + ff 가능 → 따라잡고 빌드 ⓒ fetch 가능 + ff 불가(이미 발산·로컬 미커밋 충돌)
-    # 또는 behind 해소 실패 → skip (빌드하면 발산 확정 — 사용자 pull 정리가 선행 조건).
+    # WHY: behind 빌드 금지 (2026-08-03 사용자 지시). 원격이 앞선(behind) 서버가 낡은 상태 위에 커밋을 쌓아 발산을 만들었다.
+    #   fetch 불가면 원격 상태를 알 수 없어 로컬 빌드(미push 가드가 발산을 1커밋으로 상한), ff 불가면 빌드하면 발산 확정이라 skip.
     if GIT_TERMINAL_PROMPT=0 git fetch origin >> "$LOG" 2>&1; then
         if GIT_TERMINAL_PROMPT=0 git pull --ff-only >> "$LOG" 2>&1; then
             log "git pull 성공 — 원격 최신 상태에서 빌드"
@@ -84,13 +74,13 @@ case "$ACTION" in
         log "git fetch 불가(인증/네트워크) — 로컬 상태로 진행 (미push 가드가 발산 1커밋 상한, §7.1)"
     fi
 
-    # 멀티서버 가드 2 (§7.1 미push 가드): 이 서버의 이전 온톨로지 커밋이 아직 push 안 됐으면
+    # WHY: 멀티서버 가드 2 (§7.1 미push 가드): 이 서버의 이전 온톨로지 커밋이 아직 push 안 됐으면
     # 새 빌드를 쌓지 않는다 — 다른 서버가 그 사이 빌드하면 발산하므로, push가 전파의 전제.
     # (전 서버 타이머 운용의 안전핀 — 2026-07-09 전 서버 갱신 허용 결정과 한 쌍)
     if git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1; then
         UNPUSHED=$(git rev-list '@{upstream}'..HEAD -- graphify-out/ 2>/dev/null | head -1)
         if [ -n "$UNPUSHED" ]; then
-            # push 권장 전달은 세션 시작 usage-check(ONTOLOGY_PUSH)가 담당 — ntfy 미사용 (사용자 결정)
+            # NEVER: 여기서 ntfy 를 보내지 않는다. push 권장 전달은 세션 시작 usage-check(ONTOLOGY_PUSH)가 담당 (사용자 결정)
             log "미push 온톨로지 커밋 존재 — 발산 방지 skip (git push 후 다음 주기에 재개)"
             exit 2
         fi
@@ -113,7 +103,7 @@ result = detect(root)
 (root / "graphify-out/.graphify_detect.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
 print(f"Corpus: {result.get('total_files',0)} files, {result.get('total_words',0)} words")
 PYEOF
-    [[ ${PIPESTATUS[0]} -eq 0 ]] || { log "detect(Corpus) Python 실패 — 중단"; exit 1; }   # set -e 부재 보완 (2026-07-17 Codex): tee_log가 실패 RC 가림
+    [[ ${PIPESTATUS[0]} -eq 0 ]] || { log "detect(Corpus) Python 실패 — 중단"; exit 1; }   # WHY: set -e 부재 보완 (2026-07-17 Codex): tee_log가 실패 RC 가림
 
     "$PY" - <<'PYEOF' 2>&1 | tee_log
 import json, os
@@ -136,14 +126,10 @@ else:
 PYEOF
     [[ ${PIPESTATUS[0]} -eq 0 ]] || { log "AST 추출 Python 실패 — 중단"; exit 1; }
 
-    # 캐시 감쇠(스텁) 자동 치유 (2026-07-27 신설 — 실사고 근거): graphifyy save_semantic_cache는
-    # 추출 청크를 source_file별로 그룹핑해 "언급된 모든 파일"의 엔트리를 덮어쓴다. 추출 대상이
-    # 아닌 파일이 교차 참조 노드 1개짜리 스텁으로 오염됨 — 07-24 실사고: 20파일 추출이 42파일
-    # 캐시를 스텁화 → 병합 1476→1257 붕괴 → shrink-guard 거부 + detect는 "캐시 있음=추출 불요"
-    # → 3일 연속 자가 복구 불가 교착. 판별 기준: 직전 성공 graph.json이 그 파일에 2+노드를
-    # 기록했는데 현 캐시 엔트리가 1노드 이하면 감쇠 확진 (소형 노트의 정상 1노드 추출은 graph도
-    # 1노드라 제외됨). 치유 = 엔트리 삭제 → 이번 run의 check_semantic_cache가 uncached로 재분류
-    # → 같은 run에서 재추출. 동일 (파일,해시)는 1회만 치유(ledger) — 파일 대폭 축소 등 정당한
+    # WHY: graphifyy save_semantic_cache는 추출 청크를 source_file별로 그룹핑해 "언급된 모든 파일"의 엔트리를 덮어써,
+    # 추출 대상이 아닌 파일이 교차 참조 노드 1개짜리 스텁으로 오염된다(07-24 실사고: 3일 연속 자가 복구 불가 교착).
+    # 판별 기준: 직전 성공 graph.json이 그 파일에 2+노드를 기록했는데 현 캐시 엔트리가 1노드 이하면 감쇠 확진.
+    # 치유 = 엔트리 삭제 → 같은 run에서 재추출. 동일 (파일,해시)는 1회만 치유(ledger) — 정당한
     # 소노드 재추출이 매일 밤 재추출을 반복(thrash)하는 것 방지.
     "$PY" - <<'PYEOF' 2>&1 | tee_log
 import json, os
@@ -215,7 +201,7 @@ print(f"Semantic: {len(all_files)-len(uncached)} cached, {len(uncached)} need ex
 PYEOF
     [[ ${PIPESTATUS[0]} -eq 0 ]] || { log "semantic detect Python 실패 — 중단"; exit 1; }
 
-    # grep -c는 0건이어도 "0"을 출력하며 exit 1로 끝나 `|| echo 0`이 "0\n0"을 만들던 버그 수정 (2026-07-27)
+    # NEVER: `|| echo 0`을 붙이지 않는다. grep -c는 0건이어도 "0"을 출력하며 exit 1로 끝나 "0\n0"이 된다 (2026-07-27)
     N=$(grep -c . graphify-out/.graphify_uncached.txt 2>/dev/null); N=${N:-0}
     log "detect 완료 — 시맨틱 추출 필요 ${N}개"
     ;;
@@ -383,10 +369,8 @@ PYEOF
         exit 1
     fi
 
-    # export 실패는 즉시 중단 (2026-07-15 GPT P1-3: 종전 RC 미검사 — 부분 산출물 위에
-    # stale manifest 기준 삭제가 진행될 수 있었음)
-    # bare `graphify`는 systemd 최소 PATH에서 미해석 (2026-08-05 실측: 추출 분기(N>0)의
-    # claude CLI PATH 증강이 우연히 ~/.local/bin을 얹어주던 것 — N=0이면 command not found).
+    # WHY: export 실패는 즉시 중단 (2026-07-15 GPT P1-3): 부분 산출물 위에 stale manifest 기준 삭제가 진행될 수 있다.
+    # WHY: bare `graphify`는 systemd 최소 PATH에서 미해석 (2026-08-05 실측: N=0이면 command not found).
     # 캐시 인터프리터($PY)와 동일 venv의 절대경로 실행파일로 결정적 호출.
     GRAPHIFY_BIN="$(dirname "$PY")/graphify"
     [ -x "$GRAPHIFY_BIN" ] || GRAPHIFY_BIN=$(command -v graphify) || { log "graphify 실행파일 미발견 — 중단"; exit 1; }
@@ -396,15 +380,13 @@ PYEOF
     fi
     "$GRAPHIFY_BIN" export html >> "$LOG" 2>&1 || log "html export 실패 (비차단 — 부가 산출물)"
 
-    # orphan 자동 정리 (2026-07-15 신설 → 07-15 GPT P1-2/P1-3 재설계): exporter는 upsert
-    # 방식이라 삭제 노드의 노트가 잔존 누적됨 (실측 460건, 대소문자 충돌 23쌍 전부 orphan發).
-    # 안전 게이트 3종 (판단 근거 이식):
-    #   ① fail-closed — manifest 부재/파손/빈 목록·정리 오류는 exit 1 (종전 skip은 fail-open)
-    #   ② canvas 보호 — graph.canvas가 참조하는 노트는 manifest에 없어도 절대 삭제 안 함
+    # WHY: exporter는 upsert 방식이라 삭제 노드의 노트가 잔존 누적됨 (2026-07-15 실측 460건). 안전 게이트 3종:
+    #   1) fail-closed — manifest 부재/파손/빈 목록·정리 오류는 exit 1
+    #   2) canvas 보호 — graph.canvas가 참조하는 노트는 manifest에 없어도 절대 삭제 안 함
     #      (실측: exporter가 live 노드 2개를 manifest에서 누락 → 정리가 live 노트 삭제.
     #       불일치는 WARN으로 진단만 — exit 1로 만들면 exporter 버그가 고쳐질 때까지
     #       무인 갱신이 매일 정지하는 shrink-guard 동종 병리가 되므로 보호+경고 선택)
-    #   ③ shrink 게이트 — 삭제 후보가 전체의 20% 초과면 의심 급감으로 중단
+    #   3) shrink 게이트 — 삭제 후보가 전체의 20% 초과면 의심 급감으로 중단
     if ! "$PY" - <<'PYEOF' 2>&1 | tee_log
 import json, os, sys
 from pathlib import Path
@@ -476,7 +458,7 @@ cost["runs"].append({"date": datetime.now(timezone.utc).isoformat(), "input_toke
 cp.write_text(json.dumps(cost, ensure_ascii=False), encoding="utf-8")
 PYEOF
     then
-        # save_manifest 실패는 stale manifest → 다음 증분 detect 기준 오염 (correctness) → 중단 (2026-07-17 Codex)
+        # WHY: save_manifest 실패는 stale manifest → 다음 증분 detect 기준 오염 (correctness) → 중단 (2026-07-17 Codex)
         log "manifest/cost 저장 실패 — 중단 (stale manifest 방지)"; exit 1
     fi
 
@@ -485,14 +467,14 @@ PYEOF
           graphify-out/.graphify_cached.json graphify-out/.graphify_uncached.txt
     find graphify-out -maxdepth 1 -name '.graphify_chunk_*.json' -delete 2>/dev/null
 
-    # HEAD 대비 비교 (2026-08-05 자동 커밋 폐지에 따른 교정): 커밋이 사용자 소관이 되면서
+    # WHY: HEAD 대비 비교 (2026-08-05 자동 커밋 폐지에 따른 교정): 커밋이 사용자 소관이 되면서
     # "스테이징만 되고 미커밋"인 변경이 상시 존재 가능 — index 대비(diff)만 보면 재빌드 결과가
     # 어제 스테이징분과 동일할 때 pending을 놓친다. HEAD 대비가 커밋 대기의 올바른 신호.
     if git diff --quiet HEAD -- graphify-out/ && [ -z "$(git ls-files --others --exclude-standard graphify-out/)" ]; then
         log "변경 없음 — 스테이징 스킵"
         rm -f graphify-out/.commit-msg
     else
-        # 커밋 직전 원격 재확인 (2026-08-03 — 빌드 수십 분 사이 타서버가 먼저 커밋·push했을 수 있음):
+        # WHY: 커밋 직전 원격 재확인 (2026-08-03 — 빌드 수십 분 사이 타서버가 먼저 커밋·push했을 수 있음):
         # fetch 가능 + behind면 지금 커밋 = 발산 확정 → 커밋 보류(산출물은 워킹트리 보존, 다음
         # 주기에 detect가 pull 후 재빌드). fetch 불가면 기존 흐름 유지(미push 가드 상한).
         if GIT_TERMINAL_PROMPT=0 git fetch origin >> "$LOG" 2>&1; then
@@ -502,7 +484,7 @@ PYEOF
                 exit 2
             fi
         fi
-        # 팽창 가드 (2026-08-04 실사고: 타 서버발 오염 커밋 4a2cc52f — md semantic 중복 병합으로
+        # WHY: 팽창 가드 (2026-08-04 실사고: 타 서버발 오염 커밋 4a2cc52f — md semantic 중복 병합으로
         # 1,430→3,090(+116%) 급팽창이 나이틀리에 그대로 커밋·push-pull로 전 서버 전파됨.
         # shrink-guard(#479)의 반대쪽 구멍: 오염은 축소가 아니라 팽창으로 나타난다.
         # 정상 일일 증분은 +3% 내외 — +30% 초과는 오염 신호로 커밋 거부, 산출물은 보존).
@@ -523,18 +505,14 @@ PYEOF
             notify_fail "finalize 팽창 가드 발동 (+${EXPAND_PCT}% — 오염 의심)"
             exit 1
         fi
-        # git add RC 검사 (2026-07-18 Codex): add 실패 시 stale pre-staged가 잘못 커밋될 수 있음
+        # WHY: git add RC 검사 (2026-07-18 Codex): add 실패 시 stale pre-staged가 잘못 커밋될 수 있음
         if ! git add graphify-out/ >> "$LOG" 2>&1; then
             log "git add graphify-out/ 실패 — 중단"; notify_fail "finalize git add 실패"; exit 1
         fi
-        # 자동 커밋 폐지 (2026-08-05 사용자 결정 — 멀티서버 충돌 실사고 재발): 커밋 시점을
-        # 기계가 정하면 사용자가 pull 순서를 통제할 수 없다 — 무인증 서버는 behind 가드도 무력해
-        # 낡은 베이스 위 커밋이 발산·충돌을 만든다. 스테이징 + 커밋 메시지 준비까지만 자동,
-        # 커밋·push는 사용자가 pull로 순서를 잡은 뒤 직접 수행. ci-gate-commit(깨진 포인터 등)도
-        # 사용자 커밋 시점에 대화형으로 걸리므로 종전 RC 오보 문제가 구조적으로 소멸.
-        # 서버 태그 (2026-08-06 사용자 결정): 어느 서버가 어떤 graphify로 몇 노드를 만들었는지
-        # 커밋 메시지에 남겨 오염 커밋의 발생원·버전을 이력에서 즉시 추적 가능하게 한다
-        # (서버별 브랜치/vault 분리는 단일 공유 온톨로지 목적에 반해 기각 — 태그 방식 채택).
+        # WHY: 커밋 시점을 기계가 정하면 사용자가 pull 순서를 통제할 수 없다 — 무인증 서버는 behind 가드도 무력해
+        # 낡은 베이스 위 커밋이 발산·충돌을 만든다(2026-08-05 사용자 결정). 스테이징 + 커밋 메시지 준비까지만 자동.
+        # WHY: 서버 태그 (2026-08-06 사용자 결정): 어느 서버가 어떤 graphify로 몇 노드를 만들었는지
+        # 커밋 메시지에 남겨 오염 커밋의 발생원·버전을 이력에서 즉시 추적 가능하게 한다.
         GVER=$("$GRAPHIFY_BIN" --version 2>/dev/null | awk '{print $NF}'); GVER=${GVER:-?}
         NODE_CT=$("$PY" -c "import json;print(len(json.load(open('graphify-out/graph.json'))['nodes']))" 2>/dev/null); NODE_CT=${NODE_CT:-?}
         printf 'chore(ontology): 자동 갱신 %s [%s | graphify %s | %s nodes]\n' \

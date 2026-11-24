@@ -76,7 +76,7 @@ B) [구현 2] — 장단: ...
 - [ ] 단일 호출처(single-use) 코드에 대한 추상화 금지 (헬퍼 함수·클래스·인터페이스 분리 ❌)
 - [ ] 요청되지 않은 "유연성"·"설정성" 추가 금지 (config flag·옵셔널 파라미터 ❌)
 - [ ] 발생 불가능한 시나리오에 대한 에러 핸들링 금지 (방어적 코드 ❌)
-- [ ] **최단 diff·최소 산문 (ponytail 이식, 2026-07-31)**: 같은 요구를 만족하는 구현 중 출력 토큰이 가장 적은 형태를 택한다 — 불필요 주석·서술형 docstring·보일러플레이트 없음(단, 필수 한 줄 docstring과 **핵심 파일 모듈 docstring**은 '필요'로 분류 — 아래 docstring 규칙). 간결성은 가독성 장치이자 **토큰 예산 절감 장치**다.
+- [ ] **최단 diff·최소 산문 (ponytail 이식, 2026-07-31)**: 같은 요구를 만족하는 구현 중 출력 토큰이 가장 적은 형태를 택한다 — 네 범주 밖 주석·서술형 docstring·보일러플레이트 없음(아래 § 네이밍 및 스타일의 주석 규칙). 간결성은 가독성 장치이자 **토큰 예산 절감 장치**다.
 
 ### 자가 점검 (코드 작성 직후)
 다음 질문에 YES면 다시 작성한다:
@@ -159,8 +159,7 @@ optimizer = SGD(model.parameters(), lr=cfg.lr or 1e-3)
 - 클래스: CamelCase (`UniversalModel`)
 - 상수: UPPER_SNAKE_CASE
 - Import 순서: 표준 라이브러리 → PyTorch/Lightning → 외부 패키지 → 내부 모듈
-- 주석: 영어 기본, 중요 아키텍처·수식은 한글 추가 주석
-- docstring (2026-07-31 사용자 확정): 모든 함수·클래스 첫 줄 한 줄 영어 docstring 필수(예외 없음) + 핵심 파일(4신호 중 2+: 진입·조립점/팬인 ≥5/계약 정의/판단 근거)은 모듈 상단 `"""` docstring — 신규·본인 수정분에만 적용, 정본: `rules-lazy/coding-conventions.md` § docstring 규칙
+- 주석 (2026-11-24 사용자 결정): 남기는 주석은 네 범주뿐이다. 왜(`WHY:` + 날짜 · 수치 · 주소 · 파일 경로 같은 객관적 근거) · 위험 경고(`NEVER:`, 단정형) · 외부 근거 대응(`REF:`) · 파일 머리 계약(맨 위 한 덩어리 또는 모듈 docstring). 변명 투(«임시로» · «일단» · «추후» · `TODO` 등)는 쓰지 않는다. 함수 · 클래스 한 줄 docstring 필수 규칙은 폐지됐고 docstring 을 쓰면 주석과 같은 규칙이다. 핵심 파일(4신호 중 2+: 진입·조립점/팬인 ≥5/계약 정의/판단 근거)은 파일 머리 계약(역할 · 설계 근거 · 사용법 · 계약)이 필수다. 본문은 영어 기본에 한글 허용. 신규 · 본인 수정 줄에만 적용하고 기존 옛 주석은 건드리지 않는다. 정본: `rules-lazy/coding-conventions.md` § 주석 규칙
 
 ## 허용 스킬 화이트리스트 (4-Gate 통과 시 main 이 호출)
 
@@ -186,6 +185,7 @@ optimizer = SGD(model.parameters(), lr=cfg.lr or 1e-3)
 | C4 | 라이브러리 breaking change 의심 | searcher에 changelog/migration guide 검색 위임 |
 | C5 | GitHub 이슈 언급된 버그 해결 | searcher에 해당 repo 이슈 검색 위임 |
 | C6 | 논문 구현 중 수식 해석 모호 | searcher에 arxiv-latex-mcp 요청 (원본 LaTeX 확인) |
+| C7 | 프론트엔드·UI 구현에서 컴포넌트·UI 키트·도구를 찾을 때 | `rules-lazy/design-references.md`(designbookmark.com 색인)를 따라 `NEEDS_SEARCH` 로 main 에 요청(웹 도구 없음) |
 
 ### 소집 흐름
 ```
@@ -210,6 +210,7 @@ optimizer = SGD(model.parameters(), lr=cfg.lr or 1e-3)
 - Tavily/WebSearch 직접 호출 금지 — searcher subagent 경유만 허용
 
 ## 수정 완료 후
+- **린트 (MANDATORY, 2026-11-24 사용자 결정)**: 고친 파일을 `python3 -I ~/.claude/scripts/lint_changed.py <파일>…` 로 돌려(읽기 전용 · py=ruff · sh=`bash -n`+shellcheck · 세 확장자 모두 주석 규칙 검사 · HEAD 대비 바꾼 줄만) 자기가 쓴 줄의 위반을 0건으로 만들고 출력의 `RESULT:` 줄을 보고에 붙인다(행두가 아니라 `린트: RESULT: PASS` 꼴로, 아래 status 줄과 섞이지 않게). 이번 작업에서 새로 만든 파일에는 `ruff format` · `ruff check --fix` 를 써도 된다. 기존 파일의 기존 위반은 건드리지 않는다
 - qa 검증을 위해 scout QA정찰 재소환 요청 (main에게)
 - **완료 status 보고 (subagent-driven 차용 — MANDATORY)**: 작업 종료 시 4종 중 하나를 **마지막 text 블록에 행두 `RESULT: <값>` 한 줄로** 명시:
   | status | 의미 | main 처리 |

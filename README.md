@@ -10,7 +10,7 @@
 <img src="https://img.shields.io/badge/license-MIT-10b981?style=flat-square" alt="MIT license"/>
 <img src="https://img.shields.io/badge/skills-33-8b5cf6?style=flat-square" alt="33 skills"/>
 <img src="https://img.shields.io/badge/agents-12-06b6d4?style=flat-square" alt="12 agents"/>
-<img src="https://img.shields.io/badge/lazy__rules-51-f59e0b?style=flat-square" alt="51 lazy rules"/>
+<img src="https://img.shields.io/badge/lazy__rules-54-f59e0b?style=flat-square" alt="54 lazy rules"/>
 <img src="https://img.shields.io/badge/mods-2-0ea5e9?style=flat-square" alt="2 mods"/>
 <img src="https://img.shields.io/badge/self--audit-monthly-22c55e?style=flat-square" alt="monthly self-audit"/>
 <img src="https://img.shields.io/badge/PRs-welcome-ec4899?style=flat-square" alt="PRs welcome"/>
@@ -54,7 +54,7 @@ The tail feeds the mouth: waste found by the audit becomes the budget for the ne
 | Layer | Contents |
 |-------|----------|
 | 📌 `CLAUDE.md` + `rules/` | Always-on tier: routing, model delegation (opus/sonnet/haiku), code-execution policy, memory triggers, prompt preprocessing |
-| 💤 `rules-lazy/` | 51 lazy-loaded policies: QA process, context management, error handling, untrusted-content quarantine, secret handling, decision sovereignty, … |
+| 💤 `rules-lazy/` | 54 lazy-loaded policies: QA process, context management, error handling, untrusted-content quarantine, secret handling, decision sovereignty, … |
 | 🤖 `agents/` | 12 specialized subagents (scout · coder · qa · security · reviewer · planner · researcher · searcher · docs · gitops · citation-verifier · tutor) with spawn-prompt contracts. Agents never call each other: main relays between them. Figures are made by main through the `figure` skill, not by an agent |
 | 🧰 `skills/` | 33 skills: intent docs, experiment workflow, paper reading, multi-perspective discussion, harness audit & bench, weight-edit logging, wandb/checkpoint cleanup, cost breakdown, … |
 | 🔩 `scripts/` | Hooks & automation: commit gates, session-start pattern mining, nightly ontology refresh, cost snapshots, this export pipeline |

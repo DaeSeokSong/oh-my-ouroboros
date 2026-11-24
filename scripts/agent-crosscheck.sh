@@ -23,7 +23,7 @@
 #      시도 마커 `_usage/crosscheck-auto-attempt`(30분)는 harness-usage-check.sh 가 띄울 때 찍는다 — 실패하면 30분 뒤 다음 세션이 다시 시도한다.
 #      자동 실행 행은 6번째 열에 `auto` 를 단다. 기존 소비자는 앞 5열만 읽으므로(`cut -f5`, spawn-tree 의 줄 형식 정규식은 앞 4열 숫자까지만) 호환된다.
 set -u
-export LC_ALL=C   # 바이트 단위 매칭·정렬 고정 (14라운드: 로캘 의존 `.` 매칭 실측)
+export LC_ALL=C   # WHY: 바이트 단위 매칭·정렬 고정 (14라운드: 로캘 의존 `.` 매칭 실측)
 LOG="$HOME/.claude/_audit/agent-spawn.log"
 OUT="$HOME/.claude/_evolve/crosscheck.tsv"
 FRESH_DAYS=7
@@ -32,7 +32,7 @@ if [ "${1:-}" = latest ]; then
     L=$(tail -n 1 "$OUT"); echo "latest: $L"
     case "$(printf '%s' "$L" | cut -f5)" in 일치) ;; *) exit 2 ;; esac
     TS_E=$(date -d "$(printf '%s' "$L" | cut -f1)" +%s 2>/dev/null) || { echo "stale: ts 파싱 실패"; exit 2; }
-    # 초 단위 비교: 정수 일수 나눗셈은 7일 23시간을 «7일» 로 보아 통과시킨다. 미래 ts(시계 오류·위조)도 stale.
+    # WHY: 정수 일수 나눗셈은 7일 23시간을 «7일» 로 보아 통과시킨다. 미래 ts(시계 오류·위조)도 stale.
     AGE_S=$(( $(date +%s) - TS_E ))
     [ "$AGE_S" -ge 0 ] && [ "$AGE_S" -le $(( FRESH_DAYS * 86400 )) ] \
         || { echo "stale: 마지막 일치의 나이 ${AGE_S}초(허용 0~$(( FRESH_DAYS * 86400 ))초) — 인자 없이 재실행해 새 줄을 만든다"; exit 2; }
@@ -49,7 +49,7 @@ fi
 D=$(head -1 "$LOG" | cut -f1)
 DU=$(date -u -d "$D" +%Y-%m-%dT%H:%M:%S 2>/dev/null) || { echo "D 파싱 실패: $D"; exit 2; }
 NLOG=$(grep -c $'\tpost\t' "$LOG")
-# 계수: grep 은 후보 줄 선별용이고, 줄 안의 Agent tool_use 는 jq 가 전부 센다. 한 assistant 메시지에 Agent 호출이 여럿이면 줄마다 첫 id 하나만 세던 종전 awk 가 누락했다(2026-10-17).
+# WHY: grep 은 후보 줄 선별용이고, 줄 안의 Agent tool_use 는 jq 가 전부 센다. 한 assistant 메시지에 Agent 호출이 여럿이면 줄마다 첫 id 하나만 세던 종전 awk 가 누락했다(2026-10-17).
 command -v jq >/dev/null 2>&1 || { echo "분모 미상: jq 없음"; exit 2; }
 NTR=$(find "$HOME/.claude/projects" -mindepth 2 -maxdepth 2 -name '*.jsonl' -newermt "$D" -exec grep -h '"name":"Agent"' {} + 2>/dev/null \
     | jq -rR --arg d "$DU" 'fromjson? | select(.timestamp >= $d) | .message.content[]? | select(type=="object" and .type=="tool_use" and .name=="Agent") | .id' \
@@ -62,7 +62,7 @@ else
     if [ "$NTR" -ge "$LO" ] && [ "$NTR" -le "$HI" ]; then VERDICT="일치"; else VERDICT="분모 불일치"; fi
 fi
 mkdir -p "$(dirname "$OUT")"
-# 자동 실행의 성공 마커: 행이 append 된 직후에만 찍는다(harness-usage-check.sh 가 6시간 재시도 간격으로 읽음. 시도 마커는 그쪽이 띄울 때 찍는다).
+# WHY: 자동 실행의 성공 마커는 행이 append 된 직후에만 찍는다(harness-usage-check.sh 가 6시간 재시도 간격으로 읽음. 시도 마커는 그쪽이 띄울 때 찍는다).
 if printf '%s\t%s\t%s\t%s\t%s%s\n' "$(date -Iseconds)" "$D" "$NLOG" "$NTR" "$VERDICT" "$AUTO_COL" >> "$OUT" && [ -n "$AUTO_COL" ]; then
     touch "$HOME/.claude/_usage/crosscheck-auto-last" 2>/dev/null
 fi

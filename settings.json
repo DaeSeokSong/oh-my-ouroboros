@@ -60,7 +60,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $HOME/.claude/scripts/agent-type-gate.py",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" agent-type-gate --; else set --; fi; \"$@\" python3 $HOME/.claude/scripts/agent-type-gate.py",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" agent-prompt-gate --; else set --; fi; \"$@\" python3 $HOME/.claude/scripts/agent-prompt-gate.py",
             "timeout": 5
           }
         ]
@@ -70,12 +75,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "INPUT=$(cat); FILE=$(echo \"$INPUT\" | jq -r '.tool_input.file_path // .tool_input.path // empty' 2>/dev/null); if [ -n \"$FILE\" ] && echo \"$FILE\" | grep -qE '(\\.env$|\\.env\\.|(^|\\/)\\.?credentials(\\.json)?$|\\.pem$|\\.key$|\\.p12$|\\.pfx$|\\/secrets\\.)'  ; then echo '{\"decision\": \"block\", \"reason\": \"민감 파일 보호: .env, credentials, .pem, .key 등 파일 수정이 차단됩니다.\"}'; fi || true",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" sensitive-file --; else set --; fi; \"$@\" sh -c 'INPUT=$(cat); FILE=$(echo \"$INPUT\" | jq -r '\"'\"'.tool_input.file_path // .tool_input.path // empty'\"'\"' 2>/dev/null); if [ -n \"$FILE\" ] && echo \"$FILE\" | grep -qE '\"'\"'(\\.env$|\\.env\\.|(^|\\/)\\.?credentials(\\.json)?$|\\.pem$|\\.key$|\\.p12$|\\.pfx$|\\/secrets\\.)'\"'\"'  ; then echo '\"'\"'{\"decision\": \"block\", \"reason\": \"민감 파일 보호: .env, credentials, .pem, .key 등 파일 수정이 차단됩니다.\"}'\"'\"'; fi || true'",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/scripts/scope-gate.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" scope-gate --; else set --; fi; \"$@\" bash ~/.claude/scripts/scope-gate.sh",
             "timeout": 30
           }
         ]
@@ -85,22 +90,22 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/scripts/bash-write-check.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" bash-write-check --; else set --; fi; \"$@\" bash ~/.claude/scripts/bash-write-check.sh",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/scripts/git-guardrails.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" git-guardrails --; else set --; fi; \"$@\" bash ~/.claude/scripts/git-guardrails.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/train-launch-warn.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only train-launch-warn --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/train-launch-warn.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 $HOME/.claude/scripts/external-model-gate.py",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" external-model-gate --; else set --; fi; \"$@\" python3 $HOME/.claude/scripts/external-model-gate.py",
             "timeout": 60
           }
         ]
@@ -110,7 +115,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/scripts/read-once.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" read-once --; else set --; fi; \"$@\" $HOME/.claude/scripts/read-once.sh",
             "timeout": 10
           }
         ]
@@ -120,7 +125,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/agent-spawn-log.sh pre",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only agent-spawn-log --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/agent-spawn-log.sh pre",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only skill-usage-log --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/skill-usage-log.sh",
             "timeout": 5
           }
         ]
@@ -130,7 +145,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/korean-style-gate.sh"
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" korean-style-gate --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/korean-style-gate.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|NotebookEdit|Agent|Task|TeamCreate|Workflow|CronCreate|CronDelete|RemoteTrigger|ScheduleWakeup|EnterWorktree|ExitWorktree|Artifact|Bash|Monitor|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" plan-confirm-gate --; else set --; fi; \"$@\" python3 $HOME/.claude/scripts/plan-confirm-gate.py",
+            "timeout": 10
           }
         ]
       }
@@ -141,7 +166,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/agent-spawn-log.sh post",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only agent-spawn-log --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/agent-spawn-log.sh post",
             "timeout": 5
           }
         ]
@@ -151,12 +176,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/scripts/ci-gate-edit.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only ci-gate-edit --; else set --; fi; \"$@\" $HOME/.claude/scripts/ci-gate-edit.sh",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/graphify-autoindex.sh || true",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only graphify-autoindex --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/graphify-autoindex.sh || true",
             "timeout": 15
           }
         ]
@@ -166,7 +191,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/read-once.sh --record",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only read-once --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/read-once.sh --record",
             "timeout": 10
           }
         ]
@@ -176,8 +201,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/graphify-commit-refresh.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only graphify-commit-refresh --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/graphify-commit-refresh.sh",
             "timeout": 15
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/usage-log.sh",
+            "timeout": 10
           }
         ]
       }
@@ -188,7 +222,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/scripts/claude-notify.sh \"Claude\" \"권한 승인 필요\" || true",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only claude-notify --; else set --; fi; \"$@\" sh -c '$HOME/.claude/scripts/claude-notify.sh \"Claude\" \"권한 승인 필요\" || true'",
             "timeout": 10
           }
         ]
@@ -200,12 +234,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/toolcall-text-guard.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only toolcall-text-guard --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/toolcall-text-guard.sh",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "PROJECT=$(basename \"$PWD\"); [ -z \"$PROJECT\" ] && PROJECT='Claude'; $HOME/.claude/scripts/claude-notify.sh \"$PROJECT\" \"작업 완료\" || true",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only claude-notify --; else set --; fi; \"$@\" sh -c 'PROJECT=$(basename \"$PWD\"); [ -z \"$PROJECT\" ] && PROJECT='\"'\"'Claude'\"'\"'; $HOME/.claude/scripts/claude-notify.sh \"$PROJECT\" \"작업 완료\" || true'",
             "timeout": 10
           }
         ]
@@ -217,13 +251,22 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/toolcall-text-guard.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only toolcall-text-guard --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/toolcall-text-guard.sh",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/t41-subagent-stop.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only t41-subagent-stop --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/t41-subagent-stop.sh",
             "timeout": 15
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/usage-log.sh",
+            "timeout": 10
           }
         ]
       }
@@ -233,7 +276,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/prompt-log.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only prompt-log --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/prompt-log.sh",
             "timeout": 10
           }
         ]
@@ -244,33 +287,42 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/harness-usage-check.sh || true",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only harness-usage-check --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/harness-usage-check.sh || true",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "OUT=$(bash $HOME/.claude/scripts/pattern-detect.sh 3 2>/dev/null); [ -n \"$OUT\" ] && printf '[T40 반복 패턴 후보 — 3회+ 검출, 스킬화/편입/룰화 제안 판단 대상 (이미 스킬로 커버되면 불요 판정)]\\n%s\\n' \"$OUT\"; true",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only pattern-detect --; else set --; fi; \"$@\" sh -c 'OUT=$(bash $HOME/.claude/scripts/pattern-detect.sh 3 2>/dev/null); [ -n \"$OUT\" ] && printf '\"'\"'[T40 반복 패턴 후보 — 3회+ 검출, 스킬화/편입/룰화 제안 판단 대상 (이미 스킬로 커버되면 불요 판정)]\\n%s\\n'\"'\"' \"$OUT\"; true'",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/cost-clear-note.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only cost-clear-note --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/cost-clear-note.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/graphify-session-note.sh || true",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only graphify-session-note --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/graphify-session-note.sh || true",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/exchange-prune.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only exchange-prune --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/exchange-prune.sh",
             "timeout": 20
           },
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/correction-detect.sh || true",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only correction-detect --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/correction-detect.sh || true",
             "timeout": 15
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/usage-log.sh",
+            "timeout": 10
           }
         ]
       }
@@ -280,17 +332,26 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/cost-snapshot.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only cost-snapshot --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/cost-snapshot.sh",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/read-once.sh --clear",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only read-once --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/read-once.sh --clear",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/precompact-handover-check.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only precompact-handover-check --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/precompact-handover-check.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/usage-log.sh",
             "timeout": 10
           }
         ]
@@ -302,8 +363,50 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $HOME/.claude/scripts/cost-snapshot.sh",
+            "command": "HDW_SH=$HOME/.claude/scripts/hook-deny-wrap.sh; if [ -f \"$HDW_SH\" ] && [ \"$(bash \"$HDW_SH\" --ping </dev/null 2>/dev/null)\" = \"hook-deny-wrap ok\" ]; then set -- bash \"$HDW_SH\" --log-only cost-snapshot --; else set --; fi; \"$@\" bash $HOME/.claude/scripts/cost-snapshot.sh",
             "timeout": 30
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/usage-log.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/usage-log.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "InstructionsLoaded": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/usage-log.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/usage-log.sh",
+            "timeout": 10
           }
         ]
       }

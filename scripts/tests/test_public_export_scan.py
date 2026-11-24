@@ -1,6 +1,7 @@
 """public-export-scan.py 시험(임시 폴더의 가짜 정제본과 설정 — 실제 하네스 낱말 설정은 읽지 않는다).
 
 실행: uv run -q --with pytest python -m pytest scripts/tests/test_public_export_scan.py -q -p no:cacheprovider
+REF: knowledge/harness/code-history/scripts__tests__test_public_export_scan.py.md
 """
 import importlib.util
 import pathlib
@@ -28,9 +29,9 @@ def test_hits_by_category_with_path_and_placeholder_skips(tmp_path, capsys):
     rc = pes.main([str(stage), "--config", str(conf)])
     out = capsys.readouterr().out
     assert rc == 1
-    assert "docs/a.md:2" in out and "skip/c.md" not in out          # 경로 앞부분 건너뛰기
-    assert "## 2 내부 URL: 0줄" in out                               # 자리표시 글자 건너뛰기
-    assert "docs/b.md:2" in out and "abcd1234efgh" not in out        # 비밀값 범주는 내용을 찍지 않는다
+    assert "docs/a.md:2" in out and "skip/c.md" not in out
+    assert "## 2 내부 URL: 0줄" in out
+    assert "docs/b.md:2" in out and "abcd1234efgh" not in out
 
 
 def test_clean_stage_exits_zero(tmp_path, capsys):

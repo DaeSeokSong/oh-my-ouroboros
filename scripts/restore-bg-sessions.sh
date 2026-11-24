@@ -2,6 +2,7 @@
 # Restore Claude Code background (Agent View) sessions after reboot.
 # Runs `claude respawn --all` after ensuring the daemon can be booted on-demand.
 # Designed to be invoked by ~/.config/systemd/user/claude-bg-restore.service.
+# REF: knowledge/harness/code-history/scripts__restore-bg-sessions.sh.md
 set -u
 
 CLAUDE_BIN="${CLAUDE_BIN:-${HOME}/.local/bin/claude}"
@@ -10,7 +11,7 @@ mkdir -p "$(dirname "$LOG")"
 log() { printf '[%s] %s\n' "$(date -Iseconds)" "$*" >> "$LOG"; }
 
 log "=== start ==="
-sleep 5  # network / home mount stabilize after boot
+sleep 5
 
 if [ ! -x "$CLAUDE_BIN" ]; then
   log "ERROR claude binary not executable at $CLAUDE_BIN"

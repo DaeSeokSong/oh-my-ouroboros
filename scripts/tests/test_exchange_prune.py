@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """exchange-prune.sh 회귀 테스트 (자체 완결 — 임시 뿌리에서만 지운다).
 
 실행: python3 ~/.claude/scripts/tests/test_exchange_prune.py → 실패 0 이면 exit 0
@@ -20,6 +19,8 @@
   5. 폴더 mtime 은 오래됐지만 안에 최근 파일이 있으면 → 보존(가장 최근 mtime 기준)
   6. 로그에 삭제 1건이 `날짜<TAB>경로<TAB>mtime` 으로 남는다
   7. --dry-run 은 하나도 지우지 않는다
+EXCHANGE_PRUNE_SCRIPT 에 스크립트 경로를 주면 그 사본을 시험한다(수정 전 사본 대조용).
+REF: knowledge/harness/code-history/scripts__tests__test_exchange_prune.py.md
 """
 import os
 import subprocess
@@ -28,7 +29,7 @@ import tempfile
 import time
 from pathlib import Path
 
-SCRIPT = Path(os.environ.get("EXCHANGE_PRUNE_SCRIPT") or Path.home() / ".claude/scripts/exchange-prune.sh")   # 수정 전 사본 대조용
+SCRIPT = Path(os.environ.get("EXCHANGE_PRUNE_SCRIPT") or Path.home() / ".claude/scripts/exchange-prune.sh")
 DAY = 86400
 
 
@@ -38,7 +39,6 @@ def touch(path: Path, days_ago: float):
 
 
 def build(root: Path):
-    """뿌리 하나를 규격대로 짓는다 (오래된 폴더·최근 폴더·.sessions·dbg.log·겉만 오래된 폴더)."""
     root.mkdir(parents=True, exist_ok=True)
 
     old = root / "old_bundle"
@@ -61,7 +61,7 @@ def build(root: Path):
     dbg.write_text("debug\n", encoding="utf-8")
     touch(dbg, 30)
 
-    mixed = root / "mixed_bundle"          # 폴더 자신은 오래됐지만 안에 최근 파일
+    mixed = root / "mixed_bundle"
     mixed.mkdir()
     (mixed / "fresh.md").write_text("fresh\n", encoding="utf-8")
     touch(mixed, 25)
@@ -74,7 +74,7 @@ def run(roots, home: Path, dry: bool = False, extra_env: dict | None = None):
     env["HOME"] = str(home)
     env["EXCHANGE_PRUNE_ROOTS"] = ":".join(str(r) for r in roots)
     cmd = ["bash", str(SCRIPT)] + (["--dry-run"] if dry else [])
-    return subprocess.run(cmd, capture_output=True, text=True, env=env)
+    return subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)
 
 
 fail = 0
@@ -91,8 +91,7 @@ with tempfile.TemporaryDirectory() as tmp:
     home = base / "fake_home"
     home.mkdir()
 
-    # 뿌리는 HOME 아래 두 교환 폴더 이름이어야 인정된다(2026-10-01 감사 — 임의 뿌리 거부)
-    # --- dry-run: 아무것도 지우지 않는다
+    # WHY: 뿌리는 HOME 아래 두 교환 폴더 이름이어야 인정된다(2026-10-01 감사 — 임의 뿌리 거부)
     dry_home = base / "dry_home"
     dry_home.mkdir()
     dry_root = dry_home / "grok-exchange"
@@ -103,7 +102,6 @@ with tempfile.TemporaryDirectory() as tmp:
           f"rc={r.returncode} old={d_old.exists()} out={r.stdout.strip()[:120]!r}")
     check("   --dry-run 출력에 대상 표시", "old_bundle" in r.stdout, f"out={r.stdout.strip()[:120]!r}")
 
-    # --- 본 실행
     root_a, root_b = home / "grok-exchange", home / "codex-exchange"
     a_old, a_recent, a_sessions, a_dbg, a_mixed = build(root_a)
     b_old, b_recent, b_sessions, b_dbg, b_mixed = build(root_b)
@@ -126,16 +124,15 @@ with tempfile.TemporaryDirectory() as tmp:
     if lines:
         print(f"   로그 예시: {lines[0]}")
 
-    # --- 2026-10-01 감사: 환경변수 검증. 교환 폴더 밖 뿌리는 오래된 항목이 있어도 건드리지 않는다
-    outside = base / "outside-root"                      # HOME 밖 임의 폴더
+    outside = base / "outside-root"
     o_old, o_recent, *_ = build(outside)
-    escape = home / "grok-exchange" / ".." / "escape-root"   # `..` 로 교환 폴더를 탈출 (HOME 안이지만 교환 폴더 밖)
+    escape = home / "grok-exchange" / ".." / "escape-root"
     (home / "escape-root").mkdir()
     e_old, e_recent, *_ = build(home / "escape-root")
     r = run([outside, escape], home)
     check("⑧ 교환 폴더 밖·`..` 탈출 뿌리 → 삭제 0", r.returncode == 0 and o_old.exists() and e_old.exists(),
           f"outside={o_old.exists()} escape={e_old.exists()} err={r.stderr.strip()[:120]!r}")
-    # 일수 0 은 기한이 «지금» 이라 전부 지운다 — 양의 정수가 아니면 기본 14일로 되돌아가 최근 폴더가 남아야 한다
+    # WHY: 일수 0 은 기한이 «지금» 이라 전부 지운다 — 양의 정수가 아니면 기본 14일로 되돌아가 최근 폴더가 남아야 한다
     fresh = home / "codex-exchange" / "fresh_again"
     fresh.mkdir()
     (fresh / "x.md").write_text("x\n", encoding="utf-8")

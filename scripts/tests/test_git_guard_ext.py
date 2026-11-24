@@ -1,15 +1,18 @@
-"""git_guard_ext.py 회귀 테스트 (2026-11-09 5단계).
+"""git_guard_ext.py 회귀 테스트.
 
 실행: uv run --no-project python scripts/tests/test_git_guard_ext.py
 임시 git 저장소(파일 a.txt·b.txt·sub/f.txt, 커밋 1개, a.txt·sub/f.txt 는 수정됨)를 만들고
 git-guardrails.sh 전체 체인과 확장 파일 단독 판정을 본다. 막힘마다 통과 쌍을 함께 둔다.
+REF: knowledge/harness/code-history/scripts__tests__test_git_guard_ext.py.md
 """
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -24,7 +27,6 @@ TMP = ""
 
 
 def setUpModule():
-    """Create the temporary repositories: REPO (plain), FREPO (has a filter.* config), BREPO (a previous branch for @{-1})."""
     global REPO, FREPO, BREPO, TMP
     TMP = tempfile.mkdtemp(prefix="gge-")
     REPO = os.path.join(TMP, "repo")
@@ -45,53 +47,45 @@ def setUpModule():
         git(repo, "add", ".")
         git(repo, "commit", "-q", "-m", "init")
         Path(repo, "a.txt").write_text("v2\n")
-    git(BREPO, "checkout", "-q", "-b", "other")  # now @{-1} = main
-    Path(BREPO, "a.txt").write_text("v1\n")  # keep BREPO clean
+    git(BREPO, "checkout", "-q", "-b", "other")
+    Path(BREPO, "a.txt").write_text("v1\n")
     Path(REPO, "sub/f.txt").write_text("v2\n")
-    # c.txt: assume-unchanged, d.txt: skip-worktree; both edited, so `git diff` cannot see the change (R5)
     git(REPO, "update-index", "--assume-unchanged", "c.txt")
     git(REPO, "update-index", "--skip-worktree", "d.txt")
     Path(REPO, "c.txt").write_text("v2\n")
     Path(REPO, "d.txt").write_text("v2\n")
-    git(FREPO, "config", "filter.x.clean", "cat")  # R10: only a.txt carries the filter attribute
+    git(FREPO, "config", "filter.x.clean", "cat")
     Path(FREPO, ".gitattributes").write_text("a.txt filter=x\n")
     git(FREPO, "add", ".gitattributes")
     git(FREPO, "commit", "-q", "-m", "attrs")
 
 
 def tearDownModule():
-    """Remove the temporary repository."""
     shutil.rmtree(TMP, ignore_errors=True)
 
 
 def run(cmd_list, cmd, cwd):
-    """Run a hook command with a PreToolUse payload and return whether it printed a deny."""
     payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": cwd})
     r = subprocess.run(cmd_list, input=payload, check=False, capture_output=True, text=True)
     return '"deny"' in r.stdout
 
 
 def chain(cmd, cwd=None):
-    """Judge through the whole git-guardrails.sh chain."""
     return run(["bash", str(HOOK)], cmd, cwd or REPO)
 
 
 def ext(cmd, cwd=None):
-    """Judge through git_guard_ext.py alone."""
     return run(["python3", "-I", str(EXT)], cmd, cwd or REPO)
 
 
 def ext_mod():
-    """Import git_guard_ext.py as a module (for the tokenizer test)."""
     spec = importlib.util.spec_from_file_location("git_guard_ext", EXT)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
-# (이름, 명령, 차단 기대)
 CASES = [
-    # restore
     ("restore 수정 파일", "git restore a.txt", True),
     ("restore 수정 안 한 파일", "git restore b.txt", False),
     ("restore --staged", "git restore --staged a.txt", False),
@@ -104,7 +98,6 @@ CASES = [
     ("restore --stag 약어 + 수정 파일 안 건드림", "git restore --stag a.txt", False),
     ("restore --stag --work 약어 수정 파일", "git restore --stag --work a.txt", True),
     ("restore 경로 없음", "git restore", False),
-    # checkout
     ("checkout -- 수정 파일", "git checkout -- a.txt", True),
     ("checkout -- 수정 안 한 파일", "git checkout -- b.txt", False),
     ("checkout HEAD -- 수정 파일", "git checkout HEAD -- a.txt", True),
@@ -114,13 +107,11 @@ CASES = [
     ("checkout -b new HEAD", "git checkout -b new HEAD", False),
     ("checkout --detach HEAD", "git checkout --detach HEAD", False),
     ("checkout -p", "git checkout -p HEAD -- a.txt", True),
-    # 기준 폴더
     ("cd sub && git restore f.txt", "cd sub && git restore f.txt", True),
     ("git -C repo restore 수정 파일", "git -C @REPO@ restore a.txt", True),
     ("git -C repo restore 수정 안 한 파일", "git -C @REPO@ restore b.txt", False),
     ("git -C sub restore (상대 -C)", "git -C sub restore f.txt", True),
     ("경로에 변수 확장", "git restore $F", True),
-    # 이력 · 객체 삭제
     ("filter-repo", "git filter-repo --path x", True),
     ("filter-branch", "git filter-branch --tree-filter x", True),
     ("update-ref -d", "git update-ref -d refs/heads/x", True),
@@ -138,7 +129,6 @@ CASES = [
     ("rebase --abort", "git rebase --abort", False),
     ("prune", "git prune", True),
     ("prune -n", "git prune -n", False),
-    # -c 허용 목록
     ("-c core.fsmonitor", "git -c core.fsmonitor=x status", True),
     ("-c core.pager", "git -c core.pager=x log", True),
     ("-c diff.external", "git -c diff.external=x diff", True),
@@ -155,7 +145,6 @@ CASES = [
     ("-c 하네스 훅 경로 + HOME 재대입", f"HOME=/tmp git -c core.hooksPath={HOOKS_DIR} status", True),
     ("-c 다른 훅 경로", "git -c core.hooksPath=/tmp/evil status", True),
     ("--exec-path=값", "git --exec-path=/tmp/evil status", True),
-    # 환경 변수
     ("GIT_CONFIG_COUNT", "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0=x git log", True),
     ("GIT_EXTERNAL_DIFF", "GIT_EXTERNAL_DIFF=x git diff", True),
     ("export GIT_SSH_COMMAND", "export GIT_SSH_COMMAND=x; git fetch", True),
@@ -163,7 +152,6 @@ CASES = [
     ("GIT_PAGER=evil", "GIT_PAGER=evil git log", True),
     ("env 바깥 + bash -c 안", "GIT_SSH=x bash -c 'git status'", True),
     ("git 없는 명령의 변수", "GIT_SSH=x ls", False),
-    # 우회형
     ("bash -c rebase", "bash -c 'git rebase main'", True),
     ("bash -c 안 restore", "bash -c 'git restore a.txt'", True),
     ("eval rebase", "eval git rebase main", True),
@@ -179,7 +167,6 @@ CASES = [
     ("timeout 접두 + restore (명령 자리 아님)", "timeout 5 git restore b.txt", True),
     ("셸에 먹이는 heredoc", "bash <<'EOF'\ngit rebase main\nEOF", True),
     ("치환이 있는 heredoc", "cat <<EOF\n$(git rebase main)\nEOF", True),
-    # 오탐 방지
     ("heredoc 커밋 메시지(아포스트로피)는 이제 막힘(r5 H)", "git commit -F - <<'EOF'\nfix: Don't rebase\nEOF", True),
     ("heredoc 메시지 + 뒤 명령", "git commit -F - <<'EOF'\nit's rebase\nEOF\ngit rebase main", True),
     ("커밋 메시지 속 git rebase", 'git commit -m "docs: git rebase 설명"', False),
@@ -190,9 +177,7 @@ CASES = [
     ("git 없는 명령", "ls -la", False),
 ]
 
-# 검수 지적 R1~R10 (2026-11-09 개정 2). 확장 파일 단독으로도 같은 판정이어야 한다.
 R_CASES = [
-    # R1 셸 확장 위생
     ("줄 이음으로 쪼갠 하위명령", "git re\\\nbase main", True),
     ("줄 이음 + git 없음", "echo a\\\nb", False),
     ("하위명령에 변수", "git $SUB main", True),
@@ -206,7 +191,6 @@ R_CASES = [
     ("restore 경로 glob 수정 안 한 파일", "git restore b*", False),
     ("reflog show @{}", "git reflog show HEAD@{0}", False),
     ("커밋 메시지의 중괄호·glob·변수", 'git commit -m "a*b {c} $d"', False),
-    # heredoc 금지 H (옛 R2 판정은 폐기: 따옴표 밖 << 가 있으면 전부 막힘, 따옴표 안·산술·주석 속 << 도 같은 사례로 남겨 둠)
     ("큰따옴표 안 <<", 'echo "<<EOF"\ngit rebase main', True),
     ("작은따옴표 안 <<", "echo '<<X'\ngit rebase main", True),
     ("커밋 메시지 안 <<", 'git commit -m "fix: handle <<EOF markers"\ngit rebase main', True),
@@ -216,7 +200,6 @@ R_CASES = [
     ("<<< 는 heredoc 아님", "cat <<< x\ngit rebase main", True),
     ("heredoc 커밋 메시지는 막힘(r5 H)", "git commit -F - <<'EOF'\nfix: Don't push\nEOF", True),
     ("heredoc 를 셸로 파이프", "cat <<EOF | bash\ngit rebase main\nEOF", True),
-    # R3 문자열 래퍼
     ("sh -lc", "sh -lc 'git rebase main'", True),
     ("zsh -c", "zsh -c 'git rebase main'", True),
     ("fish -c", "fish -c 'git rebase main'", True),
@@ -238,7 +221,6 @@ R_CASES = [
     ("bash -c 안전한 명령", "bash -c 'git status'", False),
     ("따옴표 안 안전한 $()", 'echo "$(git status)"', False),
     ("따옴표 문자열은 데이터", 'grep "git rebase" notes.txt', False),
-    # R4 환경 변수
     ("HOME 재대입", "HOME=/tmp git status", True),
     ("XDG_CONFIG_HOME", "XDG_CONFIG_HOME=/tmp git status", True),
     ("LD_PRELOAD", "LD_PRELOAD=/tmp/x.so git status", True),
@@ -252,7 +234,6 @@ R_CASES = [
     ("GIT_PAGER+=", "GIT_PAGER+=evil git log", True),
     ("무해한 변수", "LANG=C git status", False),
     ("목록 밖 += 변수", "FOO+=x git status", False),
-    # R5 diff 에 안 보이는 변경
     ("assume-unchanged 로 숨긴 수정", "git restore c.txt", True),
     ("skip-worktree 로 숨긴 수정", "git restore d.txt", True),
     ("update-index --assume-unchanged", "git update-index --assume-unchanged b.txt", True),
@@ -261,7 +242,6 @@ R_CASES = [
     ("update-index --no-assume-unchanged", "git update-index --no-assume-unchanged c.txt", False),
     ("update-index --no-skip-worktree", "git update-index --no-skip-worktree d.txt", False),
     ("update-index --refresh", "git update-index --refresh", False),
-    # R6 같은 효과의 다른 하위명령
     ("checkout-index", "git checkout-index -f -a", True),
     ("git-checkout-index", "/usr/lib/git-core/git-checkout-index -a", True),
     ("read-tree -u", "git read-tree -u HEAD", True),
@@ -274,7 +254,6 @@ R_CASES = [
     ("apply --check", "git apply --check p.diff", False),
     ("apply --stat", "git apply --stat p.diff", False),
     ("apply 단순 (r5fix 5: 조회형이 아니면 막힘)", "git apply p.diff", True),
-    # R7 옵션 약어 · 영 oid
     ("gc --pru", "git gc --pru=now", True),
     ("gc --p", "git gc --p", True),
     ("gc --auto", "git gc --auto", False),
@@ -291,11 +270,9 @@ R_CASES = [
     ("update-ref 영 oid", "git update-ref refs/heads/x 0000000000000000000000000000000000000000", True),
     ("update-ref 영 oid + 리다이렉션", "git update-ref refs/heads/x 0000000000000000000000000000000000000000 >/dev/null", True),
     ("update-ref 일반 oid", "git update-ref refs/heads/x 1234567890abcdef", False),
-    # R8 리다이렉션 숫자
     ("rebase --abort 2>&1", "git rebase --abort 2>&1", False),
     ("rebase main 2>&1", "git rebase main 2>&1", True),
     ("rebase --abort >/dev/null 2>&1", "git rebase --abort >/dev/null 2>&1", False),
-    # R9 git config 쓰기
     ("config user.name 쓰기", "git config user.name x", False),
     ("config --global user.email", "git config --global user.email a@b.c", False),
     ("config core.pager 쓰기", "git config core.pager x", True),
@@ -315,7 +292,6 @@ R_CASES = [
     ("config --show-origin --get", "git config --show-origin --get core.pager", False),
 ]
 
-# 개정 3 (R11 셸 수준 간접 이름) · 개정 4 소수정(프로세스 치환 등). 확장 파일 단독으로도 같은 판정이어야 한다. R2b(heredoc 본문 재검사)는 r5 H 로 폐기됐다.
 R11_CASES = [
     ("alias g=git", "alias g=git; g gc --prune=now", True),
     ("alias 줄바꿈", "alias g=git\ng gc --prune=now", True),
@@ -343,14 +319,12 @@ R11_CASES = [
 ]
 
 R4_CASES = [
-    # 옛 R2b(본문으로 잘못 판정된 줄 재검사) 사례: r5 H 이후엔 << 자체가 막히거나(산술·heredoc) 앞뒤 명령이 막힌다
     ("맨몸 산술 << ", "((1<<2))\ngit rebase main\n2", True),
     ("맨몸 산술 공백", "(( x = 1<<2 ))\ngit rebase main\n2", True),
     ("for 산술", "for ((i=1<<0; i<2; i++)); do :; done\ngit rebase main\n0", True),
     ("ANSI-C 인용 안 \\'", "echo $'\\' <<EOF\n' ; git rebase main\nEOF", True),
     ("heredoc 본문의 명령 자리 git(파싱 실패 줄)", "cat <<EOF\nit's ok; git rebase main\nEOF", True),
     ("heredoc 본문의 대입 뒤 git", "cat <<EOF\nFOO=1 git rebase main\nEOF", True),
-    # r5 H: git 낱말 + 따옴표 밖 << 이면 본문이 무엇이든 막힘
     ("heredoc 커밋 메시지(아포스트로피)", "git commit -F - <<'EOF'\nfix: Don't push\nEOF", True),
     ("heredoc 커밋 메시지 속 git rebase 설명", "git commit -F - <<'EOF'\ndocs: git rebase 설명\nEOF", True),
     ("heredoc 메시지 중간에 git 낱말", "git commit -F - <<'EOF'\nfix: x\n\nrun git rebase later; don't\nEOF", True),
@@ -366,14 +340,12 @@ R4_CASES = [
     ("git 없는 heredoc 파일 쓰기", "cat <<'EOF' > /tmp/x.txt\nhello\nEOF", False),
     ("따옴표 안 << 는 데이터", 'git commit -m "fix: handle <<EOF markers"', False),
     ("<<< 는 heredoc 아님", "git log <<< ''", False),
-    # 소수정 1: 프로세스 치환
     ("프로세스 치환 <(", "cat <(git rebase main)", True),
     ("프로세스 치환 >(", "tee >(git rebase main) < /dev/null", True),
     ("프로세스 치환 안전한 명령", "diff <(git log -1) <(git log -2)", False),
 ]
 
 
-# 개정 5 C: 넓은 범위 대상 목록 89건 (probe_cases_sec3.json 과 같은 순서, 차단 기대). 통과 = 정상·되돌릴 수 있음.
 C_CASES = [
     ("git merge --abort", False), ("git merge --quit", True), ("git cherry-pick --abort", False),
     ("git cherry-pick --quit", True), ("git revert --abort", False), ("git am --abort", False),
@@ -409,12 +381,11 @@ C_CASES = [
     ("git clone --upload-pack='touch /tmp/x' /tmp/repo /tmp/c", True),
     ("git archive --remote=/tmp/repo --exec='touch /tmp/x' HEAD", True), ("git init --template=/tmp/tpl /tmp/n", True),
     ("git clone --template=/tmp/tpl /tmp/repo /tmp/c2", True), ("LD_AUDIT=/tmp/x.so git status", True),
-    ("BASH_ENV=/tmp/x git status", True), ("GIT_TRACE2_EVENT=/tmp/f git status", True),  # r5fix 13: 파일 경로 값은 임의 파일 추가 쓰기
+    ("BASH_ENV=/tmp/x git status", True), ("GIT_TRACE2_EVENT=/tmp/f git status", True),
     ("GIT_CEILING_DIRECTORIES=/ git status", False), ("git --paginate log", False),
     ("git rebase --exec x main", True), ("git status", False),
 ]
 
-# 같은 근거의 정상 사용: 넓은 범위 deny 가 평소 쓰는 형태를 막지 않는지 본다.
 C_NORMAL = [
     "git symbolic-ref HEAD", "git symbolic-ref --short HEAD", "git symbolic-ref -q HEAD", "git tag", "git tag -l 'v*'",
     "git tag v2 -m release", "git tag -a v3 -m 'release note'", "git branch", "git branch -a", "git branch -vv",
@@ -434,25 +405,19 @@ C_NORMAL = [
     "git commit -m 'x' -t msg.txt", "git status --short", "git ls-remote origin", "git stash list",
 ]
 
-# 5단계 sec4: 같은 계열 전체를 막는 원리의 사례(probe_cases_sec4.json 26건 중 확장 검사가 맡는 23건 + 변형). 확장 파일 단독으로도 같은 판정이어야 한다.
 SEC4_CASES = [
-    # update-ref 삭제 옵션: 짧은 옵션 묶음 속 d (-m 의 값은 제외)
     ("update-ref -zd", "git update-ref -zd refs/heads/x", True),
     ("update-ref -dm msg", "git update-ref -dm msg refs/heads/x", True),
     ("update-ref -m d (메시지 값)", "git update-ref -m d refs/heads/new HEAD", False),
-    # pathspec 해석을 바꾸는 환경 변수
     ("GIT_ICASE_PATHSPECS", "GIT_ICASE_PATHSPECS=1 git restore A.TXT", True),
     ("GIT_LITERAL_PATHSPECS", "GIT_LITERAL_PATHSPECS=1 git restore a.txt", True),
-    # 셸이 펼칠 ~ 경로
     ("restore ~ 경로", "git restore ~/.claude/CLAUDE.md", True),
     ("checkout -- ~ 경로", "git checkout -- ~/.claude/CLAUDE.md", True),
     ("restore --staged ~ 경로(색인만)", "git restore --staged ~/x", False),
-    # 인용 속 cd 와 래퍼 뒤 변수 명령
     ("eval 'cd sub'; restore", "eval 'cd sub'; git restore a.txt", True),
     ("env -C 다른 폴더", "env -C /tmp/b git update-ref refs/heads/main HEAD~3", True),
     ("sudo -u root $G", "G=git; sudo -u root $G tag -d v1", True),
     ("인용 속 cd 글자만 있는 커밋 메시지", "git commit -m 'fix cd handling'", False),
-    # 명령 치환 안의 인용된 ) 와 쪼갠 이름
     ("치환 속 인용된 )", "echo \"$(echo ')'; git tag -d v1)\"", True),
     ("치환 속 쪼갠 이름", "echo \"$(g'i't tag -d v1)\"", True),
     ("따옴표로 쪼갠 이름", 'g"i"t tag -d v1', True),
@@ -462,13 +427,11 @@ SEC4_CASES = [
     ("따옴표 없는 백틱 치환", "echo `git tag -d v1`", True),
     ("백틱 치환 속 쪼갠 이름", "echo `g'i't tag -d v1`", True),
     ("백틱 치환 정상 명령", "echo `git status`", False),
-    # tmux 의 모든 명령 문자열 운반 하위명령
     ("tmux run-shell", "tmux run-shell 'git tag -d v1'", True),
     ("tmux send", "tmux send -t s 'git tag -d v1' Enter", True),
     ("tmux if-shell", "tmux if-shell true 'git branch -D x'", True),
     ("tmux new-window", "tmux new-window 'git tag -d v1'", True),
     ("tmux 정상 명령", "tmux send-keys -t s 'git status' Enter", False),
-    # clone -c / --config: -c 허용 목록과 같은 기준
     ("clone -c core.sshCommand", "git clone -c core.sshCommand=/tmp/x ssh://h/r /tmp/c", True),
     ("clone --config core.fsmonitor", "git clone --config core.fsmonitor=/tmp/x /tmp/repo /tmp/c", True),
     ("clone --config= 붙임", "git clone --config=core.pager=x a b", True),
@@ -477,58 +440,47 @@ SEC4_CASES = [
     ("clone 앞 옵션 뒤 -c", "git clone -b main -c core.fsmonitor=x a b", True),
     ("clone -c user.name 허용", "git clone -c user.name=y /tmp/repo /tmp/c", False),
     ("clone 정상", "git clone -b main --depth 1 /tmp/repo /tmp/c", False),
-    # ext:: 전송, 프로그램을 돌리는 하위명령
     ("ext:: 전송", "GIT_ALLOW_PROTOCOL=ext git ls-remote 'ext::touch /tmp/x'", True),
     ("ext:: 환경 변수 없이", "git fetch 'ext::sh -c x' main", True),
     ("send-email --to-cmd", "git send-email --to-cmd=/tmp/x a.patch", True),
     ("instaweb --httpd", "git instaweb --httpd=/tmp/x", True),
-    # 색인 항목을 지우거나 바꿈
     ("update-index --remove", "git update-index --remove a.txt", True),
     ("update-index --cacheinfo", "git update-index --add --cacheinfo 100644,0123456789012345678901234567890123456789,x", True),
     ("update-index --refresh 정상", "git update-index --refresh", False),
     ("update-index --add 정상", "git update-index --add b.txt", False),
-    # --output 은 하위명령과 무관하게 파일 덮어쓰기
     ("stash show --output", "git stash show --output=a.txt", True),
     ("reflog show --output", "git reflog show --output=a.txt", True),
     ("log --output", "git log --output=x", True),
-    # worktree add -B, notes --ref 값 건너뛰기
     ("worktree add -B", "git worktree add -B main ../wt HEAD~5", True),
     ("worktree add -b 정상", "git worktree add -b nb ../w2 HEAD", False),
     ("notes --ref x remove", "git notes --ref x remove HEAD", True),
     ("notes --ref=x remove", "git notes --ref=x remove HEAD", True),
     ("notes --ref x show 정상", "git notes --ref x show HEAD", False),
     ("notes add -m remove 정상", "git notes --ref=x add -m remove HEAD", False),
-    # config 항목 삭제는 사용자·시스템·파일 범위에서 막고 저장소 범위는 연다
     ("config --global --unset-all", "git config --global --unset-all user.name", True),
     ("config --file --unset", "git config --file x --unset a.b", True),
     ("config unset --global", "git config unset --global a.b", True),
     ("config --unset 저장소 범위", "git config --unset core.pager", False),
     ("config --global 읽기", "git config --global user.name", False),
-    # checkout/restore --ours/--theirs
     ("checkout --ours", "git checkout --ours a.txt", True),
     ("restore --theirs", "git restore --theirs a.txt", True),
 ]
 
-# git 이름을 쪼갠 명령은 셸 규칙(push·reset --hard)도 받아야 한다. 확장 파일은 push 를 모르므로 셸 훅 전체에서만 본다.
 SEC4_SHELL_CASES = [
     ('g"i"t push', True), ("g'i't push origin main", True), ("g\\it push", True), ("bash -c 'g\\it push'", True),
     ('g""it reset --hard', True), ('g"i"t log --oneline', False), ("echo gi t", False),
 ]
 
 
-# r5fix (stage5_fix_r5.md, 14 items): each family has deny cases and pass pairs. The extension alone must give the same verdicts.
 R5FIX_CASES = [
-    # 1 zsh =git
     ("=git tag -d", "=git tag -d v1", True),
     ("=git push", "=git push origin main", True),
     ("=bash -c 안 git tag -d", "=bash -c 'git tag -d v1'", True),
     ("=git-push 실행 파일 꼴", "=git-push origin", True),
     ("=git status", "=git status", False),
     ("=git log", "=git log --oneline -3", False),
-    # 3 chdir
     ("chdir 뒤 restore", "chdir sub && git restore f.txt", True),
     ("chdir 뒤 status 는 통과", "chdir sub && git status", False),
-    # 4 environment names
     ("GIT_TEST_ 접두", "GIT_TEST_FOO=1 git status", True),
     ("GIT_TEST_GETTEXT_POISON", "GIT_TEST_GETTEXT_POISON=1 git log", True),
     ("PERL5OPT", "PERL5OPT=-Mx git status", True),
@@ -543,14 +495,12 @@ R5FIX_CASES = [
     ("MANPAGER", "MANPAGER=x git help status", True),
     ("GIT_TESTING 은 접두 GIT_TEST_ 가 아님", "GIT_TESTING=1 git status", False),
     ("LANG", "LANG=C git status", False),
-    # 5 apply: query forms only
     ("apply --index", "git apply --index p.diff", True),
     ("apply --check --apply", "git apply --check --apply p.diff", True),
     ("apply --stat --apply", "git apply --stat --apply p.diff", True),
     ("apply --numstat", "git apply --numstat p.diff", False),
     ("apply --summary", "git apply --summary p.diff", False),
     ("apply --check --index", "git apply --check --index p.diff", False),
-    # 6 zsh glob operators in restore/checkout paths
     ("restore a(.)", "git restore a(.)", True),
     ("restore *(.)", "git restore *(.)", True),
     ("restore (a|b).txt", "git restore (a|b).txt", True),
@@ -563,7 +513,6 @@ R5FIX_CASES = [
     ("서브셸 안 restore", "(git restore b.txt)", False),
     ("$() 안 restore", "echo $(git restore b.txt)", False),
     ("restore 뒤 다른 서브셸", "git restore b.txt && (echo hi)", False),
-    # 7 fetch --prune
     ("fetch --prune 로컬 브랜치 refspec", "git fetch --prune origin refs/heads/*:refs/heads/*", True),
     ("fetch --prune 로컬 태그 refspec", "git fetch --prune origin refs/tags/*:refs/tags/*", True),
     ("fetch --prune-tags", "git fetch --prune-tags origin", True),
@@ -578,13 +527,11 @@ R5FIX_CASES = [
     ("fetch --prune 원격 URL 에 콜론", "git fetch --prune git@host:repo.git", False),
     ("fetch --tags (prune 없음)", "git fetch --tags origin", False),
     ("fetch 로컬 refspec (prune 없음)", "git fetch origin dev:dev", False),
-    # 8 merge-file
     ("merge-file 제자리 덮어씀", "git merge-file a b c", True),
     ("merge-file --ours", "git merge-file --ours a b c", True),
     ("merge-file -p", "git merge-file -p a b c", False),
     ("merge-file --stdout", "git merge-file --stdout a b c", False),
     ("merge-file -L 라벨 + -p", "git merge-file -p -L x -L y -L z a b c", False),
-    # 9 glob in the action word
     ("remote re*", "git remote re* origin", True),
     ("bisect ru*", "git bisect ru* ./x.sh", True),
     ("submodule fore*", "git submodule fore* ls", True),
@@ -597,7 +544,6 @@ R5FIX_CASES = [
     ("bisect good", "git bisect good", False),
     ("worktree list", "git worktree list", False),
     ("notes --ref=x show", "git notes --ref=x show HEAD", False),
-    # 10 shell-hook rules inside the extension (git-<sub> paths)
     ("git-push 경로", "/usr/lib/git-core/git-push origin", True),
     ("git-pull 경로", "/usr/lib/git-core/git-pull", True),
     ("git-stash drop 경로", "/usr/lib/git-core/git-stash drop", True),
@@ -632,7 +578,6 @@ R5FIX_CASES = [
     ("checkout -b", "git checkout -b topic", False),
     ("switch main", "git switch main", False),
     ("checkout main", "git checkout main", False),
-    # 11 file-writing options
     ("fast-export --export-marks", "git fast-export --export-marks=/tmp/m --all", True),
     ("fast-import --export-marks 값 분리", "git fast-import --export-marks /tmp/m", True),
     ("fast-import --export-pack-edges", "git fast-import --export-pack-edges=/tmp/e", True),
@@ -647,13 +592,11 @@ R5FIX_CASES = [
     ("format-patch --stdout", "git format-patch --stdout -1", False),
     ("fast-export 일반", "git fast-export --all", False),
     ("index-pack --stdin", "git index-pack --stdin", False),
-    # 12 update-ref only at a command position
     ("timeout 뒤 update-ref", "timeout 5 git update-ref refs/heads/zz-new HEAD", True),
     ("xargs git update-ref", "xargs git update-ref refs/heads/zz-new HEAD", True),
     ("update-ref 명령 자리", "git update-ref refs/heads/zz-new HEAD", False),
     ("env 대입 뒤 update-ref", "env FOO=1 git update-ref refs/heads/zz-new HEAD", False),
     ("update-ref 한 인자는 폴더 불필요", "xargs git update-ref refs/heads/zz-new", False),
-    # 13 GIT_TRACE values
     ("GIT_TRACE=파일", "GIT_TRACE=/tmp/f git status", True),
     ("GIT_TRACE2_EVENT=파일", "GIT_TRACE2_EVENT=/tmp/f git status", True),
     ("GIT_TRACE=3 (fd)", "GIT_TRACE=3 git status", True),
@@ -668,9 +611,7 @@ R5FIX_CASES = [
 ]
 
 
-# stage5_fix_r6.md (2026-11-09): quoted punctuation, source/./rbash, variable-receiving names, option values, commit expansion ...
 R6FIX_CASES = [
-    # 1 quoted or escaped punctuation is an argument, not an operator
     ("인용 ; 뒤 branch -D", "git branch ';' -D x", True),
     ("인용 | 뒤 tag -d", "git tag '|' -d v1", True),
     ("인용 & 뒤 reset --hard", "git reset '&' --hard", True),
@@ -682,7 +623,6 @@ R6FIX_CASES = [
     ("commit 메시지 ;", "git commit -m ';' --amend", False),
     ("백슬래시 ; 가 낱말 안", "git log --grep=a\\;b -1", False),
     ("인용 안 구두점이 낱말 속", "git log --format='%h;%s' -3", False),
-    # 2 source / . / rbash run the text fed to them
     (". 에 here-string", ". /dev/stdin <<< 'git rebase main'", True),
     ("source 에 here-string", 'source /dev/stdin <<< "git rebase main"', True),
     ("rbash -c", "rbash -c 'git rebase main'", True),
@@ -690,7 +630,6 @@ R6FIX_CASES = [
     ("source 파일", "source ./env.sh && git status", False),
     (". 파일", ". ./env.sh; git status", False),
     ("git add . 는 here-string 없음", "git add . && git status", False),
-    # 4 names that receive a value
     ("read GIT_DIR", "read GIT_DIR; git status", True),
     ("read 여러 이름 중 PATH", "read -r x PATH; git status", True),
     ("for PATH in", "for PATH in a b; do git status; done", True),
@@ -706,12 +645,10 @@ R6FIX_CASES = [
     ("printf -v 일반 이름", "printf -v x %s a; git status", False),
     ("export 일반 대입", "export FOO=1; git status", False),
     ("read -p 프롬프트", "read -p 'go? ' ans; git status", False),
-    # 6 more environment names
     ("LESSOPEN=", "LESSOPEN=x git log", True),
     ("LESSCLOSE=", "LESSCLOSE=x git log", True),
     ("PS4=", "PS4=x git status", True),
     ("SHELLOPTS=", "SHELLOPTS=xtrace git status", True),
-    # 5 value-taking short options end the bundle
     ("merge-file -Lp (p 는 라벨 값)", "git merge-file -Lp a b c", True),
     ("merge-file -pL", "git merge-file -pL x a b c", False),
     ("merge-file -p", "git merge-file -p a b c", False),
@@ -725,7 +662,6 @@ R6FIX_CASES = [
     ("tag -d", "git tag -d v1", True),
     ("grep -eOK (OK 는 패턴)", "git grep -eOK foo", False),
     ("grep -O", "git grep -O less foo", True),
-    # 7 expansion in commit and the subcommands of r5fix 11
     ("commit 인자의 변수", "git commit -m x $F", True),
     ("commit --fixup 변수", "git commit --fixup=$X", True),
     ("commit -m 값의 변수", 'git commit -m "$MSG"', False),
@@ -743,7 +679,6 @@ R6FIX_CASES = [
     ("fast-export 변수", "git fast-export $X", True),
     ("bundle verify 변수", "git bundle verify $X", True),
     ("index-pack 변수", "git index-pack $P", True),
-    # 8 --skip and config --rename-section
     ("cherry-pick --skip", "git cherry-pick --skip", True),
     ("revert --skip", "git revert --skip", True),
     ("am --skip", "git am --skip", True),
@@ -756,11 +691,9 @@ R6FIX_CASES = [
     ("config --global rename-section 낱말", "git config --global rename-section a b", True),
     ("config --rename-section 로컬", "git config --rename-section a b", False),
     ("config --global --get", "git config --global --get user.name", False),
-    # 9 apply: only the arguments before `--` can be the query flag
     ("apply -- 뒤 --check", "git apply -- p.diff --check", True),
     ("apply --check", "git apply --check p.diff", False),
     ("apply --stat -- 파일", "git apply --stat -- p.diff", False),
-    # 10 fetch --prune: the value of --depth is not the remote
     ("fetch --prune --depth 1 URL", "git fetch --prune --depth 1 https://h/r.git", False),
     ("fetch --depth 1 --prune URL", "git fetch --depth 1 --prune https://h/r.git", False),
     ("fetch -j 4 --prune origin", "git fetch -j 4 --prune origin", False),
@@ -771,62 +704,50 @@ R6FIX_CASES = [
 
 
 class ChainTest(unittest.TestCase):
-    """Cases judged through the full git-guardrails.sh chain."""
-
     def test_r6fix_cases(self):
-        """r6fix: every family has the expected verdict through the whole chain."""
         for name, cmd, want in R6FIX_CASES:
             with self.subTest(name=name, cmd=cmd):
                 self.assertEqual(chain(cmd), want)
 
     def test_r5fix_cases(self):
-        """r5fix: every family has the expected verdict through the whole chain."""
         for name, cmd, want in R5FIX_CASES:
             with self.subTest(name=name, cmd=cmd):
                 self.assertEqual(chain(cmd), want)
 
     def test_cases(self):
-        """Every case matches its expected verdict."""
         for name, cmd, want in CASES + R_CASES + R11_CASES + R4_CASES:
             with self.subTest(name=name, cmd=cmd):
                 self.assertEqual(chain(cmd.replace("@REPO@", REPO)), want)
 
     def test_wide_list_89(self):
-        """Spec r5 C: every one of the 89 listed commands has its expected verdict through the whole chain."""
         self.assertEqual(len(C_CASES), 89)
         for cmd, want in C_CASES:
             with self.subTest(cmd=cmd):
                 self.assertEqual(chain(cmd), want)
 
     def test_wide_normal_use_passes(self):
-        """Everyday forms next to the denied ones stay open."""
         for cmd in C_NORMAL:
             with self.subTest(cmd=cmd):
                 self.assertFalse(chain(cmd))
 
     def test_sec4_cases(self):
-        """sec4: each family has a deny case and a pass pair through the whole chain."""
         for name, cmd, want in SEC4_CASES:
             with self.subTest(name=name, cmd=cmd):
                 self.assertEqual(chain(cmd), want)
 
     def test_sec4_split_git_name_gets_shell_rules(self):
-        """A quote/backslash-split git name is recognized by the early exit, so push and reset --hard rules apply."""
         for cmd, want in SEC4_SHELL_CASES:
             with self.subTest(cmd=cmd):
                 self.assertEqual(chain(cmd), want)
 
     def test_c_flag_pair_runs_from_outside_repo(self):
-        """`git -C <repo>` is honoured even when the hook cwd is elsewhere."""
         self.assertTrue(chain(f"git -C {REPO} restore a.txt", cwd=TMP))
         self.assertFalse(chain(f"git -C {REPO} restore b.txt", cwd=TMP))
 
     def test_approved_marker_still_bypasses(self):
-        """The first-line # APPROVED marker is handled before the extension."""
         self.assertFalse(chain("# APPROVED test approval\ngit rebase main"))
 
     def test_approved_marker_never_lifts_push(self):
-        """2026-11-12 decision F1/G1: the marker lifts fixed non-push verdicts, never push/pull or forms that could hide one."""
         aq = "# APPROVED test approval\n"
         for cmd in ("git restore a.txt", "git update-ref -d refs/heads/x", "git tag -d v1", "git stash; git restore c.txt",
                     "git maintenance start", "git rebase main"):
@@ -841,100 +762,83 @@ class ChainTest(unittest.TestCase):
 
 
 class ExtAloneTest(unittest.TestCase):
-    """Cases judged by git_guard_ext.py without the shell wrapper."""
-
     def test_r_cases_without_shell_hook(self):
-        """R1-R10 cases give the same verdict from the extension alone (not merely via the shell hook)."""
         for name, cmd, want in R_CASES + R11_CASES + R4_CASES:
             with self.subTest(name=name, cmd=cmd):
                 self.assertEqual(ext(cmd), want)
 
     def test_wide_list_89_without_shell_hook(self):
-        """The extension alone gives the same verdicts (r5fix 10: the stash rule is in the extension too)."""
         for cmd, want in C_CASES:
             with self.subTest(cmd=cmd):
                 self.assertEqual(ext(cmd), want)
 
     def test_wide_normal_use_passes_without_shell_hook(self):
-        """Everyday forms pass in the extension alone."""
         for cmd in C_NORMAL:
             with self.subTest(cmd=cmd):
                 self.assertFalse(ext(cmd))
 
     def test_sec4_cases_without_shell_hook(self):
-        """sec4: the extension alone gives the same verdicts as the whole chain."""
         for name, cmd, want in SEC4_CASES:
             with self.subTest(name=name, cmd=cmd):
                 self.assertEqual(ext(cmd), want)
 
     def test_r5fix_cases_without_shell_hook(self):
-        """r5fix: the extension alone gives the same verdicts (the shell-hook rules are repeated in it)."""
         for name, cmd, want in R5FIX_CASES:
             with self.subTest(name=name, cmd=cmd):
                 self.assertEqual(ext(cmd), want)
 
     def test_r6fix_cases_without_shell_hook(self):
-        """r6fix: the extension alone gives the same verdicts."""
         for name, cmd, want in R6FIX_CASES:
             with self.subTest(name=name, cmd=cmd):
                 self.assertEqual(ext(cmd), want)
 
     def test_quoted_punctuation_tokens(self):
-        """r6fix 1: quoted or escaped punctuation becomes a QuotedTok argument; unquoted operators stay operators."""
         toks = ext_mod().tokenize("git log --grep ';' \\| \"(\" ; echo x")
         self.assertEqual(list(toks), ["git", "log", "--grep", ";", "|", "(", ";", "echo", "x"])
         self.assertEqual([type(t).__name__ for t in toks[3:6]], ["QuotedTok"] * 3)
         self.assertEqual(type(toks[6]).__name__, "str")
         with self.assertRaises(ValueError):
-            # the next line holds the stand-in character U+E000 itself: input that already has it is refused
+            # WHY: the next line holds the stand-in character U+E000 itself: input that already has it is refused
             ext_mod().tokenize("echo")
 
     def test_glob_operator_scope(self):
-        """r5fix 6: only the extension tells a quoted or index-only `a(.)` from a zsh glob (the shell hook's `.` rule denies both)."""
         self.assertFalse(ext("git restore 'a(.)'"))
         self.assertFalse(ext("git restore --staged a(.)"))
         self.assertTrue(ext("git restore a(.)"))
 
     def test_heredoc_deny_message(self):
-        """Spec r5 H: the deny reason is the fixed heredoc message, also when the tokenizer fails on an apostrophe."""
         for cmd in ("git commit -F - <<'EOF'\nfix: x\nEOF", "git commit -F - <<'EOF'\nfix: Don't\nEOF"):
             payload = json.dumps({"tool_input": {"command": cmd}, "cwd": REPO})
             r = subprocess.run(["python3", "-I", str(EXT)], input=payload, check=False, capture_output=True, text=True)
             self.assertIn("heredoc(<<)", json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"])
 
     def test_at_brace_revision_is_not_a_path_brace(self):
-        """Minor fix 2: `@{-1}` passes the restore/checkout path check (a real previous branch exists); a plain brace path is denied."""
         for fn in (ext, chain):
             with self.subTest(fn=fn.__name__):
                 self.assertFalse(fn("git checkout @{-1}", cwd=BREPO))
                 self.assertTrue(fn("git checkout a{b,c}.txt", cwd=BREPO))
 
     def test_blocks(self):
-        """Direct verdicts for a few blocking forms."""
         for cmd in ("git rebase main", "git restore a.txt", "git -c core.pager=x log", "git prune"):
             with self.subTest(cmd=cmd):
                 self.assertTrue(ext(cmd))
 
     def test_passes(self):
-        """Direct verdicts for a few passing forms and non-git commands."""
         for cmd in ("git status", "git restore b.txt", "ls -la", "echo rebase"):
             with self.subTest(cmd=cmd):
                 self.assertFalse(ext(cmd))
 
     def test_unclosed_quote_with_git_is_denied(self):
-        """A quote parse failure is denied when git appears, ignored otherwise."""
         self.assertTrue(ext('git commit -m "abc'))
         self.assertFalse(ext('echo "abc'))
 
     def test_empty_and_bad_json_do_not_block(self):
-        """Unreadable input produces no deny and exit code 0."""
         for stdin in ("", "not json", "[]", '{"tool_input":{}}'):
             with self.subTest(stdin=stdin):
                 r = subprocess.run(["python3", "-I", str(EXT)], input=stdin, check=False, capture_output=True, text=True)
                 self.assertEqual((r.returncode, r.stdout), (0, ""))
 
     def test_filter_repo_denied_without_diff(self):
-        """R10: a path with a repo-level filter attribute is denied before diff runs; other paths and index-only pass."""
         payload = json.dumps({"tool_input": {"command": "git restore a.txt"}, "cwd": FREPO})
         r = subprocess.run(["python3", "-I", str(EXT)], input=payload, check=False, capture_output=True, text=True)
         self.assertIn("필터가 설정된 저장소", json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"])
@@ -944,19 +848,206 @@ class ExtAloneTest(unittest.TestCase):
         self.assertFalse(ext("git status", cwd=FREPO))
 
     def test_hidden_change_reason(self):
-        """R5: the deny reason names the assume-unchanged file even though git diff is empty."""
         payload = json.dumps({"tool_input": {"command": "git restore c.txt"}, "cwd": REPO})
         r = subprocess.run(["python3", "-I", str(EXT)], input=payload, check=False, capture_output=True, text=True)
         self.assertIn("c.txt", json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"])
 
     def test_deny_json_shape(self):
-        """The deny line has the same shape as git-guardrails.sh deny()."""
         payload = json.dumps({"tool_input": {"command": "git rebase main"}, "cwd": REPO})
         r = subprocess.run(["python3", "-I", str(EXT)], input=payload, check=False, capture_output=True, text=True)
         out = json.loads(r.stdout)["hookSpecificOutput"]
         self.assertEqual((out["hookEventName"], out["permissionDecision"]), ("PreToolUse", "deny"))
         self.assertTrue(out["permissionDecisionReason"].startswith("[git 차단] "))
         self.assertIn("# APPROVED", out["permissionDecisionReason"])
+
+    def test_subagent_commit_rule12(self):
+        sub = {"agent_id": "a1b2c3d4", "agent_type": "coder"}
+        msg = "[git 차단] 서브 에이전트는 커밋하지 않습니다. 바꾼 파일 목록과 커밋 메시지 안을 main 에 돌려주십시오(커밋은 main 이나 gitops 가 합니다)."
+        denied = [
+            "bash -lc 'git commit --allow-empty -m x'", "bash -ic 'git commit -m x'", "zsh -lc 'git commit -m x'", "sh -ec 'git commit -m x'",
+            "eval 'git commit -m x'", 'eval "git commit -m x"', "echo 'git commit' | sh", "printf 'git commit -m x' | bash",
+            "git -C /tmp/a\\ b commit -m x", "bash -lc 'cd /tmp && git commit-tree HEAD^{tree} -m x'", "bash -lc 'cd /tmp && git cherry-pick abc'",
+            "bash -lc 'cd /tmp && git revert HEAD'", "bash -lc 'cd /tmp && git merge other'", "bash -lc 'cd /tmp && git am x.patch'",
+            "git-commit -m x", "/usr/lib/git-core/git-commit -m x", "/usr/lib/git-core/git commit -m x", "bash -c 'true\ngit commit -m x'",
+            "env -S 'git commit -m x'", "su -c 'git commit -m x'", "flock /tmp/l -c 'git commit -m x'", "watch git commit -m x",
+            "tmux new-session 'git commit -m x'", "timeout 5 git commit -m x", "xargs git commit -m x", "echo commit | xargs git",
+            "git update-ref refs/heads/x HEAD", "git rebase --abort", "echo $(git commit -m x)",
+        ]
+        for who in (sub, {"agent_id": "a1b2c3d4"}, {"agent_id": "a1b2c3d4", "agent_type": ""}, {"agent_id": "a1b2c3d4", "agent_type": "gitops-2"}):
+            for cmd in denied:
+                with self.subTest(who=who, cmd=cmd):
+                    self.assertEqual(ext_reason(cmd, who), msg)
+        for cmd in denied[:4]:
+            with self.subTest(approved=cmd):
+                self.assertEqual(ext_reason(cmd, sub, approved=True), msg)
+        for cmd in ("git --no-pager log commit", "echo git commit", "grep -n git commit x.md", "ls .git commit", "git log --grep=commit",
+                    "git cat-file commit HEAD", "git merge-base main HEAD", "bash -c 'echo git commit'", "git add a.txt", "git status"):
+            with self.subTest(passes=cmd):
+                self.assertEqual(ext_reason(cmd, sub), "")
+        for who in ({}, {"agent_id": "", "agent_type": "coder"}, {"agent_id": None}, {"agent_id": "a1b2c3d4", "agent_type": "gitops"}):
+            for cmd in denied:
+                with self.subTest(unchanged=who, cmd=cmd):
+                    self.assertEqual(ext_reason(cmd, who), ext_reason(cmd, {}))
+
+
+class SubagentThreeCommands(unittest.TestCase):
+    """WHY: 2026-11-24 user decision «세 명령도 막음» — fast-import, a HEAD-moving reset and running propagate-queue.sh are denied to subagents."""
+
+    def test_rule12_three_commands(self):
+        """REF: git_guard_ext.py rule 12 (moves_head, pq_run) — deny forms, pass forms, main/gitops unchanged."""
+        sub = {"agent_id": "a1b2c3d4", "agent_type": "coder"}
+        commit_msg = "[git 차단] 서브 에이전트는 커밋하지 않습니다. 바꾼 파일 목록과 커밋 메시지 안을 main 에 돌려주십시오(커밋은 main 이나 gitops 가 합니다)."
+        pq_msg = "[git 차단] 서브 에이전트는 전파 대기열에 직접 쓰지 않습니다. 커밋과 전파는 main 이 합니다."
+        pq = "scripts/propagate-queue.sh"
+        denied = {
+            commit_msg: ["git fast-import < x", "bash -lc 'git fast-import'", "eval 'git fast-import'", "echo $(git fast-import)",
+                         "git reset --soft HEAD~1", "git reset --hard", "git reset --mi HEAD~1", "git reset HEAD~1", "git reset main",
+                         "git reset a.txt", "bash -lc 'git reset --soft HEAD~1'", "eval 'git reset HEAD~1'", "echo $(git reset HEAD~1)"],
+            pq_msg: [f"{pq} enqueue", f"bash {pq} enqueue", f". {pq}", f"env X=1 {pq}", f"timeout 5 {pq}", f"echo e | xargs {pq}",
+                     f"bash -lc '{pq} enqueue'", f"eval '{pq} enqueue'", f"echo $({pq} enqueue)", f"echo {pq} | bash", f"bash < {pq}",
+                     f"sudo -u x bash {pq}"],
+        }
+        for msg, cmds in denied.items():
+            for cmd in cmds:
+                with self.subTest(cmd=cmd):
+                    self.assertEqual(ext_reason(cmd, sub), msg)
+                    self.assertEqual(ext_reason(cmd, sub, approved=True), msg)
+        for cmd in ("git reset", "git reset -q", "git reset -- a.txt", "git reset HEAD", "git reset HEAD -- a.txt", "git reset HEAD a.txt",
+                    f"cat {pq}", f"grep -n x {pq}", f"sed -n 1,5p {pq}", f"git diff -- {pq}", f"git show HEAD:{pq}", f"git log -- {pq}"):
+            with self.subTest(passes=cmd):
+                self.assertEqual(ext_reason(cmd, sub), "")
+        for who in ({"agent_id": "a1b2c3d4", "agent_type": "gitops"}, {"agent_id": ""}):
+            for cmd in [c for cs in denied.values() for c in cs]:
+                with self.subTest(unchanged=who, cmd=cmd):
+                    self.assertEqual(ext_reason(cmd, who), ext_reason(cmd, {}))
+
+    def test_rule12_round4_allow_list(self):
+        """REF: security round 3 F1-F5 — propagate-queue passes only as a PQ_READ pipeline; xargs-fed reset is denied."""
+        sub = {"agent_id": "a1b2c3d4", "agent_type": "coder"}
+        pq = "scripts/propagate-queue.sh"
+        commit_msg = "[git 차단] 서브 에이전트는 커밋하지 않습니다. 바꾼 파일 목록과 커밋 메시지 안을 main 에 돌려주십시오(커밋은 main 이나 gitops 가 합니다)."
+        pq_msg = "[git 차단] 서브 에이전트는 전파 대기열에 직접 쓰지 않습니다. 커밋과 전파는 main 이 합니다."
+        cases = {
+            commit_msg: ["printf HEAD~1 | xargs git reset", "echo -q | xargs git reset", "cat <<< 'git commit -m x' | bash",
+                         "bash <(echo git commit -m x)"],
+            pq_msg: [f"bash {pq}$E", "bash scripts/{propagate-queue.sh,}", f"exec -c {pq}", f"setsid -c {pq}",
+                     f"find . -exec {pq} \\;", f"coproc {pq}", f"strace {pq}", f"systemd-run --user {pq}", f"cat <<< {pq} | bash",
+                     f"bash <(cat {pq})", f'sh -c "$(cat {pq})"', f"ls {pq} | xargs bash", f"uv run {pq}", f"rg --pre {pq} x .",
+                     f"bash -c 'cat {pq}'"],
+            "": [f"cat {pq} | head -20", f"[ -x {pq} ] && echo ok", "grep -rn propagate-queue .", f"git reset -q HEAD -- {pq}",
+                 f"uv run --no-project python scripts/x.py {pq}", f"echo 'see {pq} for details'", f"ls -l {pq} scripts/a.sh"],
+        }
+        for msg, cmds in cases.items():
+            for cmd in cmds:
+                with self.subTest(cmd=cmd):
+                    self.assertEqual(ext_reason(cmd, sub), msg)
+                    self.assertEqual(ext_reason(cmd, {"agent_id": "a1b2c3d4", "agent_type": "gitops"}), ext_reason(cmd, {}))
+
+    def test_rule12_round5_uv_newline_raw(self):
+        """REF: security round 4 D1-D3 — uv option values, words holding a newline, `$`/glob outside single quotes in the pipeline."""
+        sub = {"agent_id": "a1b2c3d4", "agent_type": "coder"}
+        pq = "scripts/propagate-queue.sh"
+        pq_msg = "[git 차단] 서브 에이전트는 전파 대기열에 직접 쓰지 않습니다. 커밋과 전파는 main 이 합니다."
+        for cmd in (f"uv run --python python3 {pq} x", f"uv run -p python {pq}", f"uv run --with python {pq}", f"uv run --bogus python {pq}",
+                    f"cat x # '\nbash {pq}\n# '", f"X=--pre=bash; rg $X pat {pq}", f"cat {pq} $X", "grep ${P} " + pq, f'grep "a$" {pq}'):
+            with self.subTest(denied=cmd):
+                self.assertEqual(ext_reason(cmd, sub), pq_msg)
+                self.assertEqual(ext_reason(cmd, {"agent_id": "a1b2c3d4", "agent_type": "gitops"}), ext_reason(cmd, {}))
+        for cmd in (f"uv run --no-project python scripts/x.py {pq}", f"uv run --no-project --with pytest python -m pytest {pq} -q",
+                    f"grep -n '^enqueue)' {pq}", f"grep '[e]nqueue' {pq}", f"grep 'foo$' {pq}", f"[[ -f {pq} ]] && echo ok",
+                    f"{{ cat {pq}; }}", f"git log -- {pq} 2>&1 | head -5"):
+            with self.subTest(passes=cmd):
+                self.assertEqual(ext_reason(cmd, sub), "")
+
+    def test_rule12_round6_analyze_call_cap(self):
+        """REF: security round 5 N1 — subagent analyze() calls are capped at MAX_CALLS (200); main and gitops are not counted."""
+        sub = {"agent_id": "a1b2c3d4", "agent_type": "coder"}
+        self.assertEqual(ext_reason("git status; " + "bash <( " * 6, sub), "")
+        for n in (7, 60, 400):
+            with self.subTest(n=n):
+                self.assertIn("명령이 너무 복잡합니다(분석 200회 상한", ext_reason("git status; " + "bash <( " * n, sub))
+        cmd = "git status; " + "bash >( " * 120
+        self.assertEqual(ext_reason(cmd, {"agent_id": "a1b2c3d4", "agent_type": "gitops"}), ext_reason(cmd, {}))
+
+
+class AnalyzerTimeLimit(unittest.TestCase):
+    """WHY: 2026-11-24 main measurement — analyzers orphaned by a killed hook ran 15+ min at 99% CPU; they now stop themselves (exit 124)."""
+
+    @staticmethod
+    def descendants(pid):
+        """REF: ps — return the pids below pid (any depth)."""
+        rows = subprocess.run(["ps", "-eo", "pid=,ppid="], capture_output=True, text=True, check=True).stdout.split("\n")
+        kids, out, todo = {}, [], [pid]
+        for r in rows:
+            if r.split():
+                p, pp = map(int, r.split())
+                kids.setdefault(pp, []).append(p)
+        while todo:
+            for k in kids.get(todo.pop(), []):
+                out.append(k)
+                todo.append(k)
+        return out
+
+    @staticmethod
+    def alive(pid):
+        """REF: os.kill(pid, 0) — True while pid exists and is not a zombie."""
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False).stdout.strip()
+        return bool(state) and not state.startswith("Z")
+
+    def test_killed_hook_leaves_no_analyzer(self):
+        """REF: a 66 KB main command keeps the analyzer busy past 6 s; killing the hook process must not leave it running."""
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "echo " + "git status " * 6000}, "cwd": REPO})
+        hook = subprocess.Popen(["bash", str(HOOK)], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
+        hook.stdin.write(payload)
+        hook.stdin.close()
+        pids, t0 = [], time.monotonic()
+        while time.monotonic() - t0 < 20 and not pids and hook.poll() is None:
+            args = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True, check=True).stdout.split("\n")
+            ext_pids = {int(r.split()[0]) for r in args if "git_guard_ext.py" in r and r.split()}
+            pids = [p for p in self.descendants(hook.pid) if p in ext_pids]
+            time.sleep(0.2)
+        self.assertTrue(pids, "analyzer never started")
+        tree = self.descendants(hook.pid)
+        hook.kill()
+        hook.wait()
+        deadline = time.monotonic() + 9
+        while time.monotonic() < deadline and any(self.alive(p) for p in tree):
+            time.sleep(0.2)
+        self.assertEqual([p for p in tree if self.alive(p)], [])
+        old = subprocess.run(["ps", "-eo", "etimes=,args="], capture_output=True, text=True, check=True).stdout.split("\n")
+        analyzer = re.compile(r"^\s*(\d+) (?:\S*timeout -k 1 7 )?\S*python3 -I \S*/git_guard_ext\.py( --approved)?$")
+        self.assertEqual([r for r in old if (m := analyzer.match(r)) and int(m.group(1)) > 10], [])
+
+    def test_timeout_exit_code_handling(self):
+        """REF: git-guardrails.sh — exit 124 denies a subagent with «분석 시간 초과»; main keeps the old failure deny (any non-zero exit)."""
+        tmp = tempfile.mkdtemp(prefix="gge-timeout-")
+        try:
+            shutil.copy(HOOK, Path(tmp) / "git-guardrails.sh")
+            stubs = {"exit124": "import os, sys\nsys.stdin.read()\nos._exit(124)\n",
+                     "sleep": "import sys, time\nsys.stdin.read()\ntime.sleep(30)\n"}
+            for name, body in stubs.items():
+                Path(tmp, "git_guard_ext.py").write_text(body, encoding="utf-8")
+                for who, want in (({"agent_id": "a1b2c3d4", "agent_type": "coder"}, "분석 시간 초과: 명령을 나눠 실행"),
+                                  ({}, "확장 검사(git_guard_ext.py) 실행 실패")):
+                    with self.subTest(stub=name, who=who):
+                        raw = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status"}, "cwd": REPO, **who})
+                        r = subprocess.run(["bash", str(Path(tmp) / "git-guardrails.sh")], input=raw, capture_output=True, text=True,
+                                           timeout=30, check=False)
+                        self.assertIn(want, json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"])
+            left = subprocess.run(["ps", "-eo", "args="], capture_output=True, text=True, check=True).stdout
+            self.assertNotIn(tmp, left)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def ext_reason(cmd, who, approved=False):
+    payload = json.dumps({"tool_input": {"command": cmd}, "cwd": REPO, **who})
+    r = subprocess.run(["python3", "-I", str(EXT), *(["--approved"] if approved else [])], input=payload, check=False, capture_output=True, text=True)
+    return json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if r.stdout else ""
 
 
 if __name__ == "__main__":

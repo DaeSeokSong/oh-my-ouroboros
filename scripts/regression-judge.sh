@@ -9,15 +9,15 @@
 #   0 = PASS (교정 규칙 미위반)
 #   1 = FAIL (교정 규칙 위반 감지)
 #   2 = INCONCLUSIVE (판정 불가: 파싱 실패·모델 오류)
-#   3 = 보류 (실험 활성 — judge 를 돌리지 않음. 2026-10-01 감사 P6: 종전 exit 0 은 호출자가 PASS 로 읽었다.
+#   3 = 보류 (실험 활성 — judge 를 돌리지 않음.
 #       harness-evolve.sh 는 0·1 이외를 INCONCLUSIVE 로 처리하므로 허위 PASS 가 되지 않는다)
+# REF: knowledge/harness/code-history/scripts__regression-judge.sh.md
 
 set -uo pipefail
 
-# ── 인자 파싱 ──────────────────────────────────────────────────────────────────
 RUBRIC_FILE="${1:-}"
 RULESET_DIR="${2:-}"
-# 별칭 사용 — 특정 버전 하드코딩 금지 (rules/model-assignment.md 전제)
+# NEVER: 특정 버전을 하드코딩하지 않고 별칭을 쓴다 (rules/model-assignment.md 전제)
 MODEL="haiku"
 
 shift 2 2>/dev/null || true
@@ -28,7 +28,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ── 입력 검증 ──────────────────────────────────────────────────────────────────
 if [[ -z "$RUBRIC_FILE" || -z "$RULESET_DIR" ]]; then
     echo "사용법: regression-judge.sh <rubric_file> <ruleset_dir> [--model M]" >&2
     exit 2
@@ -44,20 +43,17 @@ if [[ ! -d "$RULESET_DIR" ]]; then
     exit 2
 fi
 
-# ── experiment-gate 가드 (불변식 3) ────────────────────────────────────────────
 if [[ -f "$HOME/.claude/_bench/.experiment_active" ]]; then
     echo "실험 활성 — 보류"
     exit 3
 fi
 
-# ── rubric 읽기 ────────────────────────────────────────────────────────────────
 RUBRIC_TEXT=$(cat "$RUBRIC_FILE")
 if [[ -z "$RUBRIC_TEXT" ]]; then
     echo "rubric_file 내용 없음: $RUBRIC_FILE" >&2
     exit 2
 fi
 
-# ── Step 1: 대표 task 합성 ──────────────────────────────────────────────────────
 TASK_PROMPT="다음 교정 회피 체크리스트를 시험하기 위한 대표 작업을 한 문장으로 생성하라. 작업 문장만 출력하라(설명·이유 없이).
 
 체크리스트:
@@ -86,7 +82,6 @@ fi
 echo "합성된 task: $GENERATED_TASK"
 echo ""
 
-# ── Step 2: 합성된 task 실행 → 출력 생성 ───────────────────────────────────────
 echo "[2/3] task 실행 중 (CLAUDE_CONFIG_DIR=$RULESET_DIR)..."
 
 TASK_OUTPUT=$(CLAUDE_CONFIG_DIR="$RULESET_DIR" claude -p "$GENERATED_TASK" \
@@ -104,7 +99,6 @@ fi
 echo "task 출력 길이: ${#TASK_OUTPUT}자"
 echo ""
 
-# ── Step 3: 2차 judge 호출 — 규칙 위반 여부 판정 ───────────────────────────────
 echo "[3/3] judge 판정 중..."
 
 JUDGE_PROMPT="다음 출력이 아래 교정 규칙을 위반하는가? 'PASS'(미위반) 또는 'FAIL'(위반)만 답하라. 다른 텍스트 금지.

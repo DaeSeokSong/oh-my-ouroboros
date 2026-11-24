@@ -1,4 +1,4 @@
-"""scope-gate.sh 회귀 테스트 — 프로젝트 경계(2026-09-07~) + 하네스 핵심 경로·매니저 예외(2026-10-17 G1).
+"""scope-gate.sh 회귀 테스트 — 프로젝트 경계 + 하네스 핵심 경로·매니저 예외.
 
 실행: uv run -q --no-project --with pytest python -m pytest scripts/tests/test_scope_gate.py -q
 대상 훅은 env SCOPE_GATE_SCRIPT 로 바꿀 수 있다(기본 scripts/scope-gate.sh). 개발 중 훅을 제자리에서 고치지 않고 사본으로 시험하기 위함.
@@ -11,6 +11,7 @@
   - Bash 로 sessions/*.json 을 위조하면 매니저 판정이 속는다. 이 훅은 Write·Edit 만 타므로 못 막고,
     bash-write-check.sh 의 리다이렉션·heredoc 차단이 유일한 방어다.
   - 같은 이름 «[Harness] Manager» 의 다른 세션, 그리고 매니저 세션이 띄운 subagent 는 같은 session_id 로 통과한다.
+REF: knowledge/harness/code-history/scripts__tests__test_scope_gate.py.md
 """
 import json
 import os
@@ -33,7 +34,6 @@ def git_init(path: Path):
 
 
 def proc_start(pid: int) -> str:
-    """/proc/<pid>/stat 의 22번째 필드(마지막 `)` 뒤 20번째)."""
     stat = Path(f"/proc/{pid}/stat").read_text()
     return stat.rsplit(") ", 1)[1].split()[19]
 
@@ -67,7 +67,6 @@ class Harness:
         self.allow = self.local = None
 
     def add_session(self, fname, sid, name=MGR, pid=None, pstart=None):
-        """sessions/<fname>.json 을 쓴다. pid 기본값은 이 시험 프로세스(살아 있음)."""
         pid = os.getpid() if pid is None else pid
         if pstart is None:
             pstart = proc_start(pid)
@@ -84,7 +83,7 @@ class Harness:
         env["SCOPE_ALLOW_LOCAL_FILE"] = str(kw.get("local") or absent)
         if kw.get("path"):
             env["PATH"] = kw["path"]
-        stdin = kw["raw"] if kw.get("raw") else json.dumps(payload)  # raw: 이스케이프 등 json.dumps 가 못 만드는 입력
+        stdin = kw["raw"] if kw.get("raw") else json.dumps(payload)
         cp = subprocess.run([shutil.which("bash"), str(SCRIPT)], input=stdin, check=False, capture_output=True, text=True,
                             env=env, timeout=kw.get("timeout", 30))
         return Result(cp)
@@ -95,9 +94,6 @@ def hk(request, tmp_path):
     return Harness(tmp_path, request.param == "symlink")
 
 
-# ---------------------------------------------------------------------------------------------
-# 1. 프로젝트 경계 (기존 케이스, 임시 HOME 으로 이식)
-# ---------------------------------------------------------------------------------------------
 def test_project_boundary_cases(hk):
     a, b = hk.repo_a, hk.repo_b
     sub = a / "sub"
@@ -114,7 +110,7 @@ def test_project_boundary_cases(hk):
     local.write_text(f"# 서버 전용\n{local_only}\n")
     root, h = hk.root, hk.logical
     mem = h / "projects/-zz-test/memory/MEMORY.md"
-    cases = [  # (이름, cwd, 대상, 차단 기대, 허용 목록, 서버별 목록)
+    cases = [
         ("다른 저장소 기존 파일", a, b / "x.py", True, None, None),
         ("다른 저장소 미존재 파일", a, b / "new.py", True, None, None),
         ("같은 저장소", a, a / "x.py", False, None, None),
@@ -150,14 +146,12 @@ def test_project_boundary_cases(hk):
     assert not bad, "\n".join(bad)
 
 
-# ---------------------------------------------------------------------------------------------
-# 2. 항상 차단 목록 — 매니저도 불가, 어느 cwd 에서나
-# ---------------------------------------------------------------------------------------------
 ALWAYS_BLOCK = [
     ".git/hooks/x", ".git/config",
     "sessions/9999.json", "sessions/new/x.json",
     "scope/other-session.json", "scope/sub/x.json",
     "_evolve/candidates.tsv", "_evolve/candidates.lock", "_evolve/crosscheck.tsv", "_evolve/prompts.jsonl",
+    "_evolve/t41-ledger.jsonl", "_evolve/t41-ledger.lock",
     "_usage/bench-last", "_usage/sub/x",
     "_audit/publish-approval/used.tsv", "_audit/publish-approval/x.json",
     "projects/-zz-test/abcd.jsonl", "projects/-zz-test/abcd/subagents/x.jsonl",
@@ -170,7 +164,7 @@ def test_always_block_even_for_manager(hk, rel):
     for cwd in (hk.nogit, hk.logical, hk.repo_a):
         r = hk.run(cwd, hk.logical / rel, sid=MGR_SID)
         assert r.blocked, f"{rel} cwd={cwd}: {r.out!r}"
-        r = hk.run(cwd, hk.real / rel, sid=MGR_SID)  # 물리 표기
+        r = hk.run(cwd, hk.real / rel, sid=MGR_SID)
         assert r.blocked, f"물리 {rel} cwd={cwd}: {r.out!r}"
 
 
@@ -185,17 +179,12 @@ def test_projects_memory_jsonl_is_exempt_from_forgery_rule(hk):
 
 
 def test_own_scope_file_passes_everywhere_other_blocked(hk):
-    # (h) 자기 scope 파일은 비 git cwd 에서도 통과, 다른 세션 것은 차단
     assert not hk.run(hk.nogit, hk.logical / f"scope/{OTHER_SID}.json", sid=OTHER_SID).blocked
     assert hk.run(hk.nogit, hk.logical / "scope/sid-someone-else.json", sid=OTHER_SID).blocked
     assert hk.run(hk.logical, hk.logical / "scope/sid-someone-else.json", sid=OTHER_SID).blocked
-    # session_id 가 없으면 자기 파일이 없다
     assert hk.run(hk.logical, hk.logical / f"scope/{OTHER_SID}.json", sid=None).blocked
 
 
-# ---------------------------------------------------------------------------------------------
-# 3. 모든 세션 통과 목록 — 비 git cwd 에서도 (CWD_ROOT 앞에서 판정)
-# ---------------------------------------------------------------------------------------------
 ALLOW_ALL = [
     "knowledge/proj/note.md", "doc-formats/exp/form.md", "_evolve/quiz/q1.md", ".scratch/job/x.py",
     "projects/-zz-test/memory/MEMORY.md", "projects/-zz-test/memory/short-term/decisions.md",
@@ -204,14 +193,12 @@ ALLOW_ALL = [
 
 @pytest.mark.parametrize("rel", ALLOW_ALL)
 def test_all_sessions_may_write_own_records(hk, rel):
-    # (c) 다른 이름 세션, 세션 파일 없음, 세 가지 cwd 모두 통과
     for cwd in (hk.nogit, hk.repo_a, hk.logical):
         r = hk.run(cwd, hk.logical / rel)
         assert not r.blocked, f"{rel} cwd={cwd}: rc={r.rc} {r.out!r} {r.err!r}"
 
 
 def test_deep_memory_is_not_allowed_everywhere(hk):
-    # projects/ 는 fall-through 집합이라 현행 프로젝트 경계 검사: 비 git cwd 는 막히고 하네스 cwd 는 같은 저장소라 통과(현행 유지)
     rel = "projects/-zz-test/sub/memory/x.md"
     assert hk.run(hk.nogit, hk.logical / rel).blocked
     assert not hk.run(hk.logical, hk.logical / rel).blocked
@@ -221,7 +208,6 @@ def test_symlink_pointing_outside_is_not_allowed(hk, tmp_path):
     outside = tmp_path / "outside_dir"
     outside.mkdir()
     (hk.real / "knowledge").symlink_to(outside)
-    # 논리 표기는 knowledge/ 지만 물리는 하네스 밖이다. 허용 목록이 아니라 프로젝트 경계 검사로 간다.
     assert hk.run(hk.nogit, hk.logical / "knowledge/x.md").blocked
 
 
@@ -240,9 +226,6 @@ def test_symlinked_projects_dir_still_blocks_jsonl_forgery(hk, tmp_path):
     assert hk.run(hk.logical, hk.logical / "projects/p/abcd.jsonl").blocked
 
 
-# ---------------------------------------------------------------------------------------------
-# 4. 하네스 핵심 경로: 매니저만
-# ---------------------------------------------------------------------------------------------
 CORE = [
     "CLAUDE.md", "settings.json", "settings.local.json", ".mcp.json",
     "rules/x.md", "rules-lazy/x.md", "agents/x.md", "skills/s/SKILL.md", "scripts/x.sh", "scripts/tests/t.py",
@@ -253,18 +236,15 @@ CORE = [
 
 @pytest.mark.parametrize("rel", CORE)
 def test_core_paths_blocked_for_non_manager_even_in_harness_cwd(hk, rel):
-    # (b)(b')(i) 다른 이름 세션 → exit 2. cwd 가 하네스 저장소여도, 다른 저장소여도, 비 git 이어도.
     hk.add_session("o1", OTHER_SID, name="[exp] Manager")
     for cwd in (hk.logical, hk.repo_a, hk.nogit):
         r = hk.run(cwd, hk.logical / rel, sid=OTHER_SID)
         assert r.rc == 2 and "매니저 전용" in r.err and "이름 불일치" in r.err, f"{rel} cwd={cwd}: rc={r.rc} {r.err!r}"
-    # 물리 표기로 줘도 같다
     assert hk.run(hk.logical, hk.real / rel, sid=OTHER_SID).rc == 2
 
 
 @pytest.mark.parametrize("rel", CORE)
 def test_core_paths_allowed_for_manager_in_any_cwd(hk, rel):
-    # (a)(f)(i) 매니저는 다른 저장소 cwd 에서도, 비 git cwd(~/workspace 형)에서도 통과
     hk.add_session("m1", MGR_SID)
     for cwd in (hk.nogit, hk.repo_a, hk.logical):
         r = hk.run(cwd, hk.logical / rel, sid=MGR_SID)
@@ -279,7 +259,6 @@ def test_core_dotdot_traversal_is_normalized(hk):
     assert hk.run(hk.repo_a, "../home/.claude/rules/x.md", sid=OTHER_SID).rc == 2
 
 
-# --- 매니저 판정 실패 사유 (d) ---
 def test_reason_no_session_file(hk):
     r = hk.run(hk.logical, hk.logical / "rules/x.md", sid="sid-nobody")
     assert r.rc == 2 and "세션 파일 없음" in r.err
@@ -320,7 +299,6 @@ def test_name_must_match_exactly(hk):
 
 @pytest.mark.parametrize("good_first", [True, False])
 def test_two_files_same_session_id_one_failing_is_rejected(hk, good_first):
-    # 같은 sessionId 파일이 둘이고 하나가 실패하면 거부. 파일 이름 순서와 무관해야 한다.
     hk.add_session("a_file" if good_first else "z_file", MGR_SID)
     hk.add_session("z_file" if good_first else "a_file", MGR_SID, pstart="1")
     r = hk.run(hk.logical, hk.logical / "rules/x.md", sid=MGR_SID)
@@ -339,14 +317,12 @@ def test_manager_file_for_other_session_does_not_help(hk):
     assert r.rc == 2 and "세션 파일 없음" in r.err
 
 
-# --- 기본값 = 매니저만 (2026-10-17 후속): 열거 목록에 없는 최상위 파일·폴더도 보호 ---
 DEFAULT_DENY = ["README.md", "AGENTS.md", "RULES.md", ".gitignore", "commands/x.md", "graphify-out/g.json",
                 "_evolve/other.txt", "brand-new-dir/x.md", "backups/x"]
 
 
 @pytest.mark.parametrize("rel", DEFAULT_DENY)
 def test_default_deny_for_non_manager_and_allowed_for_manager(hk, rel):
-    # (k)(m) 매니저는 비 git cwd 에서도 통과, 비매니저는 어느 cwd 에서나 exit 2
     hk.add_session("m1", MGR_SID)
     hk.add_session("o1", OTHER_SID, name="[exp] Manager")
     for cwd in (hk.nogit, hk.repo_a, hk.logical):
@@ -358,7 +334,6 @@ def test_default_deny_for_non_manager_and_allowed_for_manager(hk, rel):
 
 @pytest.mark.parametrize("rel", [".git/hooks/x", ".git/hooks/commit-msg", ".git/config", ".git"])
 def test_dot_git_always_blocked_even_for_manager(hk, rel):
-    # (l) .git 은 항상 차단. 훅 설치는 setup-harness.sh 가 Bash 로 한다.
     hk.add_session("m1", MGR_SID)
     hk.add_session("o1", OTHER_SID, name="[exp] Manager")
     for sid in (MGR_SID, OTHER_SID):
@@ -367,36 +342,28 @@ def test_dot_git_always_blocked_even_for_manager(hk, rel):
 
 
 def test_fallthrough_set_stays_on_project_boundary(hk):
-    # jobs/·teams/·daemon*·projects/ 는 종전대로 프로젝트 경계 검사: 하네스 cwd 통과, 다른 저장소·비 git cwd 차단
     for rel in ("jobs/zz/tmp/x.py", "teams/t/x.json", "daemon/x.log", "daemon.log", "projects/-zz/x.txt"):
         assert not hk.run(hk.logical, hk.logical / rel).blocked, rel
         assert hk.run(hk.repo_a, hk.logical / rel).blocked, rel
         assert hk.run(hk.nogit, hk.logical / rel).blocked, rel
 
 
-# --- (j) .key 는 읽지 않는다 ---
 def test_key_files_are_never_read(hk):
     marker = "KEY-FILE-SECRET-MARKER-12345"
     (hk.real / "sessions" / f"{os.getpid()}.deadbeef.key").write_text(marker)
-    os.mkfifo(hk.real / "sessions" / "999.cafe.key")  # 읽으려 들면 훅이 멈춘다(subprocess timeout 으로 실패)
-    # .key 만 있고 .json 이 없으면 세션 파일 없음으로 차단
+    os.mkfifo(hk.real / "sessions" / "999.cafe.key")
     r = hk.run(hk.logical, hk.logical / "rules/x.md", sid=MGR_SID)
     assert r.rc == 2 and "세션 파일 없음" in r.err
     assert marker not in r.out + r.err
-    # .json 이 있으면 통과하되 출력에 키 내용은 없다
     hk.add_session("m1", MGR_SID)
     r = hk.run(hk.logical, hk.logical / "rules/x.md", sid=MGR_SID)
     assert r.rc == 0 and marker not in r.out + r.err
-    # 키 내용이 session_id 와 같은 문자열을 담아도 매니저 근거가 되지 않는다
     (hk.real / "sessions" / "777.abc.key").write_text(json.dumps({"sessionId": OTHER_SID, "name": MGR}))
     assert hk.run(hk.logical, hk.logical / "rules/x.md", sid=OTHER_SID).rc == 2
 
 
-# ---------------------------------------------------------------------------------------------
-# 5. security 검수 반영 (2026-10-17): FIFO · 틸드 · jq 부재 · 깨진 JSON · scope 파일 이름 변형
-# ---------------------------------------------------------------------------------------------
 def test_fifo_named_json_does_not_hang_and_non_manager_is_blocked(hk):
-    os.mkfifo(hk.real / "sessions" / "fifo.json")  # 열면 훅이 멈춘다
+    os.mkfifo(hk.real / "sessions" / "fifo.json")
     t0 = time.monotonic()
     r = hk.run(hk.logical, hk.logical / "rules/x.md", sid=OTHER_SID, timeout=5)
     assert time.monotonic() - t0 < 3
@@ -420,10 +387,9 @@ def test_tilde_path_is_expanded_to_home(hk):
 
 def test_malformed_candidate_file_vetoes_manager(hk):
     hk.add_session("a_good", MGR_SID)
-    (hk.real / "sessions" / "z_broken.json").write_text(f'{{"sessionId": "{MGR_SID}", "name": ')  # 잘린 JSON
+    (hk.real / "sessions" / "z_broken.json").write_text(f'{{"sessionId": "{MGR_SID}", "name": ')
     r = hk.run(hk.logical, hk.logical / "rules/x.md", sid=MGR_SID)
     assert r.rc == 2 and "파싱 실패" in r.err
-    # session_id 를 담지 않은 깨진 파일은 후보가 아니라 영향이 없다
     (hk.real / "sessions" / "z_broken.json").write_text("{not json at all")
     assert hk.run(hk.logical, hk.logical / "rules/x.md", sid=MGR_SID).rc == 0
 
@@ -443,7 +409,6 @@ def test_unreadable_session_file_vetoes_manager(hk):
 
 @pytest.fixture
 def nojq_path(tmp_path):
-    """jq 만 빠진 PATH — 훅이 쓰는 나머지 도구만 심볼릭으로 모은다."""
     d = tmp_path / "nojq_bin"
     d.mkdir()
     for tool in ("realpath", "dirname", "head", "cat", "ls", "git"):
@@ -454,10 +419,10 @@ def nojq_path(tmp_path):
 
 def test_without_jq_harness_paths_fail_closed(hk, nojq_path):
     hk.add_session("m1", MGR_SID)
-    for rel in ("rules/x.md", "README.md", "CLAUDE.md"):  # 매니저 전용: 판정 불가 → 차단
+    for rel in ("rules/x.md", "README.md", "CLAUDE.md"):
         r = hk.run(hk.nogit, hk.logical / rel, sid=MGR_SID, path=nojq_path)
         assert r.rc == 2 and "jq 없음" in r.err, rel
-    for rel in ("sessions/x.json", "_usage/x", ".git/hooks/x"):  # 항상 차단
+    for rel in ("sessions/x.json", "_usage/x", ".git/hooks/x"):
         assert hk.run(hk.nogit, hk.logical / rel, sid=MGR_SID, path=nojq_path).rc == 2, rel
 
 
@@ -470,35 +435,30 @@ def test_without_jq_allow_list_and_outside_paths_still_pass(hk, nojq_path):
 
 @pytest.mark.parametrize("rel", ["jobs/x", "teams/x", "daemon-x/y", "projects/-zz/notes.md"])
 def test_without_jq_fallthrough_harness_paths_fail_closed(hk, nojq_path, rel):
-    # 2026-10-17: jq 가 없으면 하네스 안 fall-through 집합도 경계 판정이 불가능해 닫는다(종전엔 exit 0 으로 열렸다)
     r = hk.run(hk.nogit, hk.logical / rel, path=nojq_path)
     assert r.rc == 2 and "jq 없음" in r.err and "경계 판정 불가" in r.err, rel
 
 
 def test_plans_is_fallthrough_for_non_manager(hk):
-    # 2026-10-17 검수팀: 플랜 모드가 ~/.claude/plans 에 쓰는 파일은 통제 파일이 아니라 비매니저도 쓴다(프로젝트 경계 검사는 그대로)
     assert not hk.run(hk.logical, hk.logical / "plans/x.md").blocked
     assert hk.run(hk.repo_a, hk.logical / "plans/x.md").blocked
     assert hk.run(hk.logical, hk.logical / "rules/x.md").blocked
 
 
 def test_with_jq_fallthrough_harness_path_still_uses_project_boundary(hk):
-    # 위 닫힘은 jq 가 없을 때만이다: jq 가 있으면 jobs/ 는 종전대로 프로젝트 경계 검사를 거쳐 통과한다
     assert hk.run(hk.repo_a, hk.logical / "jobs/x").rc == 0
 
 
 def test_missing_session_id_does_not_fall_back_to_latest_scope_file(hk):
-    # 2026-10-17 Grok 반례: session_id 가 없으면 «최신 scope 파일» 로 폴백해 다른 세션의 범위를 타던 구멍
     (hk.real / "scope" / f"{OTHER_SID}.json").write_text(json.dumps({"scope": [{"path": str(hk.repo_a / "x.py")}]}))
     r = hk.run(hk.repo_a, hk.repo_a / "x.py", sid=None)
     assert r.rc == 2 and "session_id" in r.err
-    # session_id 가 있고 그 세션에 등록이 없으면 종전대로 게이트 비활성(통과)
     assert hk.run(hk.repo_a, hk.repo_a / "x.py", sid="sid-unregistered").rc == 0
 
 
 @pytest.mark.parametrize("name", [
     "[Harness] Manager\n", "[Harness] Manager\u001f1", "\u001f[Harness] Manager", "[Harness] Manager\u0000",
-    "[Harness] Manager\u001f%d\u001f%s",  # 필드 경계 위조: pid·procStart 키 없이 name 안에 밀어 넣는다(아래에서 채움)
+    "[Harness] Manager\u001f%d\u001f%s",
 ])
 def test_name_with_control_chars_cannot_forge_field_boundaries(hk, name):
     if "%d" in name:
@@ -511,9 +471,9 @@ def test_name_with_control_chars_cannot_forge_field_boundaries(hk, name):
 
 
 @pytest.mark.parametrize("patch,why", [
-    ({"pid": str(os.getpid())}, "pid 없음"),            # 문자열 pid
+    ({"pid": str(os.getpid())}, "pid 없음"),
     ({"pid": 0}, "pid 없음"),
-    ({"procStart": "123\n"}, "pid 없음"),               # 끝 개행으로 정규식 $ 를 속이는 값
+    ({"procStart": "123\n"}, "pid 없음"),
     ({"procStart": None}, "pid 없음"),
 ])
 def test_pid_and_procstart_types_are_strict(hk, patch, why):
@@ -524,9 +484,8 @@ def test_pid_and_procstart_types_are_strict(hk, patch, why):
 
 
 def test_escaped_session_id_in_a_second_file_still_counts(hk):
-    # sessionId 를 s 이스케이프로 쓴 파일은 원문 부분 문자열 선별을 피하지만, 디코딩된 값으로 비교되어 거부 사유가 된다
     hk.add_session("a_good", MGR_SID)
-    esc = "\\u0073" + MGR_SID[1:]  # 「s」 를 이스케이프
+    esc = "\\u0073" + MGR_SID[1:]
     (hk.real / "sessions/z_esc.json").write_text(
         f'{{"sessionId": "{esc}", "name": "{MGR}", "pid": {os.getpid()}, "procStart": "1"}}')
     assert esc not in (hk.real / "sessions/a_good.json").read_text()
@@ -544,10 +503,9 @@ def test_escaped_session_id_alone_is_the_manager_file(hk):
 def test_oversize_session_file_means_undecidable(hk):
     hk.add_session("a_good", MGR_SID)
     big = hk.real / "sessions/z_big.json"
-    big.write_text(json.dumps({"sessionId": "other", "pad": "x" * 70000}))  # 후보인지 알 수 없다
+    big.write_text(json.dumps({"sessionId": "other", "pad": "x" * 70000}))
     r = hk.run(hk.logical, hk.logical / "rules/x.md", sid=MGR_SID)
     assert r.rc == 2 and "64KB" in r.err
-    # 64KB 이하의 큰 파일은 영향이 없다
     big.write_text(json.dumps({"sessionId": "other", "pad": "x" * 60000}))
     assert hk.run(hk.logical, hk.logical / "rules/x.md", sid=MGR_SID).rc == 0
 
@@ -556,18 +514,17 @@ def test_without_jq_escaped_or_unparsed_paths_are_blocked(hk, nojq_path):
     esc = f'{{"cwd": "{hk.nogit}", "session_id": "s", "tool_input": {{"file_path": "{hk.home}/.claude/\\u0072ules/x.md"}}}}'
     r = hk.run(hk.nogit, "x", raw=esc, path=nojq_path)
     assert r.rc == 2 and "jq 없음" in r.err
-    odd = f'{{"cwd": "{hk.nogit}", "tool_input": {{"file_path": 5}}}}'  # 키는 있는데 값을 뽑지 못한다
+    odd = f'{{"cwd": "{hk.nogit}", "tool_input": {{"file_path": 5}}}}'
     assert hk.run(hk.nogit, "x", raw=odd, path=nojq_path).rc == 2
     plain = f'{{"cwd": "{hk.nogit}", "session_id": "s", "tool_input": {{"file_path": "{hk.home}/.claude/rules/x.md"}}}}'
-    assert hk.run(hk.nogit, "x", raw=plain, path=nojq_path).rc == 2  # 평문이면 하네스 경로 규칙으로 차단
+    assert hk.run(hk.nogit, "x", raw=plain, path=nojq_path).rc == 2
 
 
 @pytest.mark.parametrize("folder,rel", [
-    ("sessions", "x.json"), ("_usage", "bench-last"), ("scope", "other.json"), ("_evolve", "candidates.tsv"),
+    ("sessions", "x.json"), ("_usage", "bench-last"), ("scope", "other.json"), ("_evolve", "candidates.tsv"), ("_evolve", "t41-ledger.jsonl"),
     ("_audit/publish-approval", "used.tsv"), ("projects", "p/abcd.jsonl"),
 ])
 def test_symlinked_protected_folder_is_protected_by_its_realpath(hk, tmp_path, folder, rel):
-    # 보호 폴더 자체가 밖을 가리키는 심볼릭이어도, 그 실제 위치로 직접 들어오는 경로를 막는다(논리·물리·realpath 셋 대조)
     outside = tmp_path / "outside" / folder.replace("/", "_")
     (outside / Path(rel).parent).mkdir(parents=True, exist_ok=True)
     link = hk.real / folder
@@ -583,6 +540,317 @@ def test_symlinked_protected_folder_is_protected_by_its_realpath(hk, tmp_path, f
 
 @pytest.mark.parametrize("tail", [".json.bak", ".json.tmp", ".json/../x", ".json/x.json", ".bak"])
 def test_scope_filename_variants_of_own_session_are_blocked(hk, tail):
-    # 자기 session_id 의 정확한 파일 이름(scope/<id>.json)만 통과한다
     target = f"{hk.logical}/scope/{OTHER_SID}{tail}"
     assert hk.run(hk.nogit, target, sid=OTHER_SID).blocked, target
+
+
+def _git(path: Path, *args):
+    subprocess.run(["git", "-C", str(path), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                   check=True, capture_output=True)
+
+
+def _repo_with_commit(path: Path):
+    git_init(path)
+    (path / "f.txt").write_text("f")
+    _git(path, "add", "f.txt")
+    _git(path, "commit", "-q", "-m", "c")
+
+
+def test_same_repo_worktree_passes_other_repo_worktree_blocked(hk):
+    root = hk.root / "wt_case"
+    a, b = root / "A", root / "B"
+    w1, w2, wb = root / "W1", root / "W2", root / "WB"
+    _repo_with_commit(a)
+    _repo_with_commit(b)
+    _git(a, "worktree", "add", "-q", str(w1), "-b", "w1")
+    _git(a, "worktree", "add", "-q", str(w2), "-b", "w2")
+    _git(b, "worktree", "add", "-q", str(wb), "-b", "wb")
+    cases = [
+        ("A→W1 기존 파일", a, w1 / "f.txt", False),
+        ("A→W1 새 파일", a, w1 / "new.txt", False),
+        ("A→W1 없는 하위 폴더의 새 파일", a, w1 / "no/such/dir/new.txt", False),
+        ("W1→A", w1, a / "f.txt", False),
+        ("W1→W2", w1, w2 / "f.txt", False),
+        ("A→B", a, b / "f.txt", True),
+        ("A→WB", a, wb / "f.txt", True),
+        ("W1→B", w1, b / "f.txt", True),
+    ]
+    bad = []
+    for name, cwd, target, want in cases:
+        r = hk.run(cwd, target)
+        if r.blocked != want:
+            bad.append(f"{name}: block={r.blocked} (기대 {want}) out={r.out[:120]!r}")
+        if want and "다른 저장소" not in r.out:
+            bad.append(f"{name}: 사유에 «다른 저장소» 없음 out={r.out[:120]!r}")
+    assert not bad, "\n".join(bad)
+
+
+def test_git_env_vars_cannot_fool_worktree_check(hk, monkeypatch):
+    root = hk.root / "wt_env"
+    a, b = root / "A", root / "B"
+    _repo_with_commit(a)
+    _repo_with_commit(b)
+    monkeypatch.setenv("GIT_DIR", str(a / ".git"))
+    monkeypatch.setenv("GIT_COMMON_DIR", str(a / ".git"))
+    r = hk.run(a, b / "f.txt")
+    assert r.blocked and "다른 저장소" in r.out, r.out[:200]
+
+
+def _wt_world(hk, tag):
+    root = hk.root / tag
+    a, b = root / "A", root / "B"
+    w1, w2, wb = root / "W1", root / "W2", root / "WB"
+    _repo_with_commit(a)
+    _repo_with_commit(b)
+    _git(a, "worktree", "add", "-q", str(w1), "-b", "w1")
+    _git(a, "worktree", "add", "-q", str(w2), "-b", "w2")
+    _git(b, "worktree", "add", "-q", str(wb), "-b", "wb")
+    assert (a / ".git" / "worktrees" / "W1" / "gitdir").is_file()
+    assert (b / ".git" / "worktrees" / "WB" / "gitdir").is_file()
+    return a, b, w1, w2, wb
+
+
+def _run_cases(hk, cases):
+    bad = []
+    for name, cwd, target, want, msg in cases:
+        r = hk.run(cwd, target)
+        if r.blocked != want:
+            bad.append(f"{name}: block={r.blocked} (기대 {want}) out={r.out[:120]!r} err={r.err[:80]!r}")
+        elif want and msg and "다른 저장소" not in r.out:
+            bad.append(f"{name}: 사유에 «다른 저장소» 없음 out={r.out[:120]!r}")
+    return bad
+
+
+def test_worktree_pass_includes_git_dirs_of_own_repo(hk):
+    a, _b, w1, _w2, _wb = _wt_world(hk, "wt_pass")
+    gw = a / ".git" / "worktrees" / "W1"
+    cases = [
+        ("A→A/.git/info/exclude", a, a / ".git" / "info" / "exclude", False, False),
+        ("W1→A/.git/worktrees/W1/x", w1, gw / "x", False, False),
+        ("A→A/.git/worktrees/W1/x", a, gw / "x", False, False),
+        ("A→W1/f.txt", a, w1 / "f.txt", False, False),
+    ]
+    bad = _run_cases(hk, cases)
+    assert not bad, "\n".join(bad)
+
+
+def test_worktree_pass_with_relative_gitdir_and_no_trailing_newline(hk):
+    a, _b, w1, w2, _wb = _wt_world(hk, "wt_rel")
+    (w1 / ".git").write_text("gitdir: ../A/.git/worktrees/W1")
+    (a / ".git" / "worktrees" / "W1" / "gitdir").write_text("../../../../W1/.git\n")
+    cases = [
+        ("A→W1", a, w1 / "f.txt", False, False),
+        ("W1→A", w1, a / "f.txt", False, False),
+        ("W1→W2", w1, w2 / "f.txt", False, False),
+    ]
+    bad = _run_cases(hk, cases)
+    assert not bad, "\n".join(bad)
+
+
+def test_other_repo_git_dir_and_trees_are_blocked(hk):
+    a, b, w1, _w2, wb = _wt_world(hk, "wt_other")
+    gb = b / ".git" / "worktrees" / "WB"
+    cases = [
+        ("A→B/.git/hooks/pre-commit", a, b / ".git" / "hooks" / "pre-commit", True, True),
+        ("A→B/.git/config", a, b / ".git" / "config", True, True),
+        ("A→B/.git/commondir", a, b / ".git" / "commondir", True, True),
+        ("A→B/.git/worktrees/WB/gitdir", a, gb / "gitdir", True, True),
+        ("W1→B/.git/hooks/pre-commit", w1, b / ".git" / "hooks" / "pre-commit", True, True),
+        ("A→B/.git (그 자체)", a, b / ".git", True, True),
+        ("A→B", a, b / "f.txt", True, True),
+        ("A→WB", a, wb / "f.txt", True, True),
+        ("W1→B", w1, b / "f.txt", True, True),
+    ]
+    bad = _run_cases(hk, cases)
+    assert not bad, "\n".join(bad)
+
+
+def test_forged_b_commondir_pointing_at_a_cannot_open_b(hk):
+    a, b, _w1, _w2, _wb = _wt_world(hk, "wt_forge_b")
+    (b / ".git" / "commondir").write_text(f"{a / '.git'}\n")
+    bad = _run_cases(hk, [("A→B/x.py", a, b / "x.py", True, True), ("A→B/f.txt", a, b / "f.txt", True, True)])
+    assert not bad, "\n".join(bad)
+
+
+def test_forged_a_commondir_pointing_at_b_cannot_open_b(hk):
+    a, b, _w1, _w2, _wb = _wt_world(hk, "wt_forge_a")
+    (a / ".git" / "commondir").write_text(f"{b / '.git'}\n")
+    bad = _run_cases(hk, [("A→B/x.py", a, b / "x.py", True, False), ("A→B/f.txt", a, b / "f.txt", True, False)])
+    assert not bad, "\n".join(bad)
+
+
+def test_worktree_gitfile_repointed_at_other_repo_worktree_is_rejected(hk):
+    _a, b, w1, _w2, _wb = _wt_world(hk, "wt_repoint")
+    (w1 / ".git").write_text(f"gitdir: {b / '.git' / 'worktrees' / 'WB'}\n")
+    bad = _run_cases(hk, [("W1→B/x.py", w1, b / "x.py", True, False), ("W1→B/f.txt", w1, b / "f.txt", True, False)])
+    assert not bad, "\n".join(bad)
+
+
+def _break_w1_a(a, w1, kind):
+    gw = a / ".git" / "worktrees" / "W1"
+    if kind == "symlink":
+        real = w1.parent / "w1-gitfile.txt"
+        real.write_text((w1 / ".git").read_text())
+        (w1 / ".git").unlink()
+        (w1 / ".git").symlink_to(real)
+    elif kind == "no_gitdir_line":
+        (w1 / ".git").write_text("not a gitdir line\n")
+    elif kind == "no_backpointer":
+        (gw / "gitdir").unlink()
+    elif kind == "parent_not_worktrees":
+        mod = a / ".git" / "modules" / "x"
+        mod.parent.mkdir()
+        shutil.copytree(gw, mod)
+        (w1 / ".git").write_text(f"gitdir: {mod}\n")
+
+
+@pytest.mark.parametrize("kind", ["symlink", "no_gitdir_line", "no_backpointer", "parent_not_worktrees"])
+def test_malformed_worktree_link_is_not_treated_as_same_repo(hk, kind):
+    a, _b, w1, _w2, _wb = _wt_world(hk, "wt_bad_" + kind)
+    _break_w1_a(a, w1, kind)
+    if kind == "no_gitdir_line":
+        r = hk.run(w1, a / "f.txt")
+        assert r.blocked, f"{kind} W1→A: 통과해 버림 out={r.out[:120]!r}"
+        return
+    for name, cwd, target in [("A→W1", a, w1 / "f.txt"), ("A→W1 새 파일", a, w1 / "new.txt")]:
+        r = hk.run(cwd, target)
+        assert r.blocked, f"{kind} {name}: 통과해 버림 out={r.out[:120]!r}"
+
+
+def _two_repos(hk, tag):
+    root = hk.root / tag
+    a, b = root / "A", root / "B"
+    git_init(a)
+    git_init(b)
+    return root, a, b
+
+
+def test_core_worktree_in_config_cannot_move_the_session_root(hk):
+    _root, a, b = _two_repos(hk, "rw_core")
+    with (a / ".git" / "config").open("a") as f:
+        f.write(f"[core]\n\tworktree = {b}\n")
+    bad = _run_cases(hk, [("cwd=A→B/x.py", a, b / "x.py", True, True), ("cwd=A→A/own.py", a, a / "own.py", False, False)])
+    assert not bad, "\n".join(bad)
+
+
+def test_worktree_gitfile_redirected_to_fake_gitdir_cannot_open_other_repo(hk):
+    a, b, w1, _w2, _wb = _wt_world(hk, "rw_fakegit")
+    fake = w1.parent / "fakegit"
+    fake.mkdir()
+    (fake / "HEAD").write_text("ref: refs/heads/x\n")
+    (fake / "commondir").write_text(f"{a / '.git'}\n")
+    (fake / "config").write_text(f"[core]\n\tworktree = {b}\n")
+    (w1 / ".git").write_text(f"gitdir: {fake}\n")
+    bad = _run_cases(hk, [("cwd=W1→B/x.py", w1, b / "x.py", True, True), ("cwd=W1→B/f.txt", w1, b / "f.txt", True, True)])
+    assert not bad, "\n".join(bad)
+
+
+def test_empty_shell_dot_git_above_is_not_a_root_and_cannot_be_filled(hk):
+    root, a, b = _two_repos(hk, "rw_shell")
+    (root / ".git" / "info").mkdir(parents=True)
+    plain = root / "plainsub"
+    plain.mkdir()
+    (a / "x.py").write_text("a")
+    shell = root / ".git"
+    cases = [
+        ("cwd=A→B/x.py", a, b / "x.py", True, True),
+        ("cwd=plainsub→A/x.py (껍데기를 뿌리로 치면 통과해 버린다)", plain, a / "x.py", True, False),
+        ("cwd=A→P/.git/HEAD", a, shell / "HEAD", True, True),
+        ("cwd=A→P/.git/objects/x", a, shell / "objects" / "x", True, True),
+        ("cwd=A→P/.git/refs/x", a, shell / "refs" / "x", True, True),
+    ]
+    bad = _run_cases(hk, cases)
+    r = hk.run(plain, a / "x.py")
+    if "저장소 밖" not in r.out:
+        bad.append(f"cwd=plainsub→A/x.py: 사유에 «저장소 밖» 없음 out={r.out[:120]!r}")
+    assert not bad, "\n".join(bad)
+
+
+def test_dot_git_inside_non_repo_folder_is_blocked_but_plain_file_passes(hk):
+    root, a, _b = _two_repos(hk, "rw_nonrepo")
+    n = root / "N"
+    n.mkdir()
+    cases = [
+        ("cwd=A→N/.git/HEAD", a, n / ".git" / "HEAD", True, True),
+        ("cwd=A→N/plain.txt", a, n / "plain.txt", False, False),
+    ]
+    bad = _run_cases(hk, cases)
+    assert not bad, "\n".join(bad)
+
+
+def test_own_repo_dot_git_and_nested_repo_creation_pass(hk):
+    _root, a, _b = _two_repos(hk, "rw_own")
+    (a / "sub").mkdir()
+    cases = [
+        ("cwd=A→A/sub/.git/HEAD", a, a / "sub" / ".git" / "HEAD", False, False),
+        ("cwd=A→A/.git/config", a, a / ".git" / "config", False, False),
+    ]
+    bad = _run_cases(hk, cases)
+    assert not bad, "\n".join(bad)
+
+
+def test_dot_git_file_without_gitdir_line_is_not_a_root(hk):
+    _root, a, _b = _two_repos(hk, "rw_nogitdir")
+    fake = a / "fake"
+    fake.mkdir()
+    (fake / ".git").write_text("not a gitdir line\n")
+    (a / "f.txt").write_text("f")
+    cases = [
+        ("cwd=A→A/fake/x.py", a, fake / "x.py", False, False),
+        ("cwd=A/fake→A/f.txt", fake, a / "f.txt", False, False),
+    ]
+    bad = _run_cases(hk, cases)
+    assert not bad, "\n".join(bad)
+
+
+def test_symlinked_gitdir_file_still_marks_a_root_but_is_never_same_repo(hk):
+    a, _b, _w1, _w2, wb = _wt_world(hk, "rw_symgit")
+    real = wb.parent / "wb-gitfile.txt"
+    real.write_text((wb / ".git").read_text())
+    (wb / ".git").unlink()
+    (wb / ".git").symlink_to(real)
+    cases = [
+        ("cwd=A→WB/f.txt", a, wb / "f.txt", True, True),
+        ("cwd=A→WB/new.txt", a, wb / "new.txt", True, True),
+        ("cwd=WB→WB/own.py", wb, wb / "own.py", False, False),
+        ("cwd=WB→A/f.txt", wb, a / "f.txt", True, True),
+    ]
+    bad = _run_cases(hk, cases)
+    assert not bad, "\n".join(bad)
+
+
+def test_git_env_vars_pointing_at_b_cannot_move_the_root(hk, monkeypatch):
+    _root, a, b = _two_repos(hk, "rw_env")
+    monkeypatch.setenv("GIT_DIR", str(b / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(b))
+    monkeypatch.setenv("GIT_COMMON_DIR", str(b / ".git"))
+    bad = _run_cases(hk, [("cwd=A→B/x.py", a, b / "x.py", True, True), ("cwd=A→A/own.py", a, a / "own.py", False, False)])
+    assert not bad, "\n".join(bad)
+
+
+def test_non_repo_cwd_under_allow_list_cannot_write_dot_git_markers(hk):
+    allowed, denied = hk.root / "rw_allowed", hk.root / "rw_denied"
+    d = allowed / "proj"
+    d.mkdir(parents=True)
+    denied.mkdir()
+    allow = hk.root / "rw-scope-allow.txt"
+    allow.write_text(f"{allowed}\n")
+    cases = [
+        ("D/.git", d / ".git", True),
+        ("D/.git/HEAD", d / ".git" / "HEAD", True),
+        ("D/.git/objects/x", d / ".git" / "objects" / "x", True),
+        ("D/.git/refs/x", d / ".git" / "refs" / "x", True),
+        ("상위 폴더의 .git", allowed / ".git", True),
+        ("D/ok.txt", d / "ok.txt", False),
+        ("D/.gitignore", d / ".gitignore", False),
+        ("D/.github/x", d / ".github" / "x", False),
+        ("허용 목록 밖 일반 파일", denied / "x.py", True),
+    ]
+    bad = []
+    for name, target, want in cases:
+        r = hk.run(d, target, allow=allow)
+        if r.blocked != want:
+            bad.append(f"{name}: block={r.blocked} (기대 {want}) out={r.out[:120]!r}")
+        elif want and name != "허용 목록 밖 일반 파일" and "git 저장소 밖" not in r.out:
+            bad.append(f"{name}: 사유에 «git 저장소 밖» 없음 out={r.out[:120]!r}")
+    assert not bad, "\n".join(bad)

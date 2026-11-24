@@ -1,15 +1,11 @@
 """Stop hook check: block a working turn when the session handoff file is missing or stale.
 
-Why (user, 2026-10-23): tokens may run out mid-task, so every session must always leave a status file
-that Grok can read to resume. Format and location are defined in rules-lazy/session-handoff.md.
+Format and location are defined in rules-lazy/session-handoff.md.
 Contract: stdin = Stop hook JSON; prints one {"decision":"block","reason":...} line or nothing.
 Fail-open: any error prints nothing so this hook never blocks work by itself.
 
-Review-turn exemption (user decision 2026-11-12): a turn that ends by asking a Confluence publish-approval question and
+Review-turn exemption: a turn that ends by asking a Confluence publish-approval question and
 waiting for the answer is exempt.
-Why: the review turn must write nothing (no handoff card, decisions.md or Mem0), so the card is written the turn after the
-user's answer (skills/confluence/SKILL.md § 검토 턴의 분리, rules-lazy/session-handoff.md). Blocking that turn contradicted it.
-The exemption stays narrow on purpose (security review 2026-11-12: after the answer the card may and must be written):
   - exempt only when the LAST tool_use after the last real user message is a publish-approval AskUserQuestion and no
     tool_result with that tool_use id is recorded yet (asked, answer pending). Any later tool_use, an answered question,
     a question from an earlier turn, another tool, or a tool_use without a string id gives no exemption;
@@ -17,6 +13,7 @@ The exemption stays narrow on purpose (security review 2026-11-12: after the ans
     «게시 승인» option); the condition is defined there, not copied here. That module is loaded at most once per run, and only
     when the last tool_use is an AskUserQuestion;
   - any error while judging (module load, odd entry shape) means "not exempt", i.e. the pre-existing behavior.
+REF: knowledge/harness/code-history/scripts__handoff_check.py.md
 """
 import contextlib
 import importlib.util
@@ -31,7 +28,6 @@ APPROVE_MODULE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "confl
 
 
 def find_root(cwd):
-    """Return the project root for cwd, ~/.claude for harness cwd, or None to skip."""
     r = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"],
                        check=False, capture_output=True, text=True, timeout=2)
     if r.returncode == 0 and r.stdout.strip():
@@ -42,7 +38,6 @@ def find_root(cwd):
 
 
 def is_publish_ask(block):
-    """True if a tool_use block is an AskUserQuestion that confluence_publish_approve accepts as a publish-approval question."""
     if block.get("name") != "AskUserQuestion":
         return False
     try:
@@ -50,20 +45,19 @@ def is_publish_ask(block):
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         return bool(mod.is_approval_question(block.get("input")))
-    except Exception:  # noqa: BLE001 - any failure means "not exempt"
+    except Exception:  # noqa: BLE001
         return False
 
 
 def scan_turn(path):
-    """Return (worked, review) for the turn after the last real user message: any tool_use, and a publish-approval question."""
-    answered = set()  # tool_use ids that already have a tool_result (all of them are newer than the last tool_use)
+    answered = set()
     with open(path, "rb") as f:
         size = f.seek(0, os.SEEK_END)
         f.seek(max(0, size - TAIL_BYTES))
         data = f.read()
     lines = data.splitlines()
     if size > TAIL_BYTES and lines:
-        lines = lines[1:]  # first line may be cut in the middle
+        lines = lines[1:]
     for line in reversed(lines):
         try:
             e = json.loads(line)
@@ -74,7 +68,7 @@ def scan_turn(path):
         content = (e.get("message") or {}).get("content")
         if e.get("type") == "assistant" and isinstance(content, list):
             uses = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
-            if uses:  # the newest tool_use of the turn: exempt only if it is an unanswered publish-approval question
+            if uses:
                 last = uses[-1]
                 return True, isinstance(last.get("id"), str) and last["id"] not in answered and is_publish_ask(last)
         elif e.get("type") == "user":
@@ -88,7 +82,6 @@ def scan_turn(path):
 
 
 def main():
-    """Read hook input and emit a block decision when the handoff file needs refreshing."""
     inp = json.load(sys.stdin)
     if inp.get("stop_hook_active"):
         return
@@ -114,5 +107,5 @@ def main():
 
 
 if __name__ == "__main__":
-    with contextlib.suppress(Exception):  # fail-open by design
+    with contextlib.suppress(Exception):
         main()

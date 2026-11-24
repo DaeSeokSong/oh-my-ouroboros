@@ -1,7 +1,6 @@
 """PreToolUse extension of git-guardrails.sh: allow-list for `git -c`, history-erasing subcommands, discarded-change paths.
 
-Called by git-guardrails.sh just before its final `exit 0` (2026-11-09, agent cleanup step 5, revised after review R1-R11,
-then spec r5: heredoc ban H and wide deny C).
+Called by git-guardrails.sh just before its final `exit 0`.
 Reads the hook JSON on stdin, prints one deny JSON line only when it blocks, and always exits 0. The shell wrapper turns
 a non-zero exit or a crash into a deny, so this file never has to fail open.
 
@@ -162,6 +161,15 @@ comment guess never hides a later command; the price is a few false positives):
        - cherry-pick/revert/am `--skip` is denied; `config --rename-section` (and `rename-section`) is denied for the
          global/system/file scope and open for the repo's own config; `apply` takes its query flag only before `--`;
          fetch --prune skips the value of an option such as `--depth 1` when it looks for the remote and the refspecs.
+ 12. Subagent commits (2026-11-24 보안 검토 N1 · qa/security 2차): when the hook JSON has a non-empty agent_id and agent_type
+     is not exactly `gitops` (missing or empty counts as not gitops), commit commit-tree cherry-pick revert merge rebase am
+     update-ref are denied wherever this file finds a git invocation (payloads, eval, `git-<sub>` paths, ...), and so is a
+     subcommand-less git fed by xargs/parallel. Why: `git commit --allow-empty -m "<문장>"` reached every session through
+     post-commit -> propagate-queue.sh -> the band mod. The deny is raised directly (never lifted by `# APPROVED`) with the
+     sentence of git-guardrails.sh. For subagents only, text piped into a shell (`echo 'git commit' | sh`) is analyzed as a
+     payload. Not done: a git word that is only an argument of a DATA_HEADS command (`echo git commit`) is not denied, and
+     main/gitops verdicts are untouched. Best effort: scripts in another language, shell aliases/functions defined
+     elsewhere, files run later and a git name that never appears as a word stay unseen.
 
 Fail-closed on purpose: the 4-step agent-type hook fails open, but git commands here destroy data, so anything that
 cannot be decided is denied: a quote parse failure, an unexpected exception, a git that is not at a command position
@@ -203,37 +211,71 @@ r6fix limits: glob_op_paths() reads comments as code, so a parenthesis in a trai
 out. bad_targets() only sees the command word of a segment (`read` after `sudo -u x` is missed), takes a `read -p` prompt
 for a name (a prompt called PATH is denied), and does not follow namerefs (`declare -n r=HOME; r=/x`). A `NAME=value`
 word inside a quoted commit message is still taken for an assignment (`git commit -m 'BROWSER=x'` is denied).
+REF: knowledge/harness/code-history/scripts__git_guard_ext.py.md
 """
 import json
 import os
 import re
+import resource
 import shlex
+import signal
 import subprocess
 import sys
 
 TAIL = "— 사용자 직접 실행 원칙. 목적을 설명하고 승인받은 뒤 첫 줄 '# APPROVED'로 재실행하세요 (code-execution.md § Hook 차단 시 처리)."
-# 2026-11-12 decision F1/G1: push and pull are the user's alone, an `# APPROVED` marker never lifts them. git-guardrails.sh
-# passes --approved (marker line removed from the command). Then only verdicts marked deny(..., ok=True) are skipped: forms
-# whose git subcommand is fixed and is not push/pull (discarded work, erased refs, hook bypass, file writes, tools
-# or hook files on disk: --template, maintenance, a configured difftool). Everything else stays a deny by default, and only
-# these may stay so: push/pull and their family (incl. lfs push/pre-push/pull, subtree push/pull, svn dcommit/fetch/
-# rebase ...), and forms that can hide one so the verdict cannot be fixed: a command string git runs (rebase -x, bisect run,
-# submodule foreach, difftool -x, filter-branch and filter-repo as a whole, --upload-pack/--exec, ext::, send-email
-# --to-cmd and the other PROG_SUBS, grep -O), other git-* programs (--exec-path, GIT_EXEC_PATH), `-c`/config keys outside
-# the allow-list, --config-env, environment that runs code or pulls in config (all but ENV_LIFT and GIT_TRACE*), shell
-# expansion in the subcommand, global options, an action word or the arguments of lfs/svn/subtree, shell indirection
-# (alias, hash, function, `$` command word), nesting, line continuation, a failed parse, heredoc. A rule added later is
-# therefore not lifted unless marked.
+# WHY: 2026-11-12 decision F1/G1: push and pull are the user's alone, an `# APPROVED` marker never lifts them.
 STRICT_TAIL = ("— 승인 표시(# APPROVED)로도 통과하지 않습니다. push·pull 과 그것을 감출 수 있는 형태는 사용자가 터미널에서 직접 실행하세요"
                " (2026-11-12 결정, code-execution.md § Hook 차단 시 처리).")
 APPROVED = "--approved" in sys.argv[1:]
+SUBAGENT = False
+# WHY: 2026-11-24 security round 5 N1 — `git status; bash <( ` x 60 (492 chars) re-analyzed every substitution to depth 3 and ran past
+#   60 s under the 36-separator cap; subagent analyze() calls are counted per hook run and denied above MAX_CALLS (measured in round 6).
+MAX_CALLS = 200
+CALLS = [0]
+# WHY: 2026-11-24 — the hook limit in settings.json is 10 s and a killed hook leaves this process running; it stops itself after
+#   6 s of wall clock or CPU and exits with TIMEOUT_RC, which git-guardrails.sh turns into a deny (`timeout` there is the second net).
+WALL_LIMIT = 6
+TIMEOUT_RC = 124
+SUB_MSG = "서브 에이전트는 커밋하지 않습니다. 바꾼 파일 목록과 커밋 메시지 안을 main 에 돌려주십시오(커밋은 main 이나 gitops 가 합니다)."
+# WHY: 2026-11-24 user decision «세 명령도 막음» (security residual risk after 00b1d3ed54): for rule 12 subagents
+#   fast-import joins COMMIT_SUBS; reset is denied when it moves HEAD (moves_head: a --soft/--mixed/--hard/--keep/--merge
+#   option, or a first argument before `--` other than HEAD; an unknown word counts as a commit, `git reset -- <path>` is
+#   the unstaging form; also any reset fed by xargs/parallel); a command naming propagate-queue is denied with PQ_MSG
+#   unless pq_allowed() sees a read (security round 3 F1-F5 turned the runner deny list into this allow list: no `$(`,
+#   backtick, `<(`, `>(`, `<<`; no `$ { } * ? [` in the word; every segment of its pipeline starts with a PQ_READ command
+#   and holds no shell, PQ_BANNED word or find -exec; `uv` only as `uv run [known options] python|python3|*.py`; no
+#   `rg --pre`, `sort --compress-program`; security round 4 D2/D3: no word holding a newline, and no `$`/backtick outside
+#   single quotes or `{ } * ? [` outside quotes anywhere in that pipeline, pq_raw_bad()). git-guardrails.sh lets a git-less
+#   subagent command naming propagate-queue reach this file and denies, before any parsing, a subagent command over 4,000
+#   characters, 36 separators or 72 git words. Accepted limits (this hook prevents mistakes, it is no boundary against a
+#   hostile agent): other languages (python3 -c, text piped into an interpreter, sed `e`), options injected through
+#   configuration files named by environment variables (RIPGREP_CONFIG_PATH), names hidden by globs or variables
+#   (`propagate-q*.sh`, `P=...; bash $P`), a copy or link made earlier, git aliases, ssh, low-level object commands
+#   (write-tree, hash-object -w, mktree, tag -a, notes add), and long input from the main session itself (out of scope).
+#   False positives (subagents only): reads outside PQ_READ (less, bat, awk, `timeout 5 cat ...`, `bash -n ...`,
+#   `echo $(wc -l ...)`), a PQ_BANNED word as an argument, `"...$..."` or an unquoted glob in a pipeline naming propagate-queue.
+COMMIT_SUBS = {"commit", "commit-tree", "cherry-pick", "revert", "merge", "rebase", "am", "update-ref", "fast-import"}
+DATA_HEADS = {"echo", "printf", "grep", "egrep", "fgrep", "rg", "ls", "cat", "head", "tail", "wc"}
+PQ_MSG = "서브 에이전트는 전파 대기열에 직접 쓰지 않습니다. 커밋과 전파는 main 이 합니다."
 HEREDOC_MSG = "git 명령과 heredoc(<<) 을 함께 쓰지 않습니다 — 커밋 메시지는 git commit -F <파일> 로"
 MAX_DEPTH = 3
 PUNCT = set(";&|()<>\n")
-QUOTE_MAP = {c: chr(0xE000 + n) for n, c in enumerate(";&|()<>\n")}  # private-use stand-ins for quoted/escaped punctuation
+QUOTE_MAP = {c: chr(0xE000 + n) for n, c in enumerate(";&|()<>\n")}
 QUOTE_BACK = {ord(v): k for k, v in QUOTE_MAP.items()}
 SHELLS = {"sh", "bash", "rbash", "zsh", "dash", "ksh", "ash", "mksh", "yash", "fish", "tcsh", "csh", "busybox"}
-STREAM_SHELLS = SHELLS | {"source", "."}  # also run a text fed through a here-string (`. /dev/stdin <<< '...'`)
+STREAM_SHELLS = SHELLS | {"source", "."}
+PQ_RUNNERS = STREAM_SHELLS | {"env", "exec", "command", "nohup", "timeout", "xargs", "parallel", "nice", "time", "sudo", "doas",
+                              "runuser", "setsid", "stdbuf", "ionice", "flock", "su", "script", "builtin", "chrt", "taskset"}
+PQ_BANNED = (PQ_RUNNERS | {"eval"}) - {"."}  # WHY: `.` counts only at the command word, which PQ_READ refuses; `grep -rn x .` is a read (cases3-qa 85)
+PQ_READ = {"cat", "grep", "egrep", "fgrep", "rg", "sed", "head", "tail", "wc", "ls", "stat", "file", "sha256sum", "md5sum", "realpath",
+           "readlink", "nl", "diff", "cmp", "cut", "sort", "uniq", "test", "[", "[[", "shellcheck", "git", "python3", "python", "uv",
+           "ruff", "echo", "printf"}
+PQ_SKIP = {"!", "if", "then", "elif", "else", "do", "while", "until", "{"}
+UV_FLAGS = {"--no-project", "--offline", "--quiet", "-q", "--isolated", "--no-sync", "--frozen", "--locked", "--no-config", "--no-cache",
+            "-n", "--verbose", "-v", "--no-env-file"}
+UV_VALUE_OPTS = {"--with", "-w", "--with-requirements", "--with-editable", "--python", "-p", "--project", "--directory", "--env-file",
+                 "--index", "--default-index", "--index-url", "--extra-index-url", "--find-links", "-f", "--extra", "--group",
+                 "--package", "--only-group", "--config-file", "--cache-dir", "--color"}
 CMD_PREFIX = {"env", "command", "exec", "nohup", "nice", "time", "sudo"}
 ASSIGN = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\+?=(.*)", re.DOTALL)
 SHC = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
@@ -264,36 +306,29 @@ ENV_DENY = {
 TRACE_NAME = re.compile(r"GIT_TRACE\w*")
 ENV_LIFT = {"GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS", "GIT_INDEX_FILE",
             "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-            "GIT_TEMPLATE_DIR"}  # marker lifts them; GIT_TEMPLATE_DIR = --template (hook files, like core.hooksPath)
-TRACE_SAFE = {"1", "2", "true", "false", "0", ""}  # any other GIT_TRACE* value is a file path or fd: appends to an arbitrary file
+            "GIT_TEMPLATE_DIR"}
+TRACE_SAFE = {"1", "2", "true", "false", "0", ""}
 ENV_PAGER = {"GIT_PAGER", "PAGER", "GIT_EDITOR", "EDITOR", "VISUAL", "GIT_SEQUENCE_EDITOR"}
 PAGER_SAFE = {"cat", "less", "more", "true", ":", ""}
 ENV_DROP = {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_EXTERNAL_DIFF", "GIT_PAGER"}
-LONG_OPTS = [  # restore/checkout long options we care about, for unambiguous-prefix expansion (git accepts them)
+LONG_OPTS = [
     "--staged", "--worktree", "--source", "--patch", "--pathspec-from-file", "--pathspec-file-nul", "--detach",
     "--orphan", "--conflict",
 ]
 LONG_VAL = {"--source", "--orphan", "--conflict", "--pathspec-from-file"}
-# Subcommands of the wide deny (rule 11) whose arguments get the shell-expansion check; their non-option arguments may hold globs.
 WIDE_SUBS = {
     "merge", "cherry-pick", "revert", "am", "rm", "mv", "worktree", "submodule", "sparse-checkout", "archive", "tag", "branch",
     "symbolic-ref", "notes", "replace", "remote", "fetch", "pull", "repack", "maintenance", "fast-import", "bisect",
     "difftool", "mergetool", "ls-remote", "clone", "init",
-    "commit", "bundle", "format-patch", "index-pack", "fast-export", "merge-file",  # r6fix 7
-    "lfs", "svn", "subtree",  # 2026-11-12: a `$a` there can become push/pull
+    "commit", "bundle", "format-patch", "index-pack", "fast-export", "merge-file",
+    "lfs", "svn", "subtree",
 }
-# Subcommands whose first non-option argument is an action word (remove, run, foreach, prune, create ...); a glob there can rewrite it.
 ACT_SUBS = {"remote", "bisect", "submodule", "worktree", "notes", "maintenance", "sparse-checkout", "bundle", "lfs", "svn", "subtree"}
-# Subcommands that start a server, send mail or run a program the caller picks (rule 11 X).
 PROG_SUBS = {"instaweb", "send-email", "web--browse", "remote-ext"}
-# Options whose next argument is a value, not an action word (so `notes --ref x remove` finds `remove`).
 VAL_OPTS = {"-m", "--ref", "-F", "-C", "-c", "--message", "--file"}
-# fetch options whose next argument is a value (so `fetch --depth 1 <url>` does not take `1` for the remote)
 FETCH_VAL = {"--depth", "--deepen", "--shallow-since", "--shallow-exclude", "--jobs", "-j", "--refmap", "--filter",
              "--negotiation-tip", "--server-option", "-o"}
-# r6fix 4: builtins that store a value into the variable they name (read, declare ...); `for NAME in` and `printf -v NAME` are handled in bad_targets
 ENV_VALUE_CMDS = {"read", "declare", "typeset", "export", "local", "readonly", "mapfile", "readarray", "select", "getopts"}
-# Subcommands whose arguments get the shell-expansion check (rules 3, 4 and R6, R7, R9, rule 11).
 EXPAND_SUBS = {
     "filter-repo", "filter-branch", "update-ref", "gc", "prune", "reflog", "rebase", "restore", "checkout",
     "checkout-index", "read-tree", "apply", "reset", "switch", "clean", "update-index", "config",
@@ -304,9 +339,7 @@ CFG_READ = {
     "--unset", "--unset-all", "--remove-section", "--rename-section", "--show-origin", "--show-scope",
 }
 CFG_VALUE_OPTS = {"-f", "--file", "--blob", "--type", "--default", "--comment"}
-# R11: words that may stand before the command word of a segment (wrappers and shell flow keywords)
 HEAD_SKIP = CMD_PREFIX | {"builtin", "!", "{", "do", "then", "else", "elif", "if", "while", "until"}
-# R11: a function definition `name() {` / `name() (` / `function name {`; the opening bracket is group 1
 FUNC_DEF = re.compile(r"(?:function\s+[^\s;&|(){}'\"]+\s*(?:\(\s*\))?|[A-Za-z_][\w:.+-]*\s*\(\s*\))\s*([{(])")
 
 
@@ -315,7 +348,6 @@ class Deny(Exception):
 
 
 def deny(msg, ok=False):
-    """Abort the check with msg; ok=True marks a verdict an `# APPROVED` marker lifts (then the check goes on)."""
     if ok and APPROVED:
         return
     raise Deny(f"{msg} {TAIL if ok else STRICT_TAIL}")
@@ -326,17 +358,10 @@ class QuotedTok(str):
 
 
 def is_op(tok):
-    """Return True when tok is a shell operator token (only ; & | ( ) < > newline characters, and not quoted)."""
     return bool(tok) and set(tok) <= PUNCT and not isinstance(tok, QuotedTok)
 
 
 def tokenize(cmd):
-    """Split a shell command into tokens, with ; & | ( ) < > and newline as separate tokens and comments uninterpreted.
-
-    r6fix 1: quoted or escaped punctuation is an argument. A pre-pass swaps such characters for private-use stand-ins so
-    shlex keeps them inside the word; afterwards a token left with only punctuation becomes a QuotedTok (is_op() is False).
-    The quote states mirror shlex posix mode (no escapes inside '...', only \\" and \\\\ inside "...").
-    """
     if any(0xE000 <= ord(c) < 0xE008 for c in cmd):
         raise ValueError("reserved character")
     out, q, i = [], "", 0
@@ -370,11 +395,6 @@ def tokenize(cmd):
 
 
 def segments(tokens):
-    """Group tokens into command segments; drop redirection operators, their targets and fd digits.
-
-    Returns a list of (tokens, here-string targets). A 1-2 digit token right before a redirection operator is a file
-    descriptor (`2>&1`) and is removed; longer digit tokens stay so an all-zero oid is never swallowed.
-    """
     segs, cur, here, skip, is_here = [], [], [], False, False
     for t in tokens:
         if skip:
@@ -382,7 +402,7 @@ def segments(tokens):
             if is_here:
                 here.append(t)
         elif is_op(t):
-            if set(t) & set("<>") and not t.endswith("("):  # `<(` / `>(` open a process substitution: no target to skip
+            if set(t) & set("<>") and not t.endswith("("):
                 if cur and cur[-1].isdigit() and len(cur[-1]) <= 2:
                     cur.pop()
                 skip, is_here = True, t == "<<<"
@@ -398,16 +418,9 @@ def segments(tokens):
 
 
 def glob_op_paths(cmd):
-    """Return True when a git restore/checkout piece (split at ; & | newline) holds a zsh glob operator glued into a word.
-
-    The tokenizer cuts `a(.)` or `a<->` at the operators, so the path the check call sees (`a`) differs from what zsh
-    expands. Words that start with an operator (`>f`, `2>&1`, `<(cmd)`) are redirections and a leading `$(`/`(` or trailing
-    `)` is a subshell; any other unquoted parenthesis or angle bracket inside a word is a glob operator.
-    """
     pieces, piece, raw, plain, q, i = [], [], [], [], "", 0
 
     def flush_word():
-        """Close the current word into the current piece."""
         if raw:
             piece.append(("".join(raw), "".join(plain)))
         raw.clear()
@@ -450,7 +463,6 @@ def glob_op_paths(cmd):
         for n, (r, _) in enumerate(words):
             if re.search(r"<\d*-\d*>", r):
                 return True
-            # a bare leading `(` is a subshell only on the first word of the piece (`(git ...)`), elsewhere it opens a zsh group
             r = re.sub(r"^(\$\(|`)+", "", r)
             r = re.sub(r"^\(+", "", r) if n == 0 else r
             if not re.match(r"\d*[<>]", r) and re.search(r"[()<>]", r.rstrip(")")):
@@ -459,24 +471,25 @@ def glob_op_paths(cmd):
 
 
 def has_git(text):
-    """Return True when text mentions git, also when quotes or backslashes split the name (g"i"t or g-backslash-it)."""
-    # backslash-newline is dropped by the shell before it splits words (2026-11-12: `gi\<newline>t push` was not seen as git)
+    # WHY: backslash-newline is dropped by the shell before it splits words (2026-11-12: `gi\<newline>t push` was not seen as git)
     return bool(GIT_WORD.search(text) or GIT_WORD.search(re.sub(r"[\"'\\]", "", re.sub(r"\\\r?\n", "", text))))
 
 
+def has_pq(text):
+    """WHY: 2026-11-24 «세 명령도 막음» — a subagent command naming propagate-queue (quotes and backslashes removed) is parsed even without a git word."""
+    return SUBAGENT and "propagate-queue" in re.sub(r"[\"'\\]", "", text)
+
+
 def cmd_base(tok):
-    """Return the command name of a word: path prefix dropped and zsh's leading `=` (`=git` = the path of git) removed."""
     return os.path.basename(tok).lstrip("=")
 
 
 def is_git_tok(tok):
-    """Return True for `git` or `git-<sub>` (any path prefix, also zsh `=git`)."""
     b = cmd_base(tok)
     return b == "git" or (b.startswith("git-") and len(b) > 4)
 
 
 def bad_env(tok):
-    """Return the variable name when tok is a NAME=value or NAME+=value assignment that matters to git, else None."""
     m = ASSIGN.fullmatch(tok)
     if not m:
         return None
@@ -491,21 +504,14 @@ def bad_env(tok):
 
 
 def deny_name(n):
-    """Return True when a variable called n matters to git whatever value it gets."""
     return n in ENV_DENY or n.startswith("GIT_TEST_") or bool(re.fullmatch(r"GIT_CONFIG_(KEY|VALUE)_\d+", n))
 
 
 def env_lifted(n):
-    """Return True when the marker lifts variable n: it only moves pathspec/index/object lookup or appends a trace file, no command or config."""
     return n in ENV_LIFT or bool(TRACE_NAME.fullmatch(n))
 
 
 def bad_targets(seg):
-    """r6fix 4: return a git-relevant variable name that the segment makes receive a value (`read`, `for NAME in`, `printf -v`, `declare` ...), else None.
-
-    The value is unknown (it comes from stdin, a loop list or a format), so any name that bad_env() could reject with
-    some value is rejected. `NAME=value` arguments are already judged by bad_env() on the token itself.
-    """
     k = head_index(seg)
     if k >= len(seg):
         return None
@@ -515,7 +521,7 @@ def bad_targets(seg):
     elif cmd == "printf":
         names = [a[2:] if len(a) > 2 else (args[j + 1] if j + 1 < len(args) else "") for j, a in enumerate(args) if a.startswith("-v")]
     elif cmd in ENV_VALUE_CMDS:
-        names = [a for a in args if not a.startswith("-") and "=" not in a]  # NAME=value is bad_env()'s job
+        names = [a for a in args if not a.startswith("-") and "=" not in a]
         names = names[1:2] if cmd == "getopts" else names
     else:
         return None
@@ -527,13 +533,11 @@ def bad_targets(seg):
 
 
 def has_expansion(tok, glob=True):
-    """Return True when tok holds shell expansion syntax ($ backtick braces, and globs unless glob=False); @{...} is fine."""
     t = re.sub(r"@\{[^{}$`]*\}", "", tok)
     return any(ch in t for ch in ("$`{}" + ("*?[" if glob else "")))
 
 
 def long_hit(args, names):
-    """Return True when an option before `--` is a (prefix) abbreviation of one of the long option names."""
     for a in args:
         if a == "--":
             break
@@ -545,11 +549,6 @@ def long_hit(args, names):
 
 
 def short_hit(args, letters, stop=""):
-    """Return True when a short option bundle before `--` contains one of the letters.
-
-    A `stop` letter takes a value: the rest of the bundle is that value, and when the letter ends the bundle the next
-    argument is (r6fix 5: `merge-file -L pn`, `clean -e -n`).
-    """
     skip = False
     for a in args:
         if skip:
@@ -568,7 +567,6 @@ def short_hit(args, letters, stop=""):
 
 
 def check_config(val, label="git -c"):
-    """Deny a config key=value whose key is outside the allow-list."""
     if "$" in val or "`" in val:
         deny(f"{label} {val} (변수 확장 — 검증 불가)")
     key, _, v = val.partition("=")
@@ -581,11 +579,10 @@ def check_config(val, label="git -c"):
         return
     if norm == "core.hookspath" and v.removesuffix("/") in HOOK_PATHS:
         return
-    deny(f"{label} {key} (허용 목록 밖 — 프로그램 실행·설정 끌어오기 가능)", ok=norm == "core.hookspath")  # hook path: lifted as before
+    deny(f"{label} {key} (허용 목록 밖 — 프로그램 실행·설정 끌어오기 가능)", ok=norm == "core.hookspath")
 
 
 def check_config_write(args):
-    """Apply the -c allow-list to `git config` write forms (key+value, --add, --replace-all, `set`); reads pass."""
     if long_hit(args, ("edit", "remove-section")) or short_hit(args, "e"):
         deny("git config --edit/--remove-section (편집기 실행·섹션 영구 삭제)", ok=True)
     wide = long_hit(args, ("global", "system", "file", "blob")) or short_hit(args, "f")
@@ -626,7 +623,6 @@ def check_config_write(args):
 
 
 def parse_args(args, short_val):
-    """Split restore/checkout args into (options, positionals before `--`, args after `--`, saw `--`)."""
     opts, pos, post, dd, k = [], [], [], False, 0
     while k < len(args):
         a = args[k]
@@ -655,14 +651,12 @@ def parse_args(args, short_val):
 
 
 def git_env():
-    """Return a scrubbed environment for the check calls."""
     env = {k: v for k, v in os.environ.items() if k not in ENV_DROP and not k.startswith("GIT_CONFIG_")}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0", GIT_ATTR_NOSYSTEM="1")
     return env
 
 
 def run_git(base, popts, *args, stdin=None):
-    """Run a read-only git check call with repo-config code execution neutralized; deny on failure or timeout."""
     cmd = ["git", "--no-pager", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
            "-c", "core.hooksPath=/dev/null", "-C", base, *popts, *args]
     feed = {"stdin": subprocess.DEVNULL} if stdin is None else {"input": stdin}
@@ -674,11 +668,6 @@ def run_git(base, popts, *args, stdin=None):
 
 
 def changed_paths(base, popts, paths):
-    """Return paths with uncommitted or diff-hidden changes; deny when git cannot tell or filters are configured."""
-    # R10. Only repo-level scopes count: system/global config is the user's own (e.g. git-lfs), and HOME / GIT_CONFIG_GLOBAL
-    # reassignment is already denied by rule 2. When a repo-level filter.* exists, diff may run its clean filter, but only
-    # on files whose `filter` attribute is set, so deny just those paths. (Denying every path of such a repo would block
-    # all restores in the harness repo itself, which has a local filter.nomodel.)
     r = run_git(base, popts, "config", "--show-scope", "--get-regexp", r"^filter\.")
     if r.returncode not in (0, 1):
         deny("확인용 git config 실패 — 필터 설정을 판정할 수 없어 차단", ok=True)
@@ -701,13 +690,11 @@ def changed_paths(base, popts, paths):
     r = run_git(base, popts, "ls-files", "-v", "--", *paths)
     if r.returncode != 0:
         deny("확인용 git ls-files 실패 — 변경 여부를 판정할 수 없어 차단", ok=True)
-    # lowercase tag = assume-unchanged, S = skip-worktree: diff cannot see edits to these files
     names += [ln[2:] for ln in r.stdout.split("\n") if len(ln) > 2 and (ln[0].islower() or ln[0] == "S")]
     return names
 
 
 def is_commit(base, popts, arg):
-    """Return True when arg resolves to a commit (an option-looking arg never does); deny on check failure."""
     if arg.startswith("-"):
         return False
     rc = run_git(base, popts, "rev-parse", "--verify", "--quiet", arg + "^{commit}").returncode
@@ -717,7 +704,6 @@ def is_commit(base, popts, arg):
 
 
 def resolve_base(ctx, cdirs, relocated):
-    """Return the folder git will run in, or deny when it cannot be known."""
     if ctx["has_cd"]:
         deny("명령 안에 cd·chdir·pushd 가 있어 기준 폴더를 확정할 수 없음 — git -C <폴더> 형태로 쓰세요", ok=True)
     if relocated:
@@ -731,17 +717,16 @@ def resolve_base(ctx, cdirs, relocated):
 
 
 def check_restore_checkout(sub, args, cmdpos, ctx, cdirs, popts, relocated):
-    """Deny restore/checkout of paths that have uncommitted changes (rule 4)."""
     opts, pos, post, dd = parse_args(args, "s" if sub == "restore" else "bB")
     switch = False
     if sub == "restore":
         if ("--staged" in opts or "-S" in opts) and not ("--worktree" in opts or "-W" in opts):
-            return  # index only
+            return
         paths = pos + post
     else:
         switch = any(o in opts for o in ("-b", "-B", "-d", "--orphan", "--detach"))
-        paths = post if (switch or dd) else pos  # without `--`, pos[0] may still be a tree-ish
-    if ctx["glob_ops"]:  # r5fix 6: zsh expands `a(.)` / `<->` / `(a|b)` to other paths than the tokens we checked
+        paths = post if (switch or dd) else pos
+    if ctx["glob_ops"]:
         deny(f"git {sub} (경로 자리에 괄호·꺾쇠 glob 연산자 — zsh 가 펼친 경로를 확정할 수 없음)", ok=True)
     if "--patch" in opts or "-p" in opts or "--pathspec-from-file" in opts:
         deny(f"git {sub} -p/--patch/--pathspec-from-file (버릴 변경을 미리 확인할 수 없음)", ok=True)
@@ -749,9 +734,9 @@ def check_restore_checkout(sub, args, cmdpos, ctx, cdirs, popts, relocated):
         deny(f"git {sub} (git 이 명령 자리에 있지 않아 경로를 확정할 수 없음)", ok=True)
     if not paths:
         return
-    if any(re.search(r"[$`{}]", re.sub(r"@\{[^{}$`]*\}", "", p)) for p in paths):  # @{-1} / HEAD@{1} are revisions
+    if any(re.search(r"[$`{}]", re.sub(r"@\{[^{}$`]*\}", "", p)) for p in paths):
         deny(f"git {sub} (경로에 $·백틱·{{}} — 확정할 수 없음)", ok=True)
-    if any(p.startswith("~") for p in paths):  # the shell expands ~ after this check, the check call would see a literal ~
+    if any(p.startswith("~") for p in paths):
         deny(f"git {sub} (경로가 ~ 로 시작 — 셸이 펼친 경로를 확정할 수 없음)", ok=True)
     base = resolve_base(ctx, cdirs, relocated)
     if sub == "checkout" and not switch and not dd and is_commit(base, popts, paths[0]):
@@ -764,22 +749,20 @@ def check_restore_checkout(sub, args, cmdpos, ctx, cdirs, popts, relocated):
 
 
 def check_ref_move(args, cmdpos, ctx, cdirs, popts, relocated):
-    """Deny `update-ref <ref> <new>` that moves an existing ref to a commit that is not its descendant (R: drops commits)."""
     pos = [a for k, a in enumerate(args) if not a.startswith("-") and (k == 0 or args[k - 1] != "-m")]
     if len(pos) < 2:
         return
-    if not cmdpos:  # r5fix 12: like restore/checkout, the folder git runs in is only known when git stands at a command position
+    if not cmdpos:
         deny("git update-ref (git 이 명령 자리에 있지 않아 기준 폴더를 확정할 수 없음)", ok=True)
     base = resolve_base(ctx, cdirs, relocated)
     rc = run_git(base, popts, "rev-parse", "--verify", "--quiet", pos[0]).returncode
     if rc == 1:
-        return  # new ref: nothing is overwritten
+        return
     if rc != 0 or run_git(base, popts, "merge-base", "--is-ancestor", pos[0], pos[1]).returncode != 0:
         deny(f"git update-ref {pos[0]} {pos[1]} (기존 ref 를 후손이 아닌 커밋으로 이동 — 커밋이 브랜치에서 빠질 수 있음)", ok=True)
 
 
 def clone_configs(args):
-    """Return the key=value strings given to `git clone -c` / `--config` (separate, `=` joined or glued; long-option prefixes too)."""
     out, k = [], 0
     while k < len(args):
         a = args[k]
@@ -793,7 +776,7 @@ def clone_configs(args):
                 k += 0 if eq else 1
         elif a.startswith("-") and len(a) > 1:
             for idx, ch in enumerate(a[1:], 2):
-                if ch in "cbuoj":  # clone short options that take a value; the rest of the bundle (or the next arg) is it
+                if ch in "cbuoj":
                     glued = a[idx:]
                     if ch == "c":
                         out.append(glued or (args[k] if k < len(args) else ""))
@@ -803,25 +786,19 @@ def clone_configs(args):
 
 
 def without_messages(args):
-    """r6fix 7: return commit args without the values of -m/--message/-F/--file (free text that may hold `$` or backticks).
-
-    The reuse options -c/-C/--reuse-message/--reedit-message are dropped too: their value is a commit (`-c $SHA`, an everyday
-    form that the existing shell-hook tests keep open), and the value of a value-taking option cannot turn into an option.
-    Everything after `--` is dropped as well (`git commit -F "$F" -- "$P"`: a pathspec cannot become an option).
-    """
     out, k = [], 0
     while k < len(args):
         a = args[k]
         k += 1
         if a == "--":
-            break  # pathspecs: they cannot turn into options, and commit has no path check to fool
+            break
         if a.startswith("--"):
             name, eq, _ = a.partition("=")
             if len(name) > 2 and any(f.startswith(name) for f in ("--message", "--file", "--reuse-message", "--reedit-message")):
                 k += 0 if eq else 1
                 continue
         elif a.startswith("-") and len(a) > 1:
-            hit = next((idx for idx, ch in enumerate(a[1:], 2) if ch in "mFcC"), 0)  # the rest of the bundle, or the next arg, is the value
+            hit = next((idx for idx, ch in enumerate(a[1:], 2) if ch in "mFcC"), 0)
             if hit:
                 k += 0 if a[hit:] else 1
                 continue
@@ -830,17 +807,10 @@ def without_messages(args):
 
 
 def before_dd(args):
-    """Return the arguments before a `--` separator (all of them when there is none)."""
     return args[:args.index("--")] if "--" in args else args
 
 
 def fetch_prune_reason(args):
-    """r5fix 7: return why `fetch` with prune would delete local branches/tags, or None.
-
-    --prune-tags (-P) always; --prune (-p) with --tags/-t or with a refspec whose destination is not under refs/remotes/
-    (the first positional is the remote and may hold a colon: git@host:repo). Plain `fetch --prune origin` stays open.
-    r6fix 10: the value of an option such as `--depth 1` is skipped when looking for the remote and the refspecs.
-    """
     pos, k = [], 0
     while k < len(args):
         a = args[k]
@@ -868,10 +838,6 @@ def fetch_prune_reason(args):
 
 
 def check_shell_rules(sub, args):
-    """r5fix 10: the shell-hook rules (push/pull/stash/commit hook skip/forced switch/whole-tree restore) judged here too.
-
-    The same verdict as git-guardrails.sh, so that `git-<sub>` executables and `=git` (which its regexes cannot see) get it.
-    """
     if sub in ("push", "pull", "send-pack", "http-push"):
         deny(f"git {sub} (push/pull은 항상 사용자 직접 — agent-routing.md)")
     elif sub == "stash" and args[:1] not in (["list"], ["show"]):
@@ -882,27 +848,26 @@ def check_shell_rules(sub, args):
         deny(f"git {sub} -f/--force/--discard-changes (로컬 수정 폐기 강제 전환)", ok=True)
     elif sub in ("restore", "checkout") and any(a in (".", "./", ":/") for a in args):
         deny(f"git {sub} . (작업트리 전체 폐기 — 경로 지정 복구는 허용)", ok=True)
-    elif sub in ("remote", "subtree", "lfs") and ("push" in args or (sub == "lfs" and "pre-push" in args)):  # lfs: 2026-11-12 security
+    elif sub in ("remote", "subtree", "lfs") and ("push" in args or (sub == "lfs" and "pre-push" in args)):
         deny(f"git {sub} … push (push 우회 — push/pull은 항상 사용자 직접)")
-    elif sub in ("lfs", "subtree") and "pull" in args:  # 2026-11-12: same rank as git pull
+    elif sub in ("lfs", "subtree") and "pull" in args:
         deny(f"git {sub} … pull (pull 우회 — push/pull은 항상 사용자 직접)")
-    elif sub == "svn" and {"fetch", "rebase"} & set(args):  # pulls from the SVN server
+    elif sub == "svn" and {"fetch", "rebase"} & set(args):
         deny("git svn fetch/rebase (SVN 서버에서 받아옴 — push/pull은 항상 사용자 직접)")
-    elif sub == "svn" and {"dcommit", "set-tree", "commit-diff", "branch", "tag"} & set(args):  # writes to the SVN server (2026-11-12 security)
+    elif sub == "svn" and {"dcommit", "set-tree", "commit-diff", "branch", "tag"} & set(args):
         deny("git svn dcommit/set-tree/commit-diff/branch/tag (SVN 서버로 올려 보냄 — push/pull은 항상 사용자 직접)")
 
 
 def check_wide(sub, args):
-    """Spec r5 C: deny the forms of rule 11 (D discards work, R erases refs/objects/config, X runs a chosen program)."""
     pos = [a for k, a in enumerate(args) if not a.startswith("-") and (k == 0 or args[k - 1] not in VAL_OPTS)]
     act = pos[0] if pos else ""
     force = short_hit(args, "f") or long_hit(args, ("force",))
-    if sub in ACT_SUBS and any(c in act for c in "*?["):  # r5fix 9: `git remote re*` can become `git remote remove`
+    if sub in ACT_SUBS and any(c in act for c in "*?["):
         deny(f"git {sub} {act} (동작어 자리의 glob — 셸이 다른 낱말로 펼칠 수 있음)")
-    if sub == "clone":  # clone -c / --config takes key=value like `git -c`: same allow-list
+    if sub == "clone":
         for v in clone_configs(args):
             check_config(v, "git clone -c")
-    if long_hit(args, ("output",)):  # own test: inside the elif chain a lifted --output would hide the program rows below
+    if long_hit(args, ("output",)):  # NEVER: fold this into the elif chain below; a lifted --output would hide the program rows
         deny(f"git {sub} --output (기존 파일 덮어쓰기)", ok=True)
     if long_hit(args, ("upload-pack", "receive-pack", "exec")) or (sub == "clone" and short_hit(args, "u")):
         deny(f"git {sub} --upload-pack/--receive-pack/--exec (git 이 지정한 프로그램을 실행)")
@@ -932,7 +897,7 @@ def check_wide(sub, args):
         deny("git branch -f/-D/-M/-C (브랜치 강제 삭제·이동 — -d/-m 만 통과)", ok=True)
     elif sub == "symbolic-ref" and (short_hit(args, "d") or long_hit(args, ("delete",)) or len(pos) >= 2):
         deny("git symbolic-ref 쓰기/-d (HEAD 를 옮기거나 지움 — 작업 트리와 어긋남)", ok=True)
-    elif sub == "notes" and (act in ("remove", "prune", "edit") or force):  # act skips the value of --ref
+    elif sub == "notes" and (act in ("remove", "prune", "edit") or force):
         deny("git notes remove/prune/edit/--force (노트 삭제·편집기 실행)", ok=True)
     elif sub == "replace" and args and not (short_hit(args, "l") or long_hit(args, ("list",))):
         deny("git replace (객체 대체 — 이력 재작성에 준함, list 만 통과)", ok=True)
@@ -949,7 +914,7 @@ def check_wide(sub, args):
     elif sub == "bisect" and act == "run":
         deny("git bisect run (스크립트 실행)")
     elif sub in ("difftool", "mergetool"):
-        deny(f"git {sub} (외부 도구 실행)", ok=not (short_hit(args, "x") or long_hit(args, ("extcmd",))))  # -x/--extcmd: a command string
+        deny(f"git {sub} (외부 도구 실행)", ok=not (short_hit(args, "x") or long_hit(args, ("extcmd",))))
     elif sub == "grep" and (short_hit(args, "O", stop="efABCm") or long_hit(args, ("open-files-in-pager",))):
         deny("git grep -O/--open-files-in-pager (페이저 프로그램 실행)")
     elif sub == "fetch" and fetch_prune_reason(args):
@@ -967,16 +932,15 @@ def check_wide(sub, args):
 
 
 def check_subcommand(sub, args, cmdpos, ctx, cdirs, popts, relocated):
-    """Apply the wide deny (rule 11), the history-erasing rules (3), same-effect rules (R6, R7), config writes (R9), path rule (4)."""
     check_shell_rules(sub, args)
     check_wide(sub, args)
     if sub in ("filter-repo", "filter-branch"):
-        deny(f"git {sub} (이력 전체 재작성)")  # shell filters / python callbacks (abbreviations too): never lifted
+        deny(f"git {sub} (이력 전체 재작성)")
     elif sub == "update-ref" and (
         short_hit(args, "d", stop="m") or long_hit(args, ("stdin", "delete")) or any(re.fullmatch(r"0{4,}", a) for a in args)
     ):
         deny("git update-ref -d/--stdin/영 oid (ref 삭제 — --stdin 은 삭제 줄을 검증할 수 없음)", ok=True)
-    elif sub == "update-ref" and not APPROVED:  # every verdict of the path/ref checks is lifted by the marker: skip their git calls
+    elif sub == "update-ref" and not APPROVED:
         check_ref_move(args, cmdpos, ctx, cdirs, popts, relocated)
     elif sub == "gc" and long_hit(args, ("prune",)):
         deny("git gc --prune (도달 불가 객체 영구 삭제)", ok=True)
@@ -984,7 +948,7 @@ def check_subcommand(sub, args, cmdpos, ctx, cdirs, popts, relocated):
         deny("git prune (도달 불가 객체 영구 삭제 — -n/--dry-run 만 통과)", ok=True)
     elif sub == "reflog" and next((a for a in args if not a.startswith("-")), "") in ("expire", "delete"):
         deny("git reflog expire/delete (복구 단서 삭제)", ok=True)
-    elif sub == "rebase" and args not in (["--abort"], ["--show-current-patch"]):  # --exec/-x runs commands: not lifted
+    elif sub == "rebase" and args not in (["--abort"], ["--show-current-patch"]):
         deny("git rebase (이력 재작성 — --abort·--show-current-patch 만 통과)", ok=not (long_hit(args, ("exec",)) or short_hit(args, "x")))
     elif sub == "checkout-index":
         deny("git checkout-index (작업 트리 덮어쓰기)", ok=True)
@@ -1011,12 +975,122 @@ def check_subcommand(sub, args, cmdpos, ctx, cdirs, popts, relocated):
 
 
 def at_cmd(seg, i):
-    """Return True when seg[i] stands at a command position (only assignments and wrapper words before it)."""
     return all(ASSIGN.fullmatch(t) or t in CMD_PREFIX for t in seg[:i])
 
 
+def moves_head(args):
+    """WHY: 2026-11-24 user decision «세 명령도 막음» — a reset with a mode option or a first argument other than HEAD (before `--`) moves HEAD."""
+    if long_hit(args, ("soft", "mixed", "hard", "keep", "merge")):
+        return True
+    skip = False
+    for a in args:
+        if skip:
+            skip = False
+        elif a == "--":
+            return False
+        elif a == "--pathspec-from-file":
+            skip = True
+        elif not a.startswith("-"):
+            return a != "HEAD"
+    return False
+
+
+def uv_runs_python(rest):
+    """WHY: 2026-11-24 security round 4 D1 — `uv run --python python3 scripts/propagate-queue.sh` passed; option values are skipped, unknown options deny."""
+    k, seen_run = 0, False
+    while k < len(rest):
+        a = rest[k]
+        if a == "run" and not seen_run:
+            seen_run = True
+        elif a in UV_FLAGS:
+            pass
+        elif a in UV_VALUE_OPTS:
+            k += 1
+        elif a.startswith("--") and a.partition("=")[0] in UV_VALUE_OPTS:
+            pass
+        elif a.startswith("-") or not seen_run:
+            return False
+        else:
+            return a in ("python", "python3") or a.endswith(".py")
+        k += 1
+    return False
+
+
+def pq_raw_bad(cmd):
+    """WHY: 2026-11-24 security round 4 D3 — `X=--pre=bash; rg $X pat scripts/propagate-queue.sh`: tokens lose quote kinds, so the raw text is scanned per pipeline."""
+    bad, text, q, i = False, [], "", 0
+    while i <= len(cmd):
+        c = cmd[i] if i < len(cmd) else "\n"
+        prev = cmd[i - 1:i] if i else ""
+        if not q and c in ";&|()\n" and not (c == "|" and cmd[i + 1:i + 2] != "|" and prev != "|") and not (c == "&" and prev and prev in "|<>"):
+            if bad and "propagate-queue" in "".join(text):
+                return True
+            bad, text = False, []
+        elif q == "'":
+            q = "" if c == "'" else q
+            text.append(c if c != "'" else "")
+        elif c == "\\" and i + 1 < len(cmd):
+            i += 1
+            text.append(cmd[i])
+        elif q == '"':
+            q = "" if c == '"' else q
+            bad = bad or c in "$`"
+            text.append(c if c != '"' else "")
+        elif c in "'\"":
+            q = c
+        else:
+            word_alone = (not prev or prev in " \t(![;&|\n") and (i + 1 >= len(cmd) or cmd[i + 1] in " \t[;&|)\n")
+            bad = bad or c in "$`*?" or (c in "{}[" and not word_alone)
+            text.append(c)
+        i += 1
+    return False
+
+
+def pq_allowed(cmd, toks):
+    """WHY: 2026-11-24 security round 3 (F2-F5) — a deny list of runners kept leaking, so a command naming propagate-queue passes only as a read."""
+    if any(m in cmd for m in ("$(", "`", "<(", ">(", "<<")) or any("\n" in t for t in toks) or pq_raw_bad(cmd):
+        return False
+    pipes, pipe, words, alls, skip = [], [], [], [], False
+    for t in [*toks, ";"]:
+        if skip:
+            skip = False
+            alls.append(t)
+        elif is_op(t) and set(t) & set("<>"):
+            if words and words[-1].isdigit() and len(words[-1]) <= 2:
+                words.pop()
+            skip = True
+        elif is_op(t):
+            pipe.append((words, alls))
+            words, alls = [], []
+            if t not in ("|", "|&"):
+                pipes.append(pipe)
+                pipe = []
+        else:
+            words.append(t)
+            alls.append(t)
+    for pipe in pipes:
+        if not any("propagate-queue" in re.sub(r"[\"'\\]", "", t) for _, alls in pipe for t in alls):
+            continue
+        for words, alls in pipe:
+            if any("propagate-queue" in re.sub(r"[\"'\\]", "", t) and re.search(r"[${}*?\[]", t) for t in alls):
+                return False
+            k = 0
+            while k < len(words) and (ASSIGN.fullmatch(words[k]) or words[k] in PQ_SKIP):
+                k += 1
+            base = cmd_base(words[k]) if k < len(words) else ""
+            if base not in PQ_READ or any(cmd_base(t) in PQ_BANNED or t in ("-exec", "-execdir", "-ok", "-okdir") for t in alls):
+                return False
+            rest = words[k + 1:]
+            if base == "uv" and not uv_runs_python(rest):
+                return False
+            if (base == "rg" and any(a == "--pre" or a.startswith("--pre=") for a in rest)) or (
+                base == "sort" and any(a.startswith("--co") for a in rest)
+            ):
+                return False
+    return True
+
+
 def check_git(seg, i, ctx):
-    """Judge the git invocation at seg[i]: global options, -c allow-list, environment, expansion, then the subcommand."""
     b = cmd_base(seg[i])
     cmdpos = at_cmd(seg, i)
     rest = seg[i + 1:]
@@ -1030,7 +1104,7 @@ def check_git(seg, i, ctx):
             if long_ and name == "--config-env":
                 deny("git --config-env (값이 환경 변수에 있어 검증할 수 없음)")
             if long_ and name == "--exec-path" and eq:
-                deny("git --exec-path=<값> (다른 위치의 git-* 실행 파일을 돌리게 됨)")  # like GIT_EXEC_PATH: the subcommand name no longer fixes what runs
+                deny("git --exec-path=<값> (다른 위치의 git-* 실행 파일을 돌리게 됨)")
             if o in ("-c", "-C") or (long_ and name in VALUE_LONG):
                 if long_ and eq:
                     v = val
@@ -1052,6 +1126,13 @@ def check_git(seg, i, ctx):
         sub, args = (rest[k], rest[k + 1:]) if k < len(rest) else (None, [])
     else:
         sub, args = b[4:], rest
+    if SUBAGENT and (sub in COMMIT_SUBS or not sub):
+        k0 = head_index(seg)
+        head = cmd_base(seg[k0]) if k0 < len(seg) else ""
+        if (sub and (k0 == i or head not in DATA_HEADS)) or (not sub and head in ("xargs", "parallel")):
+            raise Deny(SUB_MSG)
+    if SUBAGENT and sub == "reset" and (moves_head(args) or cmd_base(seg[head_index(seg)]) in ("xargs", "parallel")):
+        raise Deny(SUB_MSG)
     if ctx["env_bad"]:
         deny(f"git 실행 환경 변수 {ctx['env_bad']} (-c 와 같은 효과 — 프로그램 실행·설정 끌어오기 가능)", ok=env_lifted(ctx["env_bad"]))
     if any(re.match(r"(?:[^\s=]*=)?ext::", t) for t in rest):
@@ -1071,18 +1152,16 @@ def check_git(seg, i, ctx):
             if a == "--":
                 dd = True
             elif has_expansion(a, glob=not (path_sub and (dd or not a.startswith("-")))):
-                deny(f"git {sub} {a} (셸 확장 — 검증 불가)", ok=sub not in ACT_SUBS)  # an action word could become foreach/push
+                deny(f"git {sub} {a} (셸 확장 — 검증 불가)", ok=sub not in ACT_SUBS)
     check_subcommand(sub, args, cmdpos, ctx, cdirs, popts, relocated)
 
 
 def subst_bodies(tok):
-    """Return the inner texts of `$(...)` and backtick substitutions in a token."""
-    out = [tok[m.end():closing_index(tok, m.end(), "(", ")")] for m in re.finditer(r"\$\(", tok)]  # quote aware: `')'` stays inside
+    out = [tok[m.end():closing_index(tok, m.end(), "(", ")")] for m in re.finditer(r"\$\(", tok)]
     return out + tok.split("`")[1::2]
 
 
 def wrapper_payload(seg, i, long_cmd=False):
-    """Return the command string a `-c`-style wrapper at seg[i] runs, or None."""
     for j in range(i + 1, len(seg)):
         t = seg[j]
         if SHC.fullmatch(t) and j + 1 < len(seg):
@@ -1095,7 +1174,6 @@ def wrapper_payload(seg, i, long_cmd=False):
 
 
 def env_split_payload(seg, i):
-    """Return the string given to `env -S` / `--split-string`, or None."""
     for j in range(i + 1, len(seg)):
         t = seg[j]
         if t in ("-S", "--split-string") and j + 1 < len(seg):
@@ -1108,7 +1186,6 @@ def env_split_payload(seg, i):
 
 
 def head_index(seg):
-    """Return the index of the command word in seg, skipping assignments, wrapper words, flow keywords and wrapper options."""
     k, wrapped = 0, False
     while k < len(seg):
         t = seg[k]
@@ -1121,14 +1198,11 @@ def head_index(seg):
 
 
 def check_indirection(seg, git_seen):
-    """R11: deny a segment that hides git behind an alias, hash entry or variable/backtick command word."""
     k = head_index(seg)
     if k >= len(seg):
         return
     head, args = seg[k], seg[k + 1:]
     what = "셸 별칭·변수·함수로 git 을 감쌈 — 검증 불가"
-    # wrappers take option values (`sudo -u root $G tag`), so the command word is not found by skipping dashes alone:
-    # a $ or backtick word between a wrapper and the first git word may be the command
     w = next((j for j, t in enumerate(seg) if cmd_base(t) in WRAPPERS), None)
     if git_seen and w is not None:
         for t in seg[w + 1:]:
@@ -1149,7 +1223,6 @@ def check_indirection(seg, git_seen):
 
 
 def closing_index(text, k, opener, closer):
-    """Return the index of the bracket closing the one opened just before text[k], skipping quoted text; len(text) if none."""
     depth, q = 1, ""
     while k < len(text):
         ch = text[k]
@@ -1173,7 +1246,6 @@ def closing_index(text, k, opener, closer):
 
 
 def check_functions(cmd):
-    """R11: deny a function definition (outside quotes) whose body mentions git; arguments passed from outside are unknowable."""
     q, i = "", 0
     while i < len(cmd):
         ch = cmd[i]
@@ -1197,12 +1269,17 @@ def check_functions(cmd):
 
 
 def analyze(cmd, depth, ctx):
-    """Tokenize cmd and check every git invocation in it, recursing into shell-carried command strings."""
+    if SUBAGENT:
+        CALLS[0] += 1
+        if CALLS[0] > MAX_CALLS:
+            raise Deny(f"{SUB_MSG} 명령이 너무 복잡합니다(분석 {MAX_CALLS}회 상한, 나눠서 실행하십시오).")
     if depth > MAX_DEPTH:
         if has_git(cmd):
             deny("셸 페이로드 중첩이 깊어 해석을 멈춤")
+        if has_pq(cmd):
+            raise Deny(PQ_MSG)
         return
-    ctx = {**ctx, "git": ctx["git"] or has_git(cmd)}
+    ctx = {**ctx, "git": ctx["git"] or has_git(cmd), "pq": ctx.get("pq") or has_pq(cmd)}
     if re.search(r"\\\r?\n", cmd) and has_git(cmd):
         deny("줄 이음(백슬래시+개행) — 검증 불가")
     check_functions(cmd)
@@ -1211,20 +1288,43 @@ def analyze(cmd, depth, ctx):
     except ValueError:
         if has_git(cmd):
             deny(HEREDOC_MSG if "<<" in cmd else "따옴표 해석 실패 — 명령을 판정할 수 없어 차단")
+        if has_pq(cmd):
+            raise Deny(PQ_MSG)
         return
+    if has_pq(cmd) and not pq_allowed(cmd, toks):
+        raise Deny(PQ_MSG)
     if ctx["git"] and any(is_op(t) and "<<" in t.replace("<<<", "") for t in toks):
         deny(HEREDOC_MSG)
-    if "`" in cmd:  # an unquoted backtick substitution is glued to its neighbours by shlex: judge a copy where it separates commands
+    if "`" in cmd:
         analyze(cmd.replace("`", ";"), depth, ctx)
     segs = segments(toks)
     ctx = {
         **ctx,
-        # cd inside a quoted payload (`eval 'cd sub'`) also moves the shell, so look at the raw text too
         "has_cd": ctx["has_cd"] or any(t in ("cd", "chdir", "pushd") for t in toks) or bool(CD_WORD.search(cmd)),
-        # a name the marker cannot lift comes first, so a liftable one never hides it (2026-11-12)
+        # WHY: a name the marker cannot lift comes first, so a liftable one never hides it (2026-11-12)
         "env_bad": next(iter(sorted((n for n in (ctx["env_bad"], *map(bad_env, toks), *(bad_targets(s) for s, _ in segs)) if n), key=env_lifted)), None),
         "glob_ops": ctx["glob_ops"] or glob_op_paths(cmd),
     }
+    if SUBAGENT and (ctx["git"] or ctx["pq"]):  # REF: rule 12 — text piped into a shell (`echo 'git commit' | sh`) is judged as a payload
+        for p, t in enumerate(toks):
+            if not (is_op(t) and t in ("|", "|&")):
+                continue
+            right = toks[p + 1:]
+            rseg = right[:next((n for n, x in enumerate(right) if is_op(x)), len(right))]
+            k = head_index(rseg)
+            if k < len(rseg) and cmd_base(rseg[k]) in STREAM_SHELLS:
+                # WHY: 2026-11-24 security F5 — a here-string op (`cat <<< 'git commit' | bash`) must not cut off the text it feeds
+                lseg = toks[max((n + 1 for n in range(p) if is_op(toks[n]) and not set(toks[n]) & set("<>")), default=0):p]
+                feed = lseg[head_index(lseg) + 1:]
+                for s in [*feed, " ".join(feed)]:
+                    analyze(s, depth + 1, ctx)
+        if any(cmd_base(x) in STREAM_SHELLS for x in toks):  # WHY: 2026-11-24 security F5 — `bash <(echo git commit)` runs the inside text
+            for p, t in enumerate(toks):
+                if is_op(t) and t.endswith("(") and set(t) & set("<>"):
+                    inner = toks[p + 1:next((n for n in range(p + 1, len(toks)) if is_op(toks[n]) and ")" in toks[n]), len(toks))]
+                    feed = inner[head_index(inner) + 1:]
+                    for s in [*feed, " ".join(feed)]:
+                        analyze(s, depth + 1, ctx)
     for seg, here in segs:
         check_indirection(seg, ctx["git"])
         if any(cmd_base(t) in STREAM_SHELLS for t in seg):
@@ -1233,7 +1333,7 @@ def analyze(cmd, depth, ctx):
         for i, t in enumerate(seg):
             b = cmd_base(t)
             payloads = []
-            if ("$(" in t or "`" in t) and has_git(t):
+            if ("$(" in t or "`" in t) and (has_git(t) or has_pq(t)):
                 payloads += subst_bodies(t)
             if b in SHELLS or b in ("su", "flock", "script"):
                 payloads.append(wrapper_payload(seg, i, long_cmd=b not in SHELLS))
@@ -1244,7 +1344,6 @@ def analyze(cmd, depth, ctx):
             elif b == "watch":
                 payloads.append(" ".join(a for a in seg[i + 1:] if not a.startswith("-")))
             elif b == "tmux":
-                # any tmux subcommand can carry a command string (run-shell, if-shell, send-keys, new-window ...)
                 targs = [a for a in seg[i + 1:] if not a.startswith("-")][1:]
                 payloads += targs + [" ".join(targs)]
             for p in payloads:
@@ -1254,8 +1353,19 @@ def analyze(cmd, depth, ctx):
                 check_git(seg, i, ctx)
 
 
+def limit_self():
+    """WHY: 2026-11-24 main measurement — three orphaned analyzers (ppid 1) ran 15+ min at 99% CPU after their hook parents were killed at the 10 s limit."""
+    signal.signal(signal.SIGALRM, lambda *_: os._exit(TIMEOUT_RC))
+    signal.signal(signal.SIGXCPU, lambda *_: os._exit(TIMEOUT_RC))
+    signal.alarm(WALL_LIMIT)
+    try:
+        resource.setrlimit(resource.RLIMIT_CPU, (WALL_LIMIT, WALL_LIMIT + 1))
+    except (ValueError, OSError):  # WHY: setrlimit(2) raises when the inherited hard RLIMIT_CPU is below 7 s; the alarm above still applies
+        pass
+
+
 def main():
-    """Read the hook JSON, print a deny line when the command is blocked, always return 0."""
+    limit_self()
     try:
         data = json.load(sys.stdin)
     except ValueError:
@@ -1264,13 +1374,16 @@ def main():
     if not isinstance(cmd, str) or not cmd:
         return 0
     cwd = data.get("cwd") or os.getcwd()
+    global SUBAGENT
+    aid = data.get("agent_id")
+    SUBAGENT = not (aid is None or aid is False or aid == "") and data.get("agent_type") != "gitops"
     try:
         analyze(cmd, 0, {"cwd": cwd, "has_cd": False, "env_bad": None, "git": False, "glob_ops": False})
         return 0
     except Deny as e:
         reason = str(e)
-    except Exception as e:  # noqa: BLE001 - fail closed: a git command we could not judge is denied
-        if not has_git(cmd):
+    except Exception as e:  # noqa: BLE001
+        if not (has_git(cmd) or has_pq(cmd)):
             return 0
         reason = f"확장 검사 판정 실패({type(e).__name__}) {STRICT_TAIL}"
     out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",

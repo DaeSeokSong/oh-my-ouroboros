@@ -6,10 +6,7 @@
 #       파일 편집만 잡으므로, 외부 에디터/스크립트로 편집한 뒤 커밋한 변경분은
 #       이 훅이 보완한다 (커밋 = "Claude가 그 변경을 처음 보는 시점").
 # 등록: settings.json → hooks.PostToolUse (matcher: "Bash")
-# 설계 근거 (2026-07-19 사용자 결정 B-i, main 소비자 반영):
-#   - native `graphify hook install`(per-repo git 훅)은 설치 CLI v0.9.7에 부재 + git이
-#     .git/hooks/를 추적 안 해 클론·서버마다 재설치 필요 → 전역 Bash 훅으로 대체.
-#     이건 settings.json에 배선(추적)이라 서버 간 자동 전파되고 per-repo 설치 불요.
+# 계약 · 한계:
 #   - 외부 터미널 직접 커밋(Claude Code 밖)은 이 훅을 안 거치나, code-graph.md §2의
 #     소비-직전 freshness 검사(main·scout·coder·qa)가 correctness 최후 보루.
 #   - 하네스(~/.claude) 커밋은 제외 — 하네스 온톨로지는 마크다운 semantic 추출(LLM)이
@@ -17,6 +14,7 @@
 #   - 락·debounce 마커를 autoindex와 **공유**(.autoindex-lock/.autoindex-last) →
 #     편집 직후(≤120s) 커밋은 debounce로 스킵(이미 편집 시 빌드됨), 이중 빌드 없음.
 # 참고: 로직·가드는 graphify-autoindex.sh를 그대로 따름 (트리거·입력 파싱만 상이).
+# REF: knowledge/harness/code-history/scripts__graphify-commit-refresh.sh.md
 set -uo pipefail
 
 DEBOUNCE_SEC=120
@@ -30,12 +28,9 @@ command -v jq >/dev/null 2>&1 || exit 0
 CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 [ -z "${CMD:-}" ] && exit 0
 
-# git commit 게이트: `git commit` (앞에 줄시작/공백/;&| 경계) — log --grep 등 오탐 최소화.
-# 과트리거해도 graphify update .는 멱등·저비용이라 무해하나, 불필요 실행은 피한다.
 printf '%s' "$CMD" | grep -qE '(^|[;&|[:space:]])git[[:space:]]+commit([[:space:]]|$)' || exit 0
 
-# 시작 디렉토리: 명령의 선두 `cd DIR &&`가 있으면 그 대상, 없으면 훅 payload의 cwd.
-# eval 미사용(주입 안전) — sed로 인용부호 안 경로만 추출.
+# NEVER: eval 을 쓰지 않는다(주입). sed로 인용부호 안 경로만 추출.
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 CDTARGET=$(printf '%s' "$CMD" | sed -nE 's/^[[:space:]]*cd[[:space:]]+"?([^"&;|]+)"?[[:space:]]*&&.*/\1/p' | head -1)
 CDTARGET=$(printf '%s' "${CDTARGET:-}" | sed -e 's/[[:space:]]*$//')
@@ -47,13 +42,12 @@ esac
 case "$CDTARGET" in
     "") START_DIR="$CWD" ;;
     /*) START_DIR="$CDTARGET" ;;
-    *) START_DIR="$CWD/$CDTARGET" ;;   # 상대경로 → cwd 기준
+    *) START_DIR="$CWD/$CDTARGET" ;;
 esac
 [ -z "${START_DIR:-}" ] && exit 0
 [ -d "$START_DIR" ] || START_DIR="$CWD"
 [ -z "${START_DIR:-}" ] && exit 0
 
-# 프로젝트 루트 탐색: graphify-out 보유 디렉토리를 최대 15단계 walk-up (autoindex와 동일)
 ROOT=""
 CUR="$START_DIR"
 LEVELS=0
@@ -72,15 +66,14 @@ done
 
 [ -z "${ROOT:-}" ] && exit 0
 
-# ROOT 절대경로 정규화 (autoindex와 동일 — 마커 write/read 경로 일치 보장)
-# pwd -P(물리 경로) 필수 (2026-07-31): 심링크 경로(~/workspace/.claude) 유입 시 논리 pwd로는
+# WHY: 마커 write/read 경로를 autoindex와 맞춘다. pwd -P(물리 경로) 필수 (2026-07-31): 심링크 경로(~/workspace/.claude) 유입 시 논리 pwd로는
 # 하네스 격리 비교가 불일치해 우회됨 — autoindex와 동일 교정.
 ROOT=$(cd "$ROOT" 2>/dev/null && pwd -P) || exit 0
 [ -z "$ROOT" ] && exit 0
 
-# 하네스 격리 — ~/.claude 온톨로지는 §7 나이틀리 타이머만 (AST-only update 금지)
-# (2026-08-07 수정: $HOME/.claude가 심링크인 서버에서 물리화된 ROOT와 심링크 문자열이
-# 불일치해 가드가 무력화됐던 것을 $HOME/.claude도 물리화 후 비교하도록 교정 — autoindex와 동일)
+# NEVER: ~/.claude 에 AST-only update 를 돌리지 않는다. 하네스 온톨로지는 §7 나이틀리 타이머만.
+# WHY: $HOME/.claude가 심링크인 서버에서 물리화된 ROOT와 심링크 문자열이 불일치해 가드가 무력화됐다(2026-08-07).
+# $HOME/.claude도 물리화 후 비교한다 — autoindex와 동일.
 if [ -n "$HOME_DIR" ]; then
     HARNESS_DIR=$(cd "$HOME_DIR/.claude" 2>/dev/null && pwd -P)
     [ -n "$HARNESS_DIR" ] && [ "$ROOT" = "$HARNESS_DIR" ] && exit 0
@@ -88,7 +81,6 @@ fi
 
 GRAPH_DIR="$ROOT/graphify-out"
 
-# 완료/실패 마커 surface (autoindex와 공유) — 직전 백그라운드 빌드 결과를 한 줄 보고 후 제거.
 if [ -f "$GRAPH_DIR/.autoindex-updated" ]; then
     echo "[graphify] $(cat "$GRAPH_DIR/.autoindex-updated" 2>/dev/null) — 코드 그래프 자동 갱신 완료"
     rm -f "$GRAPH_DIR/.autoindex-updated" 2>/dev/null
@@ -104,7 +96,6 @@ MARKER="$GRAPH_DIR/.autoindex-last"
 LOCK="$GRAPH_DIR/.autoindex-lock"
 NOW=$(date +%s 2>/dev/null) || exit 0
 
-# debounce (autoindex와 공유): 편집 직후(≤120s) 커밋은 이미 빌드됐으므로 스킵 — 이중 빌드 방지
 if [ -f "$MARKER" ]; then
     LAST=$(stat -c %Y "$MARKER" 2>/dev/null || stat -f %m "$MARKER" 2>/dev/null)
     if [ -n "${LAST:-}" ]; then
@@ -114,7 +105,6 @@ if [ -f "$MARKER" ]; then
 fi
 touch "$MARKER" 2>/dev/null || exit 0
 
-# lock: 원자적 mkdir 획득 (autoindex와 동일 — 동시 실행 방지)
 if [ -d "$LOCK" ]; then
     LOCK_TS=$(stat -c %Y "$LOCK" 2>/dev/null || stat -f %m "$LOCK" 2>/dev/null)
     if [ -n "${LOCK_TS:-}" ]; then
@@ -129,10 +119,9 @@ if [ -d "$LOCK" ]; then
 fi
 mkdir "$LOCK" 2>/dev/null || exit 0
 
-# 백그라운드 증분 재인덱싱 — 훅은 즉시 반환 (autoindex와 동일 빌드 명령·마커·락해제)
 ( MYTOKEN="$BASHPID-$(date +%s 2>/dev/null || echo 0)"
   echo "$MYTOKEN" > "$LOCK/owner" 2>/dev/null
-  # `graphify .`가 아닌 `graphify update .`(코드 전용) — pending 문서가 1건이라도 있으면
+  # WHY: `graphify .`가 아닌 `graphify update .`(코드 전용) — pending 문서가 1건이라도 있으면
   # `graphify .`는 LLM API 키를 요구하며 exit 1 전체 중단 (2026-07-31 한 프로젝트의 8일 정체 실증:
   # 문서 107건 pending → headless 훅 무키 환경에서 코드 291건 갱신까지 통째 실패)
   cd "$ROOT" 2>/dev/null && graphify update . >/dev/null 2>&1 \

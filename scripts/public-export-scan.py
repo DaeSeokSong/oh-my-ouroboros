@@ -17,7 +17,6 @@ import sys
 
 
 def load(path):
-    """Parse the scan config into [(category, regex, skip_regex_or_None)]."""
     rules = []
     for n, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not raw.strip() or raw.startswith("#"):
@@ -26,7 +25,7 @@ def load(path):
         if len(parts) != 3 or not parts[0].strip() or not parts[1]:
             raise ValueError(f"{path}:{n}: «범주||정규식||건너뛸 정규식» 꼴이 아닙니다")
         try:
-            # re.ASCII: 한글이 \w 라서 «<서버이름>에서» 같은 줄에서 \b 가 안 걸렸다(2026-10-23 실측). 영문 낱말 경계를 ASCII 기준으로 본다.
+            # WHY: re.ASCII: 한글이 \w 라서 «<서버이름>에서» 같은 줄에서 \b 가 안 걸렸다(2026-10-23 실측). 영문 낱말 경계를 ASCII 기준으로 본다.
             rx = re.compile(parts[1], re.ASCII)
             skip = re.compile(parts[2], re.ASCII) if parts[2] else None
         except re.error as e:
@@ -36,7 +35,6 @@ def load(path):
 
 
 def scan(root, rules):
-    """Return {category: [(pattern, [(path, lineno, context)])]} for every rule with hits; lineno 0 means a path-name hit."""
     files = sorted(p for p in root.rglob("*") if p.is_file() and ".git" not in p.relative_to(root).parts)
     texts = {}
     for p in files:
@@ -64,12 +62,10 @@ def scan(root, rules):
 
 
 def hide(cat):
-    """Return True when a category's line content must not be printed (secrets): its name starts with 3 or mentions 비밀/secret."""
     return cat.startswith("3") or "비밀" in cat or "secret" in cat.lower()
 
 
 def main(argv=None):
-    """Print category hits and exit 0 (clean), 1 (hits) or 2 (config error)."""
     ap = argparse.ArgumentParser()
     ap.add_argument("stage")
     ap.add_argument("--config", default=str(pathlib.Path.home() / ".claude/config/public-export-scan.txt"))

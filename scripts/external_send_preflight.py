@@ -25,13 +25,12 @@ import os
 import re
 import sys
 
-# (이름, 정규식, 차단 여부)
 PATTERNS = [
     ('DICOM UID', re.compile(rb'(?<![\d.])\d+(?:\.\d+){5,}'), True),
     ('DB 접속 문자열', re.compile(rb'(mysql|postgres|postgresql|mongodb)://'), True),
     ('개인키', re.compile(rb'-----BEGIN [A-Z ]*PRIVATE KEY-----'), True),
     ('AWS 키', re.compile(rb'AKIA[0-9A-Z]{16}'), True),
-    # 따옴표는 선택이다(2026-09-08 검수: JSON `{"password":"…"}`·무따옴표 `PASSWORD=…` 를 놓쳤다).
+    # WHY: 따옴표는 선택이다(2026-09-08 검수: JSON `{"password":"…"}`·무따옴표 `PASSWORD=…` 를 놓쳤다).
     # 값이 `$VAR`·`${VAR}`·`"$VAR"` 면 변수 참조이지 값이 아니므로 제외한다(같은 검수: `--env
     # ACCESS_TOKEN="$ACCESS_TOKEN"` 를 값으로 오인해 bootstrap.sh 가 패킷에서 빠졌다).
     # 문서 예시로 흔한 자리표시자(example·xxx·your_·changeme…)도 제외한다 — 그 접두로 시작하는
@@ -48,13 +47,12 @@ PATTERNS = [
 
 SKIP_DIRS = {'.git', '__pycache__', 'node_modules', '.venv', 'venv',
              '.mypy_cache', '.pytest_cache'}
-MAX_BYTES = 8 << 20          # 파일당 8MiB 까지만 훑는다. 넘으면 «미검사» 로 세어 차단한다
-# 2026-10-01 감사: 확장자 목록 밖 파일은 내용 검사 없이 통과했고, 8MiB 너머는 말없이 잘렸다. 도구는 그 파일도 읽을 수 있다.
+MAX_BYTES = 8 << 20
+# WHY: 2026-10-01 감사: 확장자 목록 밖 파일은 내용 검사 없이 통과했고, 8MiB 너머는 말없이 잘렸다. 도구는 그 파일도 읽을 수 있다.
 # 그래서 확장자와 무관하게 모두 읽고, 못 훑은 파일(한도 초과·읽기 실패·이진)은 «미검사» 로 세어 차단 판정에 넣는다.
 
 
 def scan(path):
-    """(내용, 미검사 사유) 를 돌려준다. 사유가 None 이 아니면 이 파일은 검사하지 못한 것이다."""
     try:
         if os.path.getsize(path) > MAX_BYTES:
             return b'', '한도(8MiB) 초과'
@@ -69,7 +67,7 @@ def scan(path):
 
 def walk(root, unreadable, links):
     for dirpath, dirnames, filenames in os.walk(root, onerror=lambda e: unreadable.append(e.filename)):
-        # 2026-10-01 P6 검수: os.walk 는 폴더 심볼릭 링크를 따라가지 않지만 codex 같은 도구는 따라간다.
+        # WHY: 2026-10-01 P6 검수: os.walk 는 폴더 심볼릭 링크를 따라가지 않지만 codex 같은 도구는 따라간다.
         #   링크 너머는 훑지 못한 트리이므로 «미검사» 로 세어 차단한다(SKIP_DIRS 이름의 링크도 같다).
         links.extend(os.path.join(dirpath, d) for d in dirnames if os.path.islink(os.path.join(dirpath, d)))
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
@@ -79,20 +77,19 @@ def walk(root, unreadable, links):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit('사용법: python3 %s <작업디렉터리> [보낼파일 ...]'
-                 % os.path.basename(sys.argv[0]))
+        sys.exit(f'사용법: python3 {os.path.basename(sys.argv[0])} <작업디렉터리> [보낼파일 ...]')
     roots = [os.path.abspath(p) for p in sys.argv[1:]]
     for r in roots:
         if not os.path.exists(r):
-            sys.exit('[중단] 없는 경로: %s' % r)
+            sys.exit(f'[중단] 없는 경로: {r}')
 
     print('검사 범위 (여기 있는 것은 전부 나갈 수 있다고 본다)')
     for r in roots:
-        print('   %s' % r)
+        print(f'   {r}')
     print()
 
-    unchecked = []                 # (경로, 사유) — 못 훑은 것
-    targets = []                   # (root, 파일 경로)
+    unchecked = []
+    targets = []
     for r in roots:
         if os.path.isdir(r):
             unreadable, links = [], []
@@ -110,7 +107,7 @@ def main():
             unchecked.append((rel, why))
         elif data:
             n += 1
-        # 파일·폴더 이름도 같은 패턴으로 대조한다(상대 경로 — 절대 경로의 홈·임시 폴더 이름은 우리 몫이 아니다)
+        # NEVER: 이름 대조에 절대 경로를 쓰지 않는다(절대 경로의 홈·임시 폴더 이름은 우리 몫이 아니다)
         for name, pat, is_block in PATTERNS:
             hits = len(pat.findall(data)) if data else 0
             if hits:
@@ -119,27 +116,27 @@ def main():
             if nhits:
                 (blocked if is_block else warned).append((name + '(이름)', rel, nhits))
 
-    print('훑은 파일 %d개' % n)
+    print(f'훑은 파일 {n}개')
     print()
 
     if warned:
         print('경고 (식별자 열 이름이 보인다 — 값이 아니라 이름이다)')
         for name, rel, c in sorted(warned, key=lambda x: -x[2])[:20]:
-            print('   %-16s %-58s %d건' % (name, rel[:58], c))
+            print(f'   {name:<16} {rel[:58]:<58} {c}건')
         print()
 
     if unchecked:
-        print('★ 미검사 %d개 (못 훑은 파일은 안전하다고 볼 수 없어 차단한다)' % len(unchecked))
+        print(f'★ 미검사 {len(unchecked)}개 (못 훑은 파일은 안전하다고 볼 수 없어 차단한다)')
         for rel, why in unchecked[:20]:
-            print('   %-12s %s' % (why, rel))
+            print(f'   {why:<12} {rel}')
         if len(unchecked) > 20:
-            print('   … 외 %d개' % (len(unchecked) - 20))
+            print(f'   … 외 {len(unchecked) - 20}개')
         print()
 
     if blocked:
-        print('★ 차단 %d건' % len(blocked))
+        print(f'★ 차단 {len(blocked)}건')
         for name, rel, c in sorted(blocked, key=lambda x: -x[2]):
-            print('   %-16s %-58s %d건' % (name, rel[:58], c))
+            print(f'   {name:<16} {rel[:58]:<58} {c}건')
         print()
 
     if blocked or unchecked:

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """ci-gate-edit.sh 회귀 테스트 (2026-10-01 감사: lint 결과가 stderr 가 아니라 additionalContext JSON 으로 닿아야 한다).
 
 실행: python3 ~/.claude/scripts/tests/test_ci_gate_edit.py → 실패 0 이면 exit 0
@@ -21,7 +20,7 @@ n = 0
 
 def run(path: Path):
     payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(path)}})
-    return subprocess.run(["bash", str(HOOK)], input=payload, capture_output=True, text=True)
+    return subprocess.run(["bash", str(HOOK)], input=payload, capture_output=True, text=True, check=False)
 
 
 def check(name, ok, detail=""):
@@ -41,7 +40,7 @@ with tempfile.TemporaryDirectory() as td:
         try:
             out = json.loads(r.stdout)["hookSpecificOutput"]
             ok = out["hookEventName"] == "PostToolUse" and "fence imbalance" in out["additionalContext"] and str(bad) in out["additionalContext"]
-        except Exception:
+        except Exception:  # noqa: BLE001
             ok = False
         check("펜스 불균형 .md → PostToolUse additionalContext JSON", ok and r.returncode == 0, f"rc={r.returncode} stdout={r.stdout[:200]!r} stderr={r.stderr[:100]!r}")
         check("결과는 stderr 가 아니라 stdout 으로", r.stderr.strip() == "", r.stderr[:100])

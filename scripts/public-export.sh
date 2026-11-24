@@ -32,11 +32,11 @@ TARGET="${2:-$HOME/workspace/oh-my-ouroboros}"
 STAGE_OUT=""
 if [ "$MODE" = "--stage-out" ]; then
   [ -n "${2:-}" ] || { echo "ERROR: --stage-out 에는 출력 폴더가 필요합니다" >&2; exit 2; }
-  # 아래에서 하네스로 cd 하므로 상대 경로는 지금 절대 경로로 고정한다(qa 2026-10-23: 상대 경로가 하네스 안에 생겼다).
+  # WHY: 아래에서 하네스로 cd 하므로 상대 경로는 지금 절대 경로로 고정한다(qa 2026-10-23: 상대 경로가 하네스 안에 생겼다).
   STAGE_OUT=$(realpath -m -- "$2")
   [ -L "$2" ] && { echo "ERROR: 출력 폴더가 심볼릭 링크입니다: $2" >&2; exit 2; }
   [ -e "$STAGE_OUT" ] && [ -n "$(ls -A "$STAGE_OUT" 2>/dev/null)" ] && { echo "ERROR: 출력 폴더가 비어 있지 않습니다: $STAGE_OUT" >&2; exit 2; }
-  # 하네스 안이면 git 무시 폴더(.scratch)만 허용한다. 게이트 전 사본이 추적 경로에 남아 커밋되지 않게(security 2026-10-23).
+  # WHY: 하네스 안이면 git 무시 폴더(.scratch)만 허용한다. 게이트 전 사본이 추적 경로에 남아 커밋되지 않게(security 2026-10-23).
   case "$STAGE_OUT/" in
     "$(realpath -m "$HARNESS")/.scratch/"*) ;;
     "$(realpath -m "$HARNESS")"/*) echo "ERROR: 하네스 안에는 .scratch/ 아래만 출력 폴더로 쓸 수 있습니다: $STAGE_OUT" >&2; exit 2 ;;
@@ -49,7 +49,6 @@ NOREPLY="DaeSeokSong@users.noreply.github.com"
 STAGE=$(mktemp -d "${TMPDIR:-/tmp}/pubexport.XXXXXX")
 trap 'rm -rf "$STAGE"' EXIT
 
-# ── 규칙 파싱 ──
 ALLOW=(); EXCLUDE=(); SEDS=(); FORBID=(); DELS=(); RSUBS=(); JDELS=()
 while IFS= read -r line; do
   case "$line" in
@@ -63,9 +62,8 @@ while IFS= read -r line; do
   esac
 done < "$RULES"
 
-# ── 1) 스테이징: git 추적 파일만, allowlist 교집합 − exclude ──
 cd "$HARNESS"
-# allowlist 가 비면 git ls-files -- (경로 없음) 이 추적 파일 전부를 내놓아 전체가 공개 대상이 된다(2026-10-01 감사).
+# WHY: allowlist 가 비면 git ls-files -- (경로 없음) 이 추적 파일 전부를 내놓아 전체가 공개 대상이 된다(2026-10-01 감사).
 [ "${#ALLOW[@]}" -gt 0 ] || { echo "ERROR: allowlist(a|) 가 0줄입니다 — 비면 전부가 공개 대상이 되므로 발행하지 않습니다: $RULES" >&2; exit 2; }
 COPIED=0
 while IFS= read -r f; do
@@ -77,19 +75,16 @@ while IFS= read -r f; do
   COPIED=$((COPIED+1))
 done < <(git ls-files -- "${ALLOW[@]}")
 
-# 공개 전용 파일 (public/ 전체 → 루트로: README·LICENSE·assets/ 등) — 추적 파일만(미추적 잔재가 미러로 새지 않게)
+# NEVER: public/ 의 미추적 파일을 싣지 않는다(추적 파일만). 미추적 잔재가 미러로 샌다.
 while IFS= read -r f; do
   mkdir -p "$STAGE/$(dirname "${f#public/}")"
   cp "$f" "$STAGE/${f#public/}"
 done < <(git ls-files -- public)
-# 미러 표식 — --publish 가 «이 폴더는 미러다» 를 확인하는 근거(아래 발행 대상 확인)
 printf '%s\n' 'public-export mirror: scripts/public-export.sh 가 통째로 재생성합니다. 직접 편집 금지.' > "$STAGE/.public-export-mirror"
 
-# ── 2) sanitize: d| 줄 삭제 → r| 범위 치환 → j| 훅 삭제 → s| 전역 치환 ──
-# 파일 범위 규칙 하나를 스테이징 사본에 적용하고, 바뀐 파일이 0개면 미적중 경고를 낸다(식 내용은 찍지 않는다).
-# 구분자는 제어 문자 \x01 — ERE 에 / 나 # 가 들어가도 된다.
+# WHY: 구분자는 제어 문자 \x01 — ERE 에 / 나 # 가 들어가도 된다.
 SEP=$'\001'
-apply_scoped() {  # $1=d|r  $2=경로 glob  $3=ERE 또는 sed 식
+apply_scoped() {
   local kind=$1 glob=$2 expr=$3 changed=0 p rel before after
   local -a sedargs
   if [ "$kind" = d ]; then sedargs=(-E "\\${SEP}${expr}${SEP}d"); else sedargs=(-E "$expr"); fi
@@ -98,7 +93,7 @@ apply_scoped() {  # $1=d|r  $2=경로 glob  $3=ERE 또는 sed 식
     # shellcheck disable=SC2053  # glob 은 의도적으로 패턴 매칭
     [[ $rel == $glob ]] || continue
     before=$(cksum < "$p")
-    # 바이트 단위(LC_ALL=C)로 돈다: UTF-8 로캘의 GNU sed 는 긴 한글 줄에서 `.*` 가 줄 끝까지 못 가 규칙이 조용히 빗나갔다(2026-10-23 실측).
+    # WHY: 바이트 단위(LC_ALL=C)로 돈다: UTF-8 로캘의 GNU sed 는 긴 한글 줄에서 `.*` 가 줄 끝까지 못 가 규칙이 조용히 빗나갔다(2026-10-23 실측).
     LC_ALL=C sed -i "${sedargs[@]}" "$p"
     after=$(cksum < "$p")
     [ "$before" = "$after" ] || changed=$((changed+1))
@@ -132,15 +127,14 @@ for expr in "${SEDS[@]:-}"; do
   [ -n "$expr" ] && find "$STAGE" -type f -exec sed -i -E "$expr" {} +
 done
 
-# ── 2.5) 정제본 남기기(--stage-out): 게이트 전에 복사해 두어, 게이트가 막아도 막힌 자리를 검사할 수 있게 한다 ──
+# NEVER: --stage-out 복사를 게이트 뒤로 옮기지 않는다. 게이트가 막아도 막힌 자리를 검사할 수 있어야 한다.
 if [ "$MODE" = "--stage-out" ]; then
   mkdir -p "$STAGE_OUT"
-  chmod 700 "$STAGE_OUT"   # 게이트가 막아도 남는 사본이라 본인만 읽게 한다(security 2026-10-23)
+  chmod 700 "$STAGE_OUT"   # WHY: 게이트가 막아도 남는 사본이라 본인만 읽게 한다(security 2026-10-23)
   cp -a "$STAGE/." "$STAGE_OUT/"
   echo "정제본: $STAGE_OUT ($(find "$STAGE_OUT" -type f | wc -l)파일) — 아래 게이트 결과로 끝납니다(발행 없음)."
 fi
 
-# ── 2.8) 정제 뒤 문법 게이트: 줄 삭제·치환이 코드를 깨면 막는다 (내용 미출력 — 경로만) ──
 SYNTAX_BAD=0
 while IFS= read -r -d '' p; do
   rel=${p#"$STAGE"/}
@@ -156,15 +150,14 @@ while IFS= read -r -d '' p; do
 done < <(find "$STAGE" -type f -print0)
 [ "$SYNTAX_BAD" = 0 ] || { echo "발행 차단 — d|·r|·j| 규칙이 코드를 깼습니다. 규칙을 고친 뒤 재실행."; exit 3; }
 
-# ── 3) fail-closed 금지 게이트 (내용 미출력 — 파일:라인만) ──
 VIOL=0
 for pat in "${FORBID[@]:-}"; do
   [ -z "$pat" ] && continue
-  # 패턴은 -e 로 못박는다. `-----BEGIN … PRIVATE` 처럼 `-` 로 시작하는 규칙이 grep 옵션으로 먹히면
+  # WHY: 패턴은 -e 로 못박는다. `-----BEGIN … PRIVATE` 처럼 `-` 로 시작하는 규칙이 grep 옵션으로 먹히면
   # rc=2 로 죽고 hits 가 비어 게이트가 조용히 통과했다(2026-09-08 검수). rc>=2 는 규칙이 깨진 것이므로
   # 통과가 아니라 즉시 차단한다(fail-closed).
   rc=0
-  # -I 는 이진·잘못된 UTF-8 파일을 통째로 건너뛰어 그 안의 금지 패턴을 못 봤다(2026-10-01 감사) → -a 로 전부 본다.
+  # WHY: -I 는 이진·잘못된 UTF-8 파일을 통째로 건너뛰어 그 안의 금지 패턴을 못 봤다(2026-10-01 감사) → -a 로 전부 본다.
   # LC_ALL=C: UTF-8 로캘에서는 한글이 낱말 글자라 `\b<이름>\b` 가 «<이름>에서» 를 못 잡아 게이트를 빠져나갔다(2026-10-23 security 실측).
   # 바이트 단위면 한글 바이트가 낱말 밖이라 영문 낱말 경계가 ASCII 기준이 된다.
   raw=$(LC_ALL=C grep -RInaE -e "$pat" "$STAGE" 2>/dev/null) || rc=$?
@@ -179,7 +172,7 @@ for pat in "${FORBID[@]:-}"; do
     echo "⛔ 금지 패턴 [$pat]:"
     while IFS= read -r l; do printf '    %s\n' "$l"; done <<< "$hits"
   fi
-  # 파일 경로 이름도 같은 패턴으로 대조한다 — sed 치환은 본문만 고치므로 경로에 든 식별자는 그대로 미러에 실린다.
+  # NEVER: 파일 경로 이름 대조를 빼지 않는다. sed 치환은 본문만 고치므로 경로에 든 식별자는 그대로 미러에 실린다.
   rc=0
   phits=$(cd "$STAGE" && find . -mindepth 1 | sed 's|^\./||' | LC_ALL=C grep -nE -e "$pat" | cut -d: -f2-) || rc=$?
   if [ "$rc" -ge 2 ]; then
@@ -197,7 +190,6 @@ if [ "$VIOL" = 1 ]; then
   exit 3
 fi
 
-# ── 3.5) gitleaks (있으면 2차 스캔) ──
 if command -v gitleaks >/dev/null 2>&1; then
   gitleaks detect --no-git -s "$STAGE" --redact -v >/dev/null 2>&1 \
     || { echo "⛔ gitleaks 검출 — 발행 차단 (gitleaks detect --no-git -s <stage>로 확인)"; exit 3; }
@@ -210,7 +202,6 @@ if [ "$MODE" = "--stage-out" ]; then
   exit 0
 fi
 
-# ── 4) 변경 요약 (수정 계획 트리 — answer-detail.md § 형식) ──
 if [ -d "$TARGET" ]; then
   SUMMARY=$(rsync -rcn --delete --exclude='.git' --out-format='%o %n' "$STAGE/" "$TARGET/" \
     | awk '$1=="send"{print $2}' | sort)
@@ -229,15 +220,13 @@ echo "📋 공개 미러 발행 계획 — $TARGET (수정 $MOD · 신규 $NEW �
 echo "$SUMMARY" | head -20 | sed 's/^/  /'
 [ "$(echo "$SUMMARY" | wc -l)" -gt 20 ] && echo "  ... ($(echo "$SUMMARY" | wc -l)개 중 20개 표시)"
 
-# ── 5) 발행 ──
 if [ "$MODE" != "--publish" ]; then
   echo ""
   echo "(dry-run — 발행하려면: bash scripts/public-export.sh --publish [대상경로])"
   exit 0
 fi
 
-# ── 5.0) 발행 대상 확인 (2026-10-01 감사) ──
-# 아래 rsync 는 --delete 라 대상에 없는 파일을 지운다. 인자 오타·엉뚱한 경로가 «비어 있지 않은 일반 폴더»면
+# WHY: 아래 rsync 는 --delete 라(2026-10-01 감사) 대상에 없는 파일을 지운다. 인자 오타·엉뚱한 경로가 «비어 있지 않은 일반 폴더»면
 # 그 폴더가 통째로 지워지므로, 미러 표식이 없는 비어 있지 않은 폴더는 거부한다.
 # 표식 = .public-export-mirror 파일(발행이 매번 써 둔다) 또는 .git 의 origin 이 공개 미러 주소.
 # 기존 미러를 처음 잇는 경우엔 대상 폴더에 표식 파일을 직접 만들어 둔다(사용자 몫).

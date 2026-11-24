@@ -58,16 +58,18 @@
 > 사용자 원문: «하네스 수정 시, 동일 서버 내에 다른 모든 세션으로 변경 사항 전파하고 해당 세션들은 내부적으로 확인 후 답신하거나 사용자에게 보고하는 것은 금지».
 
 **보내는 쪽**(하네스 `~/.claude` 를 고친 세션. 보통 [Harness] Manager)
-- **언제**: 하네스 변경을 커밋한 직후. 한 사이클에 커밋이 여럿이면 최종 보고 직전에 한 번으로 묶어도 된다.
+- **언제**: 커밋은 보류되고, 하네스 매니저가 모든 작업과 커밋을 마쳐 진행 중인 일이 하나도 없을 때 `bash scripts/propagate-queue.sh release` 로 한 번 내보낸다. 커밋마다 알리지 않는다(2026-11-24 사용자 지시, 아래 원문).
+  > 사용자 원문(2026-11-24): «아까도 얘기했지만, 하네스에서 진행하는 작업이 하나도 없을 때만, 다른 세션에 변경 사항 있다고 전파해. 커밋마다 전파하지 않아도 돼. 하네스 매니저가 모든 작업 완료 후 커밋까지 모두 완료하면 그 때 1회 전파하면 돼».
 - **동작 파일 커밋만 알린다 (2026-11-05 사용자 지시, `intent/2026-11-05-propagate-behavior-files-only.md`)**: 기록용 커밋(intent · knowledge · _audit · graphify-out 등 `[record]` 경로만 바뀐 커밋)은 알리지 않는다. 분류 정본은 `config/propagate-paths.txt` 이고, 새 동작 폴더를 만들거나 폴더를 없애면 하네스 매니저가 그 목록을 고친다(커밋 때 `propagate-queue.sh check-paths` 가 미분류·사라진 경로를 경고한다).
 - **누구에게**: `ListAgents` 로 이 서버에서 도는 다른 세션 전부(SendMessage 결과가 «on this machine» 인 세션). 다른 서버·클라우드·오프라인 세션은 대상이 아니다. subagent·teammate 는 main 이 알아서 전하므로 따로 보내지 않는다.
 - **무엇을**: 첫 줄에 «[하네스 변경 전파] 회신·사용자 보고 없이 반영만 하십시오». 이어서 커밋 해시, 바뀐 규칙·파일 경로, 한두 줄 요지, 받는 세션이 자기 작업에서 달라지는 점.
 - 전파는 자기 세션 사용자에게 보고할 내용이 아니다. 전파 내용은 발의 세션의 최종 보고에 «전파: N개 세션» 한 줄만 적는다(아래 다시 띄우기 명령 블록은 이 한 줄과 별개로 붙인다).
 - **다시 띄우기 명령 첨부 (2026-10-22 사용자 지시)**: 사용자 원문 «하네스 갱신되면 하네스 매니저가 해당 서버의 클로드 코드 세션들에게 내용 전파 후 자신은 각 세션을 리스폰 시키는 명령어를 출력하여 필요시 진행하도록 보고해». 전파한 사이클의 최종 보고에 `bash ~/.claude/scripts/respawn-peers.sh` 출력(이 세션을 뺀 백그라운드 세션마다 `claude respawn <id>` 한 줄, 작업 중이면 «쉴 때 실행» 표시)을 코드 블록으로 붙인다. 실행은 사용자가 필요할 때 한다(다시 띄우면 하던 턴이 끊긴다). 특히 mod·훅·settings·플러그인 경로처럼 세션 시작 때 읽히는 파일이 바뀐 경우 «다시 띄워야 반영됨» 을 한 줄 적는다. `claude respawn --all` 은 매니저 자신도 다시 띄우므로 내지 않는다. 기록용 커밋(전파 제외)에는 붙이지 않는다.
-- **기계 강제 (2026-10-21, `intent/2026-10-21-harness-change-propagation-gate.md`)**: `[behavior]` 경로를 바꾼 커밋은 빠짐없이 전파한다(10-21 intent 커밋 2건 누락 실사고가 계기이며, 11-05부터 기록용 커밋은 제외). 장치는 셋이다.
-  1. 커밋 훅(`scripts/ci-gate-post-commit.sh` → `scripts/propagate-queue.sh enqueue`)이 하네스 커밋을 `_usage/propagate/pending.jsonl` 에 적는다(커밋한 세션 id 포함). 바뀐 파일 가운데 `config/propagate-paths.txt` 의 `[behavior]` 경로 아래인 것이 하나라도 있을 때만 적는다(2026-11-05).
-  2. 각 세션의 띠 mod(`mods/harness-mod/hooks/band/propagate.js`)가 3초마다 읽어, 자기가 만들지 않은 새 커밋을 «[하네스 변경 알림 · 회신 불요]» 로 자기 세션에 넣고 `_usage/propagate/ack/<세션 id>` 에 받음 기록을 남긴다.
-  3. 커밋한 세션의 Stop 훅(`scripts/toolcall-text-guard.sh` → `scripts/propagate-gate.sh`)이 살아 있는 다른 로컬 세션(`claude agents --json`)의 받음 기록을 최대 6초 기다려 확인하고, 없으면 턴 종료를 한 번 막는다. 그때 그 세션에 SendMessage 로 직접 알리고 `bash ~/.claude/scripts/propagate-queue.sh ack <세션 id> <해시> manual` 로 기록한다.
+- **기계 강제 (2026-10-21, `intent/2026-10-21-harness-change-propagation-gate.md` 개정 1 · 3)**: `[behavior]` 경로를 바꾼 커밋이 있으면 작업이 다 끝난 뒤 한 번 빠짐없이 전파한다(10-21 intent 커밋 2건 누락 실사고가 계기이며, 11-05부터 기록용 커밋은 제외). 장치는 넷이다.
+  1. 커밋 훅(`scripts/ci-gate-post-commit.sh` → `scripts/propagate-queue.sh enqueue`)이 하네스 커밋을 보류 파일 `_usage/propagate/held.jsonl` 에 적는다(커밋한 세션 id 포함). 바뀐 파일 가운데 `config/propagate-paths.txt` 의 `[behavior]` 경로 아래인 것이 하나라도 있을 때만 적는다(2026-11-05). 보류 중에는 어느 세션에도 알림이 들어가지 않는다(2026-11-24).
+  2. 하네스 매니저 main 이 `bash scripts/propagate-queue.sh release` 를 실행하면 보류된 커밋 가운데 가장 최근 것 한 줄만 대기 파일 `_usage/propagate/pending.jsonl` 에 적히고 보류 파일은 비워진다. 하네스 저장소 세션의 시작 점검이 보류가 남아 있으면 `PROPAGATE_HELD` 경보(건수와 가장 오래된 시각)로 알린다. 서브 에이전트는 이 명령을 실행하지 못한다.
+  3. 각 세션의 띠 mod(`mods/harness-mod/hooks/band/propagate.js`)가 3초마다 대기 파일을 읽어, 자기가 만들지 않은 새 커밋을 «[하네스 변경 알림 · 회신 불요]» 로 자기 세션에 넣고 `_usage/propagate/ack/<세션 id>` 에 받음 기록을 남긴다.
+  4. 커밋한 세션의 Stop 훅(`scripts/toolcall-text-guard.sh` → `scripts/propagate-gate.sh`)이 내보낸 줄에 대해 살아 있는 다른 로컬 세션(`claude agents --json`)의 받음 기록을 최대 6초 기다려 확인하고, 없으면 턴 종료를 한 번 막는다. 그때 그 세션에 SendMessage 로 직접 알리고 `bash ~/.claude/scripts/propagate-queue.sh ack <세션 id> <해시> manual` 로 기록한다.
   - 자동 알림은 커밋 제목만 싣는다. 받는 세션이 자기 작업에서 달라지는 점을 알아야 하면 위 «무엇을» 대로 SendMessage 를 따로 보낸다.
 - **공개 미러 같은 날 알림 (2026-10-23 사용자 지시, `intent/2026-10-23-public-mirror-refresh.md`)**: 새 에이전트(`agents/`)·새 훅(settings.json 훅 배선)·규칙 체계 변경을 커밋한 사이클이면, 월간 감사를 기다리지 않고 그 최종 보고에 «공개 미러(oh-my-ouroboros) 갱신 필요» 와 `bash ~/.claude/scripts/public-mirror-status.sh` 한 줄을 붙인다. 갱신 절차는 `skills/harness-audit/SKILL.md` § 완료 기록 6 이다.
 

@@ -195,6 +195,7 @@ python3 ~/.claude/scripts/confluence_publish_approve.py question --new --space <
 게시 승인 요청 · page=<ID>[,<ID>...] · 알림=<notify|quiet> · 버전 설명=«<버전 설명>»
 게시 승인 요청 · new · space=<spaceId> · parent=<parentId 또는 없음> · 제목=«<제목>»
 ```
+- **제목 변경 · 이동 (2026-11-22 개정 2)**: `confluence_patch_page.py --title` · `--parent` 의 승인은 `question` 에 `--set-title "<새 제목>"` · `--set-parent <부모 ID>` 를 더해 얻는다(`--page` 는 1개). 기존 페이지 줄 뒤에 값이 있는 필드만 `새 제목=«<새 제목>»` 그다음 `새 부모=<ID>` 순서로 다른 필드와 같은 구분자(앞뒤 공백을 둔 가운뎃점)와 함께 붙는다. 예: `게시 승인 요청 · page=123 · 알림=quiet · 버전 설명=«위치 정리» · 새 제목=«새 이름» · 새 부모=456`. 판정은 필드끼리 비교하므로 새 필드가 든 승인은 치환만 하는 호출과 MCP 게시에 쓰이지 않고, 필드 없는 승인은 제목 · 부모 변경에 쓰이지 않는다. `--new` 의 `--title` · `--parent` 는 새 페이지 만들기용이라 다르다. 버전 설명 · 새 제목에 `» · 새 제목=«` 나 `» · 새 부모=` 가 들어 있으면 승인 줄이 두 가지로 읽혀 거부된다.
 - 승인으로 인정하는 것은 사용자가 보기 `게시 승인` 을 고른 답뿐이다. `취소` 등 다른 보기, 정확히 `게시 승인` 이 아닌 자유 입력, subagent 기록, 질문과 결박되지 않은 답은 인정하지 않는다. 한 번에 질문 여러 개를 띄우면 질문마다 따로 판정한다.
 - 승인 뒤 사용자가 같은 대화에 새 메시지를 보내면 그 승인은 무효가 된다(채팅으로 보류·변경을 말했을 수 있어서다). 그래서 답을 받은 그 턴에 게시한다. 도구 결과·알림·피어 메시지는 무효 사유가 아니다.
 - 자유 입력란에 «게시 승인» 을 직접 쳐도 승인으로 본다(사용자 본인의 의사표시이기 때문이다).
@@ -202,6 +203,7 @@ python3 ~/.claude/scripts/confluence_publish_approve.py question --new --space <
 - 페이지 ID 는 숫자만 받는다. tiny link·URL 은 거부되므로 숫자 페이지 ID 로 다시 지정한다.
 - 실제 유효 시간은 «사용자가 답한 시각부터 1시간»이다. 승인은 그 안에 한 번만 쓸 수 있고, 게시가 네트워크 오류로 실패해도 승인은 소모되어 새 승인 질문이 필요하다. 한 질문으로 여러 페이지를 승인할 수 있고 소모는 페이지마다 따로 한다.
 - MCP `updateConfluencePage` 는 조용한 수정을 지정할 수 없어 알림 발송(`notify`) 승인만 통과한다. 조용한 수정은 `confluence_patch_page.py --minor` 로 한다.
+- **MCP 수정의 제목 · 부모 (2026-11-22 개정 3)**: MCP 수정에서 제목을 바꾸지 않으면 `title` 인자를 넣지 않는다(훅은 지금 제목을 몰라 같은 제목도 «새 제목» 승인을 요구한다). `title` · `parentId` 로 제목 · 부모를 바꾸면 승인 줄에 같은 «새 제목» · «새 부모» 가 있어야 한다. 다른 공간 이동(`spaceId`)은 MCP 로 하지 않고 웹에서 직접 옮긴다(훅이 막는다).
 - 승인은 세션 기록(`~/.claude/projects/<프로젝트>/<세션id>.jsonl`)에서 읽는다. 기록 형식이 바뀌면 승인을 찾지 못해 게시가 막힌다(막히는 쪽으로만 틀린다).
 
 ## §3-1. 검토 관문 (MANDATORY, 2026-11-10 에이전트 정리 8단계)
@@ -350,6 +352,23 @@ python3 ~/.claude/scripts/korean_style_check.py <저장형식 파일>   # 차단
 3. `--patches` (플래그 없음) = dry-run — 앵커 count==1 전수 검사, 하나라도 어긋나면 아무것도 쓰지 않음.
 4. `--apply` — 적용. 적용 전 본문이 `outputs/confluence_backup_{id}_v{n}_{시각}.storage.html`로 저장된다.
 5. **적용 후 검증(MANDATORY)**: 백업본과 `<table>`·`<tr>`·`ac:structured-macro`·`expand`·`adf panel`·`ac:link`·`ri:attachment` 개수를 기계 대조 — 하나라도 줄면 소실이므로 백업 복구.
+
+**제목 변경 · 이동 (2026-11-22 개정 2)**: `--title "<새 제목>"` · `--parent <부모 페이지 ID>` 를 `--patches` 없이도, 함께도 쓴다. 기본은 dry-run(계획 «지금 → 새» 만 찍음)이고 `--apply` 로 쓴다.
+```
+python3 ~/.claude/scripts/confluence_publish_approve.py question --page <ID> --notify quiet|notify --message "<버전 설명>" \
+    --set-title "<새 제목>" --set-parent <부모 ID>        # 승인 줄 얻기(§3 4))
+uv run python ~/.claude/scripts/confluence_patch_page.py --page <ID> --title "<새 제목>" --parent <부모 ID> [--minor] --message "<버전 설명>"          # dry-run
+uv run python ~/.claude/scripts/confluence_patch_page.py --page <ID> --title "<새 제목>" --parent <부모 ID> [--minor] --message "<버전 설명>" --apply
+```
+- 이동은 같은 공간 안에서만 한다(REST v2 의 `parentId` 가 다른 공간 이동을 지원하지 않는다). 부모가 다른 공간이거나 조회되지 않으면, 자기 자신을 부모로 주면, 제목이 비었거나 제어문자가 있으면 승인을 쓰기 전에 멈춘다. 제목 · 부모가 지금과 같고 치환도 없으면 «바꿀 것 없음» 으로 끝난다.
+- `--patches` 가 없는 호출은 본문 검사 세 가지(문체 전후 비교 · 검토 관문 · 골격 스탬프)를 건너뛰고 서버에서 받은 본문을 그대로 올린다(2026-11-22 사용자 결정). 치환과 함께면 검사가 전부 걸린다. HOME 검사 · 반영 전 백업 · 게시 승인은 늘 걸린다.
+- 반영 뒤 재조회해 제목 · 부모 · 버전을 찍고 요청과 다르면 0 이 아닌 종료 코드로 알린다(`parentId` 생략 시 부모 유지 여부가 문서에 없어 제목만 바꿔도 부모를 확인한다). 치환 없는 호출은 본문 해시도 대조하며 다르면 경고만 한다.
+
+**새 페이지 만들기 (2026-11-22 개정 4)**: 본문이 커서 MCP `createConfluencePage` 로 보낼 수 없을 때 `--create` 로 파일 본문을 그대로 새 페이지로 만든다.
+1. dry-run: `uv run python ~/.claude/scripts/confluence_patch_page.py --create --space <숫자 공간 ID> --parent <부모 ID> --title "<제목>" --body-file <저장 형식 파일>`. 검사(문체는 본문 전체)를 돌리고 **승인 줄을 얻는 정확한 명령**을 정규화된 값으로 찍는다. 부모를 빼면 공간 홈 아래에 만든다.
+2. 찍힌 `confluence_publish_approve.py question --new …` 명령으로 승인 줄을 얻어 §3 4) 의 AskUserQuestion 승인을 받는다.
+3. 같은 명령에 `--apply` 를 붙인다. 검토 관문 · 골격 스탬프(그 파일로 `confluence_skeleton_check.py`) · 승인이 걸리고 POST 는 한 번만 보낸다. 생성은 알림을 끌 수 없어 `--minor` 와 함께 쓸 수 없고 `--message` 는 실리지 않는다.
+4. 출력의 `PAGE_ID=<ID>` 를 확인한다(다음 하위 페이지의 `--parent` 로 쓴다). 시간 초과 · 연결 오류로 끝나면 만들어졌는지 모르므로 같은 제목 페이지가 생겼는지 먼저 확인한다.
 
 **★저장 형식 ≠ MCP가 보여 주는 HTML** (실측 차이 — 이걸 모르면 앵커가 전부 빗나간다)
 

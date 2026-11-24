@@ -26,6 +26,7 @@ Jira 이슈 확인 → 파일 스테이징 → 커밋 메시지 작성 → 사�
 2. `git status`로 변경 파일 목록 확인
 3. **변경량 판단** → 대량 변경 시 의미 단위 분할 (아래 § 참조)
 4. 관련 파일 개별 스테이징 (`git add [파일명]`, `-A` 금지)
+   - **하네스(`~/.claude`) 커밋은 `_audit/history.md` 를 늘 함께 넣는다 (2026-11-13 사용자 지시)**: 사용자 원문 «_audit/history.md 까지 항상 커밋하도록 해. 왜 항상 저것만 남겨놓는 거야». 이 파일은 git 이 추적하는 감사 원장이고, 다른 세션의 `t41-append.sh` 같은 자동 기록이 줄을 계속 덧붙인다. 남의 미커밋 변경으로 보고 빼면 커밋마다 이 파일만 남는다. `git diff --numstat _audit/history.md` 로 덧붙인 줄만(삭제 0)인지 확인하고 경로 목록에 넣는다. 삭제·수정 줄이 있으면 넣기 전에 사용자에게 알린다. 커밋 범위와 무관한 기록이면 같은 사이클에 따로 `chore: Record ...` 커밋으로 넣어도 된다(남겨 두지 않는 것이 목적).
 4.5. **반복 거부 패턴 대조** (2026-07-21, harness-engineering repository-review 4단계 이식): diff를 과거 거부·교정 이력과 대조 — `search_memories(query="[프로젝트명] 거부 교정 반복 수정", filters={"metadata":{"category":"feedback"}})` + code_pattern(T04 avoidance_rubric) 1회씩. 과거 거부된 패턴이 diff에 재등장하면 커밋 전 사용자에게 지적 (예: 금지된 트레일러·거부된 네이밍·교정받은 표현). 매칭 없으면 침묵 통과 — 소음 금지.
 4.7. **보안 민감 diff → /security-review 제안** (2026-07-31): diff에 인증·인가 로직, 외부 입력 처리(파싱·쿼리·경로 조립), 신규 의존성 추가, 네트워크 경계 변경 중 하나라도 포함되면 커밋 전 빌트인 `/security-review` 1회를 **제안**(강제 아님, 무료·경량·diff 한정). 해당 없으면 침묵 통과.
 5. 커밋 메시지 초안 작성 (아래 형식 적용)
@@ -114,6 +115,7 @@ Step 4. 전체 완료 후 git log --oneline -N 으로 커밋 목록 보고
 - **git push AI 직접 실행 금지** — push는 사용자가 직접 수행 (명시적 허용 시에도 금지)
   - pull 도 같다. 2026-11-12 사용자 결정으로 `scripts/git-guardrails.sh` 는 첫 줄 `# APPROVED` 가 있어도 push · pull 계열을 막는다(승인 표시는 그 밖의 git 차단만 푼다). 세션 안의 push 는 자격증명 입력 터미널이 없어 어차피 실패하므로 실행할 명령만 안내한다.
   - 훅이 못 막는 것: 미리 정의한 git·셸 별칭과 함수, 래퍼 스크립트, 다른 프로그램(xargs 등)을 거쳐 부르는 push · pull. 이것들도 규칙상 금지다.
+- **서브 에이전트의 커밋은 gitops 만 한다**: 다른 서브 에이전트 · teammate 의 commit · commit-tree · cherry-pick · revert · merge · rebase · am · update-ref · fast-import · HEAD 를 옮기는 reset(스테이징 해제는 `git reset -- <경로>`) · `scripts/propagate-queue.sh` 실행은 `scripts/git-guardrails.sh` 가 막고 `# APPROVED` 로도 풀리지 않는다(2026-11-24). 전파 스크립트가 든 명령은 읽기 허용 목록(cat · grep · git · python3 등)일 때만 통과한다. git 이나 전파 스크립트가 든 서브 에이전트 명령은 4,000자 · 구분자 36개 · git 낱말 72개를 넘으면 막히므로 나눠서 실행한다. 이 훅은 실수 방지 관문이고 악의적 서브 에이전트를 막는 경계가 아니다. 받아들이는 한계는 다른 언어를 거친 실행(python3 -c · 파이프로 넘긴 글 · sed 의 e) · 환경 변수가 가리키는 설정 파일로 옵션 주입(RIPGREP_CONFIG_PATH) · 글롭이나 변수로 숨은 이름 · 미리 만든 복사본이나 링크 · git 별칭 · ssh · 객체를 만드는 저수준 git 명령 · main 세션 자신의 긴 입력이다. 바꾼 파일 목록과 커밋 메시지 안을 main 에 돌려준다.
 
 ```
 추천 커밋 메시지:

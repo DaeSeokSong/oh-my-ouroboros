@@ -4,6 +4,7 @@
 # MCP·settings.json·시크릿은 건드리지 않음.
 #
 # 사용법: bash ~/.claude/scripts/setup-harness.sh
+# REF: knowledge/harness/code-history/scripts__setup-harness.sh.md
 set -euo pipefail
 
 SETTINGS_FILE="${HOME}/.claude/settings.json"
@@ -15,7 +16,6 @@ CORALLINE_SCRIPT="${HOME}/.claude/coralline/statusline.sh"
 STATUSLINE_CMD="bash ~/.claude/coralline/statusline.sh"
 CANDIDATES_TSV="${HOME}/.claude/_evolve/candidates.tsv"
 
-# ─── 색상 출력 헬퍼 ─────────────────────────────────────────────────────────
 ok()   { echo "[OK]   $*"; }
 skip() { echo "[SKIP] $*"; }
 warn() { echo "[WARN] $*" >&2; }
@@ -26,19 +26,13 @@ echo " ~/.claude harness setup"
 echo "========================================================"
 echo ""
 
-# ════════════════════════════════════════════════════════════════════════════
-# 섹션 1 — detect
-# ════════════════════════════════════════════════════════════════════════════
 echo "── 섹션 1: 의존성 감지 ─────────────────────────────────"
 
-HAS_NODE=0
 HAS_CLAUDE=0
-HAS_GIT=0
 
 if command -v node >/dev/null 2>&1; then
   NODE_VER="$(node --version 2>/dev/null || echo 'unknown')"
   ok "node 발견: ${NODE_VER}"
-  HAS_NODE=1
 else
   warn "node 없음 — 섹션 3(HUD 런처 실행)은 배선만 하고 실행 검증은 skip"
 fi
@@ -54,16 +48,12 @@ fi
 if command -v git >/dev/null 2>&1; then
   GIT_VER="$(git --version 2>/dev/null || echo 'unknown')"
   ok "git 발견: ${GIT_VER}"
-  HAS_GIT=1
 else
   warn "git 없음 — git 관련 단계 skip"
 fi
 
 echo ""
 
-# ════════════════════════════════════════════════════════════════════════════
-# 섹션 2 — plugins
-# ════════════════════════════════════════════════════════════════════════════
 echo "── 섹션 2: 플러그인 설치 ───────────────────────────────"
 
 if [[ "${HAS_CLAUDE}" -eq 0 ]]; then
@@ -71,7 +61,6 @@ if [[ "${HAS_CLAUDE}" -eq 0 ]]; then
 elif [[ ! -f "${SETTINGS_FILE}" ]]; then
   warn "settings.json 없음 (${SETTINGS_FILE}) — 섹션 2 skip"
 else
-  # python3로 settings.json 파싱
   PARSE_OK=0
   PLUGIN_DATA=""
   PLUGIN_DATA="$(SETTINGS_FILE="${SETTINGS_FILE}" python3 - <<'PYEOF'
@@ -105,10 +94,8 @@ PYEOF
   if [[ "${PARSE_OK}" -eq 0 ]] || [[ -z "${PLUGIN_DATA}" ]]; then
     warn "settings.json 파싱 실패 — 섹션 2 skip"
   else
-    # ── 마켓플레이스 등록 ──────────────────────────────────────────────────
     echo "  [2-a] 마켓플레이스 등록"
 
-    # 현재 등록된 마켓플레이스 목록 (실패해도 계속)
     MARKET_LIST=""
     MARKET_LIST="$(claude plugin marketplace list 2>/dev/null || true)"
 
@@ -118,35 +105,33 @@ PYEOF
         warn "마켓플레이스 '${name}' repo 정보 없음 — skip"
         continue
       fi
-      # 이름이 이미 목록에 있으면 skip
       if echo "${MARKET_LIST}" | grep -qF "${name}" 2>/dev/null; then
         skip "marketplace '${name}' 이미 등록됨"
       else
         echo "  → claude plugin marketplace add ${repo}  (${name})"
-        claude plugin marketplace add "${repo}" 2>/dev/null \
-          && ok "marketplace '${name}' 등록 완료" \
-          || warn "marketplace '${name}' 등록 실패 (이미 있거나 네트워크 오류 가능) — 계속 진행"
+        if ! { claude plugin marketplace add "${repo}" 2>/dev/null \
+          && ok "marketplace '${name}' 등록 완료"; }; then
+          warn "marketplace '${name}' 등록 실패 (이미 있거나 네트워크 오류 가능) — 계속 진행"
+        fi
       fi
     done <<< "${PLUGIN_DATA}"
 
-    # ── 플러그인 설치 ──────────────────────────────────────────────────────
     echo "  [2-b] 플러그인 설치"
 
-    # 현재 설치된 플러그인 목록
     PLUGIN_LIST=""
     PLUGIN_LIST="$(claude plugin list 2>/dev/null || true)"
 
     while IFS='|' read -r kind spec; do
       [[ "${kind}" != "PLUGIN" ]] && continue
-      # spec = "plugin@marketplace"
       PNAME="${spec%%@*}"
       if echo "${PLUGIN_LIST}" | grep -qF "${PNAME}" 2>/dev/null; then
         skip "plugin '${spec}' 이미 설치됨"
       else
         echo "  → claude plugin install ${spec} --scope user"
-        claude plugin install "${spec}" --scope user 2>/dev/null \
-          && ok "plugin '${spec}' 설치 완료" \
-          || warn "plugin '${spec}' 설치 실패 — 계속 진행"
+        if ! { claude plugin install "${spec}" --scope user 2>/dev/null \
+          && ok "plugin '${spec}' 설치 완료"; }; then
+          warn "plugin '${spec}' 설치 실패 — 계속 진행"
+        fi
       fi
     done <<< "${PLUGIN_DATA}"
   fi
@@ -154,16 +139,11 @@ fi
 
 echo ""
 
-# ════════════════════════════════════════════════════════════════════════════
-# 섹션 3 — news/statusline 배선
-# ════════════════════════════════════════════════════════════════════════════
 echo "── 섹션 3: HUD/statusline 배선 ─────────────────────────"
 
-# 3-a: HUD 디렉토리
 mkdir -p "${HUD_DIR}"
 ok "디렉토리 확보: ${HUD_DIR}"
 
-# 3-b: claudenews-hud.mjs 배치 (정적 런처 — verbatim embed)
 if [[ -f "${HUD_LAUNCHER}" ]]; then
   skip "HUD 런처 이미 존재: ${HUD_LAUNCHER}"
 else
@@ -217,7 +197,6 @@ HUDEOF
   ok "HUD 런처 생성 완료: ${HUD_LAUNCHER}"
 fi
 
-# 3-c: ~/.claudenews/config.json 처리
 mkdir -p "${CLAUDENEWS_DIR}"
 
 python3 - <<PYEOF
@@ -257,14 +236,12 @@ else:
     print(f"[OK]   config.json 신규 생성: {config_path}")
 PYEOF
 
-# 3-d: coralline 본체 존재 확인
 if [[ -f "${CORALLINE_SCRIPT}" ]]; then
   ok "coralline statusline.sh 존재 확인: ${CORALLINE_SCRIPT}"
 else
   warn "coralline/statusline.sh 없음 (${CORALLINE_SCRIPT}) — git pull로 하네스를 최신화하세요"
 fi
 
-# 3-e: _evolve/candidates.tsv 헤더 보장 (learn-from-feedback 후보 레지스트리 정본 — 없을 때만 생성, 멱등)
 if [[ -f "${CANDIDATES_TSV}" ]]; then
   skip "candidates.tsv 이미 존재: ${CANDIDATES_TSV}"
 else
@@ -275,17 +252,9 @@ fi
 
 echo ""
 
-# ════════════════════════════════════════════════════════════════════════════
-# 섹션 3.5 — git 로컬 배선: settings.json "model" 키 clean 필터
-# ════════════════════════════════════════════════════════════════════════════
-# 왜 (2026-09-28 사용자 결정): /model 명령이 "새 세션 기본값"을 gitignored settings.local.json 이
-# 아니라 추적되는 settings.json 에 직접 쓴다. 세션마다 모델을 바꾸는 것은 흔한 일인데 그때마다
-# git status/diff 에 뜨는 것이 소음이다. 실제 유효 모델은 settings.local.json pin(있으면)이
-# 재시작 시 이기므로(하네스 정책: rules/model-assignment.md) settings.json 의 "model" 키는
-# 버려도 실제 동작이 바뀌지 않는다. .git/config 는 clone 마다 새로 설정해야 하는 로컬 배선이라
-# (반복 결함 #8 — git 비전파) 이 스크립트가 담당한다. Claude Code 자신의 settings.json 내용을
-# 훅으로 바꾸는 대신, git 이 diff 를 계산하기 전에 걸러내는 clean 필터를 쓴다(git-native, Claude
-# Code 자기수정이 아니다).
+# WHY: /model 명령이 "새 세션 기본값"을 추적되는 settings.json 에 직접 써 git status/diff 소음이 된다(2026-09-28).
+# 실제 유효 모델은 settings.local.json pin(있으면)이 재시작 시 이기므로(rules/model-assignment.md) settings.json 의
+# "model" 키는 버려도 실제 동작이 바뀌지 않는다. .git/config 는 clone 마다 새로 설정해야 하는 로컬 배선이라 여기서 건다.
 echo "── 섹션 3.5: git model-키 필터 배선 ────────────────────"
 if git -C "${HOME}/.claude" rev-parse --git-dir >/dev/null 2>&1; then
   git -C "${HOME}/.claude" config filter.nomodel.clean "python3 ${HOME}/.claude/scripts/git-filter-nomodel-clean.py"
@@ -298,17 +267,14 @@ if git -C "${HOME}/.claude" rev-parse --git-dir >/dev/null 2>&1; then
   fi
   ok "git config filter.nomodel.{clean,smudge} 등록 (settings.json 의 model 키를 diff 계산에서 제외)"
 else
+  # shellcheck disable=SC2088
   warn "~/.claude 가 git 저장소가 아님 — 필터 배선 건너뜀"
 fi
 
 echo ""
 
-# ════════════════════════════════════════════════════════════════════════════
-# 섹션 4 — verify
-# ════════════════════════════════════════════════════════════════════════════
 echo "── 섹션 4: 검증 ────────────────────────────────────────"
 
-# 4-a: 설치된 플러그인 목록
 if [[ "${HAS_CLAUDE}" -eq 1 ]]; then
   echo "  [설치된 플러그인]"
   claude plugin list 2>/dev/null | sed 's/^/    /' || warn "claude plugin list 실패"
@@ -318,7 +284,6 @@ fi
 
 echo ""
 
-# 4-b: 파일 체크리스트
 echo "  [파일 존재 체크리스트]"
 check_file() {
   local label="$1" path="$2"
@@ -334,7 +299,6 @@ check_file "coralline script " "${CORALLINE_SCRIPT}"
 
 echo ""
 
-# 4-c: settings.json statusLine.command 확인 (read-only)
 if [[ -f "${SETTINGS_FILE}" ]]; then
   echo "  [settings.json statusLine 확인]"
   SETTINGS_FILE="${SETTINGS_FILE}" HUD_LAUNCHER="${HUD_LAUNCHER}" python3 - <<'PYEOF'
@@ -364,26 +328,27 @@ fi
 
 echo ""
 
-# 4-c2: git pre-commit hook 설치 (ci-gate-commit.sh — 다중 서버 이식성)
 if [[ -d "${HOME}/.claude/.git" ]]; then
   ln -sf "${HOME}/.claude/scripts/ci-gate-commit.sh" "${HOME}/.claude/.git/hooks/pre-commit"
   echo "  [OK]   git pre-commit hook → scripts/ci-gate-commit.sh (symlink)"
   ln -sf "${HOME}/.claude/scripts/ci-gate-commit-msg.sh" "${HOME}/.claude/.git/hooks/commit-msg"
   echo "  [OK]   git commit-msg hook → scripts/ci-gate-commit-msg.sh (symlink — feat: 커밋의 Intent 줄 검사, 2026-09-06)"
-  chmod +x "${HOME}/.claude/scripts/ci-gate-post-commit.sh"   # git 은 실행 비트 없는 훅을 무시한다
+  chmod +x "${HOME}/.claude/scripts/ci-gate-post-commit.sh"   # NEVER: 이 chmod 를 빼지 않는다. git 은 실행 비트 없는 훅을 무시한다
   ln -sf "${HOME}/.claude/scripts/ci-gate-post-commit.sh" "${HOME}/.claude/.git/hooks/post-commit"
   echo "  [OK]   git post-commit hook → scripts/ci-gate-post-commit.sh (symlink — Candidate: 트레일러 커밋을 학습 후보 대장에 연결, 2026-10-17)"
 else
+  # shellcheck disable=SC2088
   warn "~/.claude가 git repo가 아님 — pre-commit hook 설치 skip"
 fi
 
-# 4-c3: 머신 로컬 의존물 (clone 미전파 — 2026-08-19 검수 발견으로 편입)
+# WHY: 머신 로컬 의존물은 clone 으로 전파되지 않는다(2026-08-19 검수 발견으로 편입).
 if command -v pdf-inspector >/dev/null 2>&1; then
   echo "  [OK]   pdf-inspector CLI 존재 ($(pdf-inspector --version 2>/dev/null | head -1))"
 elif command -v npm >/dev/null 2>&1; then
-  npm install -g @firecrawl/pdf-inspector >/dev/null 2>&1 \
-    && echo "  [OK]   pdf-inspector CLI 설치 완료 (npm, paper-read PDF 폴백)" \
-    || warn "pdf-inspector 설치 실패 — 수동: npm install -g @firecrawl/pdf-inspector"
+  if ! { npm install -g @firecrawl/pdf-inspector >/dev/null 2>&1 \
+    && echo "  [OK]   pdf-inspector CLI 설치 완료 (npm, paper-read PDF 폴백)"; }; then
+    warn "pdf-inspector 설치 실패 — 수동: npm install -g @firecrawl/pdf-inspector"
+  fi
 else
   warn "npm 부재 — pdf-inspector 미설치 (paper-read PDF 폴백용, 수동: npm install -g @firecrawl/pdf-inspector)"
 fi
@@ -396,7 +361,6 @@ fi
 
 echo ""
 
-# 4-d: 마무리 안내
 echo "========================================================"
 echo " 설정 완료"
 echo "========================================================"

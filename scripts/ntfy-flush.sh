@@ -1,12 +1,6 @@
 #!/bin/bash
 # =============================================================
-# ntfy 큐 독립 배송기 (2026-10-01 사용자 결정) — cron 이 매분 부른다.
-#
-# 왜 훅과 따로 두는가:
-#   claude-notify.sh 는 큐에 줄이 있으면 새 알림을 큐 뒤에 넣고, 훅 한 번에 큐의
-#   최고 순위 한 건만 보낸다(슬롯 3). 큐를 비우는 주체가 Stop·Notification 훅뿐이라
-#   훅이 안 불리면 큐가 멈춘다. 2026-10-01 실측: 최종 보고가 64분 넘게 큐에 있었다.
-#   이 스크립트는 세션과 무관하게 큐를 비운다.
+# ntfy 큐 독립 배송기 — cron 이 매분 부른다. 세션과 무관하게 큐를 비운다.
 #
 # 동작:
 #   · 예산·halt·선증가·우선순위·재시도는 새로 만들지 않고 claude-notify.sh 를
@@ -24,6 +18,7 @@
 #
 # cron 등록 예시(crontab -e):
 #   * * * * * ~/.claude/scripts/ntfy-flush.sh
+# REF: knowledge/harness/code-history/scripts__ntfy-flush.sh.md
 # =============================================================
 
 exec >/dev/null 2>&1
@@ -42,7 +37,7 @@ MAX=$((10#$MAX))
 
 SEND_LOG="$HOME/.claude/_audit/ntfy-send.tsv"
 
-# 큐 줄 수: 잠금 실패분(.spill)도 센다 — 큐가 비어 보여 배송이 멈추지 않게(claude-notify 가 잠금 안에서 합친다).
+# WHY: 잠금 실패분(.spill)도 센다. 빼면 큐가 비어 보여 배송이 멈춘다(scripts/claude-notify.sh 가 잠금 안에서 합친다).
 queue_count() {
     local n=0 m=0
     [ -f "$QUEUE_FILE" ] && n=$(grep -c . "$QUEUE_FILE" 2>/dev/null)
@@ -50,16 +45,14 @@ queue_count() {
     echo $(( ${n:-0} + ${m:-0} ))
 }
 
-# 실제 발송 성공 수: claude-notify 의 발송 로그에서 flush_sent 줄을 센다. 줄 수 감소만으로는
-# 4xx 폐기·무효 줄 정리도 «발송»으로 잡혀 backoff 가 거짓으로 풀린다(2026-10-01 감사 D6).
+# WHY: 줄 수 감소만으로는 4xx 폐기·무효 줄 정리도 «발송»으로 잡혀 backoff 가 거짓으로 풀린다(2026-10-01 감사 D6).
 sent_count() {
     local n=0
     [ -f "$SEND_LOG" ] && n=$(grep -c -P '\tflush_sent$' "$SEND_LOG" 2>/dev/null)
     echo "${n:-0}"
 }
 
-# halt 가 유효 = 파일이 있고 수정 시각이 NTFY_HALT_RETRY_SEC(기본 3600, 0=하루 통째) 초 이내.
-# claude-notify.sh 의 halt_active 와 같은 판정이다(새 공용 파일을 만들지 않으려고 두 스크립트에 같은 몇 줄을 둔다).
+# WHY: scripts/claude-notify.sh 의 halt_active 와 같은 판정이다(새 공용 파일을 만들지 않으려고 두 스크립트에 같은 몇 줄을 둔다).
 halt_active() {
     local f="$USAGE_DIR/ntfy-$DAY.halt" sec="${NTFY_HALT_RETRY_SEC:-3600}" age
     [ -f "$f" ] || return 1
@@ -73,7 +66,6 @@ halt_active() {
 [ "$(queue_count)" -gt 0 ] || exit 0
 halt_active && exit 0
 
-# 진행 없이 멈춘 뒤에는 BACKOFF_SEC 동안 쉰다: 장애 중 매분 시도가 발송 기록을 불리지 않게 한다.
 BACKOFF_FILE="$USAGE_DIR/ntfy-flush.backoff"
 BACKOFF_SEC="${NTFY_FLUSH_BACKOFF_SEC:-300}"
 [[ "$BACKOFF_SEC" =~ ^[0-9]{1,5}$ ]] || BACKOFF_SEC=300
@@ -95,12 +87,11 @@ while [ "$sent" -lt "$MAX" ] && [ "$SECONDS" -lt 42 ]; do
     CLAUDE_NOTIFY_FLUSH_ONLY=1 timeout 15 bash "$NOTIFY" </dev/null
     rc=$?
     after=$(queue_count)
-    # timeout(124)·SIGKILL(137)로 끊긴 호출은 줄 수와 무관하게 실패다(보냈는지 알 수 없다).
+    # WHY: timeout(124)·SIGKILL(137)로 끊긴 호출은 보냈는지 알 수 없어 줄 수와 무관하게 실패로 본다.
     if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ] || [ "$after" -ge "$before" ]; then
         : > "$BACKOFF_FILE" 2>/dev/null
         break
     fi
-    # 줄이 줄었어도 발송 로그에 flush_sent 가 늘지 않았으면 폐기(4xx·무효 줄)다: backoff 는 건드리지 않고 다음 줄로 간다.
     if [ "$(sent_count)" -gt "$sent_before" ]; then
         rm -f "$BACKOFF_FILE" 2>/dev/null
     fi

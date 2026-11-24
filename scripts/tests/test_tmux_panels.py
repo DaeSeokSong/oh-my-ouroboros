@@ -5,6 +5,7 @@
 규칙 문면: 자기 pane($TMUX_PANE)은 절대 지우지 않고, purge 는 자동 생성(✳ 제목) pane 만,
 cleanup 은 ✳ 와 setup 이 만든 "name [role]" pane 만 지우며, 지울 목록을 먼저 출력하고,
 학습 세션(train.env 의 TRAIN_TMUX_PREFIX 로 시작하는 세션) 은 대상에서 뺀다.
+REF: knowledge/harness/code-history/scripts__tests__test_tmux_panels.py.md
 """
 import json
 import os
@@ -66,18 +67,18 @@ def tm(tmp_path):
         return {"pane_id": pid, "pane_title": title, "window_index": win, "window_name": wname, "session_name": sess}
 
     state = {"current_window": 0, "panes": [
-        pane("%1", "bash"),                       # 사용자가 연 일반 pane (첫 pane 이지만 main 이 아니다)
-        pane("%2", "alice [coder]"),              # setup 패널
-        pane("%3", "✳ Task"),                     # 자동 생성
-        pane("%5", "✳ claude"),                   # 자기 자신(✳ 제목이어도 지우면 안 된다)
-        pane("%6", "✳ Task", sess="exp-demo3"),    # 학습 세션 pane
-        pane("%7", "w", win=1, wname="tm-1"),     # 오버플로우 창
-        pane("%8", "self-win", win=2, wname="tm-2"),   # 자기 pane 이 든 오버플로우 창은 지우지 않는다
+        pane("%1", "bash"),
+        pane("%2", "alice [coder]"),
+        pane("%3", "✳ Task"),
+        pane("%5", "✳ claude"),
+        pane("%6", "✳ Task", sess="exp-demo3"),
+        pane("%7", "w", win=1, wname="tm-1"),
+        pane("%8", "self-win", win=2, wname="tm-2"),
     ]}
     (tmp_path / "state.json").write_text(json.dumps(state, ensure_ascii=False))
 
     def run(cmd, self_pane="%5"):
-        if self_pane == "%8":   # 자기 pane 이 tm-2 창에 있는 경우
+        if self_pane == "%8":
             state["current_window"] = 2
             (tmp_path / "state.json").write_text(json.dumps(state, ensure_ascii=False))
         env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "TMUX_PANE": self_pane,
@@ -93,26 +94,24 @@ def tm(tmp_path):
 
 def test_purge_kills_only_auto_created_panes_never_self_or_train(tm):
     out, kills = tm("purge")
-    assert kills == ["kill-pane %3"]                      # %1 일반·%2 setup·%5 자기·%6 학습 세션 보존
-    assert out.index("삭제 대상") < out.index("Purged")   # 목록 먼저, 삭제 나중
+    assert kills == ["kill-pane %3"]
+    assert out.index("삭제 대상") < out.index("Purged")
 
 
 def test_purge_does_not_assume_first_pane_is_main(tm):
-    # 자기 pane 이 첫 pane 이 아니고 ✳ 제목이어도 지워지지 않는다(수정 전에는 %5 를 지웠다)
     _, kills = tm("purge")
     assert "kill-pane %5" not in kills and "kill-pane %6" not in kills
 
 
 def test_cleanup_kills_setup_and_auto_panes_and_overflow_windows(tm):
     out, kills = tm("cleanup")
-    assert set(kills) == {"kill-pane %2", "kill-pane %3", "kill-window :1", "kill-window :2"}   # 자기(%5)·일반(%1)·학습(%6) 제외
+    assert set(kills) == {"kill-pane %2", "kill-pane %3", "kill-window :1", "kill-window :2"}
     assert "삭제 대상" in out
 
 
 def test_cleanup_outside_tmux_exits_zero_with_notice_and_kills_nothing(tmp_path):
-    """2026-10-01 P6 검수: tmux 밖에서 cleanup 이 exit 127(또는 첫 pane 을 자기로 오인해 삭제)이던 결함 — 안내 후 정상 종료."""
     env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
-    env["PATH"] = "/usr/bin:/bin"                                    # tmux 가 없거나 서버가 없는 환경
+    env["PATH"] = "/usr/bin:/bin"
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
     r = subprocess.run(["bash", str(SCRIPT), "cleanup"], check=False, capture_output=True, text=True, env=env, cwd=tmp_path)
     assert r.returncode == 0, r.stderr

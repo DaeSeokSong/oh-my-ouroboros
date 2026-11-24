@@ -2,6 +2,7 @@
 
 실행: uv run -q --with pytest python -m pytest scripts/tests/test_korean_report_check.py -q
 계약: 코드·인라인 코드·인용·표·주소를 뺀 뒤 한글 없는 6단어 이상 문장이 있거나 한글 비율 0.4 미만이면 Stop 에서 block JSON 을 낸다.
+REF: knowledge/harness/code-history/scripts__tests__test_korean_report_check.py.md
 """
 import json
 import subprocess
@@ -37,7 +38,6 @@ def test_all_english_blocks():
 
 
 def test_short_korean_with_many_identifiers_passes():
-    # 2026-10-16 qa 오탐 두 건: 식별자 꼴 토큰이 많은 짧은 한글 보고가 비율 규칙에 걸리면 안 된다.
     assert hits("판정: PASS. 근거는 pytest 29 passed, bash -n OK, exit 0 입니다. 자세한 모델은 gpt-6.1-sol 과 Sonnet 5.5 입니다.") == []
     assert hits("result: PASS\nRESULT: DONE target=coder\n검수가 끝났습니다.") == []
 
@@ -116,7 +116,7 @@ def test_cli_broken_input_silent():
     assert cli(None, raw="").strip() == ""
 
 
-# 작은 번호 글자(intent/2026-10-27-no-circled-numbers.md): Stop 훅은 막고, 스타일 검사기는 경고만 한다.
+# REF: intent/2026-10-27-no-circled-numbers.md (Stop 훅은 막고, 스타일 검사기는 경고만 한다)
 ONE, A_LOW, DIGIT_PAREN, BLACK = "①", "ⓐ", "⑴", "❶"
 
 
@@ -139,8 +139,8 @@ def test_circled_on_quote_line_passes_like_typos():
 def test_find_circled_caps_input_length():
     from korean_style_check import CIRCLED_MAX_CHARS, find_circled
     assert find_circled("가" * CIRCLED_MAX_CHARS + ONE) == []
-    assert find_circled("<code>" * 30_000 + ONE, html=False) != []   # 채팅 경로: HTML 구역 정규식을 건너뛰어 빠르다
-    assert find_circled(f"<code>{ONE}</code>") == []                  # 문서 경로: <code> 안은 제외
+    assert find_circled("<code>" * 30_000 + ONE, html=False) != []
+    assert find_circled(f"<code>{ONE}</code>") == []
 
 
 def test_circled_inside_fence_and_inline_code_passes():

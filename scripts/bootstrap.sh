@@ -14,13 +14,12 @@
 
 set -euo pipefail
 
-# ── 색상 출력 ──
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-NC='\033[0m'  # No Color
+NC='\033[0m'
 
 log_info()    { echo -e "${BLUE}[INFO]${NC}  $*"; }
 log_ok()      { echo -e "${GREEN}[OK]${NC}    $*"; }
@@ -30,7 +29,6 @@ log_step()    { echo -e "\n${CYAN}═══════════════�
                 echo -e "${CYAN}  STEP: $*${NC}"; \
                 echo -e "${CYAN}══════════════════════════════════════════════${NC}"; }
 
-# ── 인자 파싱 ──
 SKIP_MCP=false
 SKIP_PLUGINS=false
 USE_HTTPS=false
@@ -52,22 +50,17 @@ for arg in "$@"; do
     esac
 done
 
-# ── 상수 ──
 REPO_SSH="<your-private-harness-repo>"
 REPO_HTTPS="<your-private-harness-repo>"
 CLAUDE_DIR="$HOME/.claude"
 FAILED_STEPS=()
 
-# ── 실패 추적 래퍼 ──
 step_failed() {
     local step="$1"
     log_error "FAILED: $step"
     FAILED_STEPS+=("$step")
 }
 
-# =============================================================
-# STEP 0: MCP 연결 사전 확인
-# =============================================================
 log_step "0/6  MCP 연결 사전 확인"
 
 echo ""
@@ -103,7 +96,6 @@ if ! $SETUP_ATLASSIAN && ! $SETUP_NOTION && ! $SETUP_OTHER; then
     log_info "MCP 연결 건너뜀. 나중에 설치하려면 INSTALL.md 참고."
 fi
 
-# ── 프로젝트 환경 설정 ──
 echo ""
 log_info "프로젝트 환경 설정:"
 echo ""
@@ -134,12 +126,9 @@ else
     log_ok "기본 모델: Sonnet (sonnet)"
 fi
 
-# (env-config·model pin 저장은 STEP 2 의 클론 뒤로 옮겼다 — 2026-10-01 감사:
-#  클론 전에 쓰면 ~/.claude 가 없을 때 실패하고, 비-git 기존 폴더는 .bak 으로 밀려 저장분이 사라진다)
+# NEVER: env-config·model pin 저장을 STEP 2 의 클론 앞으로 옮기지 않는다(2026-10-01 감사):
+#  클론 전에 쓰면 ~/.claude 가 없을 때 실패하고, 비-git 기존 폴더는 .bak 으로 밀려 저장분이 사라진다
 
-# =============================================================
-# STEP 1: 사전 요구사항 확인
-# =============================================================
 log_step "1/6  사전 요구사항 확인"
 
 check_cmd() {
@@ -171,9 +160,6 @@ if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
 fi
 log_ok "모든 사전 요구사항 충족"
 
-# =============================================================
-# STEP 2: ~/.claude 저장소 클론 또는 업데이트
-# =============================================================
 log_step "2/6  ~/.claude 저장소 동기화"
 
 clone_repo() {
@@ -181,6 +167,7 @@ clone_repo() {
     local label="$2"
     log_info "git clone ($label): $url"
     if git clone "$url" "$CLAUDE_DIR" 2>&1; then
+        # shellcheck disable=SC2088
         log_ok "~/.claude 클론 완료 ($label)"
         return 0
     else
@@ -189,14 +176,17 @@ clone_repo() {
 }
 
 if [ -d "$CLAUDE_DIR/.git" ]; then
+    # shellcheck disable=SC2088
     log_info "~/.claude 이미 git 저장소로 존재 → git pull"
     if git -C "$CLAUDE_DIR" pull --ff-only 2>&1; then
+        # shellcheck disable=SC2088
         log_ok "~/.claude git pull 완료"
     else
         log_warn "git pull 실패 (로컬 변경사항 충돌 가능). 현재 파일을 유지합니다."
         step_failed "git-pull"
     fi
 elif [ -d "$CLAUDE_DIR" ]; then
+    # shellcheck disable=SC2088
     log_warn "~/.claude 존재하지만 git 저장소가 아님"
     log_info "기존 디렉토리를 ~/.claude.bak 으로 백업 후 클론합니다."
     BACKUP_DIR="${CLAUDE_DIR}.bak.$(date +%Y%m%d_%H%M%S)"
@@ -212,6 +202,7 @@ elif [ -d "$CLAUDE_DIR" ]; then
         fi
     fi
 else
+    # shellcheck disable=SC2088
     log_info "~/.claude 없음 → git clone"
     if $USE_HTTPS; then
         clone_repo "$REPO_HTTPS" "HTTPS" || { step_failed "git-clone"; exit 1; }
@@ -224,19 +215,17 @@ else
     fi
 fi
 
-# 스크립트 실행 권한 복원
 chmod +x "$CLAUDE_DIR/scripts/"*.sh 2>/dev/null && log_ok "scripts/*.sh 실행 권한 설정 완료"
 
-# ── env-config 저장 (클론 뒤) ──
-# 이미 있으면 이 스크립트가 묻는 세 키만 갱신한다 — 덮어쓰면 알림 주제 등 사용자 설정이 지워진다.
+# NEVER: 이미 있는 env-config 를 덮어쓰지 않는다. 이 스크립트가 묻는 세 키만 갱신한다 — 덮어쓰면 알림 주제 등 사용자 설정이 지워진다.
 ENV_CONFIG="$CLAUDE_DIR/env-config"
 CONFLUENCE_MCP_VAL=$( $SETUP_ATLASSIAN && echo "true" || echo "false" )
 log_info "환경 설정 저장: $ENV_CONFIG"
 if [ -f "$ENV_CONFIG" ]; then
-    [ -s "$ENV_CONFIG" ] && [ -n "$(tail -c1 "$ENV_CONFIG")" ] && echo >> "$ENV_CONFIG"   # 마지막 줄이 개행 없이 끝나면 append 가 그 줄에 붙는다(2026-10-01 P6 검수)
+    [ -s "$ENV_CONFIG" ] && [ -n "$(tail -c1 "$ENV_CONFIG")" ] && echo >> "$ENV_CONFIG"   # WHY: 마지막 줄이 개행 없이 끝나면 append 가 그 줄에 붙는다(2026-10-01 P6 검수)
     for kv in "CONFLUENCE_MCP=$CONFLUENCE_MCP_VAL" "BIO_PLAUSIBILITY=$BIO_PLAUSIBILITY" "DEFAULT_MODEL=$DEFAULT_MODEL"; do
         if grep -q "^${kv%%=*}=" "$ENV_CONFIG"; then
-            sed -i "s|^${kv%%=*}=.*|${kv}|" "$ENV_CONFIG"   # 값은 true/false/sonnet/opus 뿐이라 sed 특수문자 없음
+            sed -i "s|^${kv%%=*}=.*|${kv}|" "$ENV_CONFIG"   # WHY: 값은 true/false/sonnet/opus 뿐이라 sed 특수문자 없음
         else
             printf '%s\n' "$kv" >> "$ENV_CONFIG"
         fi
@@ -252,7 +241,7 @@ ENVEOF
     log_ok "env-config 저장 완료"
 fi
 
-# ── model pin 반영 (2026-07-15 개정 — GPT P1-6): 추적 settings.json에는 model 키를 두지
+# WHY: model pin 반영 (2026-07-15 개정 — GPT P1-6): 추적 settings.json에는 model 키를 두지
 # 않는다(머신별 사용자 영역, 과거 2회 의도 제거 이력). 선택값은 gitignored settings.local.json에
 # 기록. 주의: ~/.claude/settings.local.json의 전역 인식은 공식 문서에 명시돼 있지 않으므로,
 # 새 세션에서 /status로 적용 여부를 확인하고 미적용이면 셸에 ANTHROPIC_MODEL export를 권장.
@@ -267,12 +256,9 @@ else
 fi
 log_info "적용 검증: 새 세션에서 /status 확인 — 미적용 시 셸에 export ANTHROPIC_MODEL=$DEFAULT_MODEL 추가"
 
-# =============================================================
-# STEP 3: 디렉토리 구조 초기화 (.gitignore 제외 항목)
-# =============================================================
 log_step "3/6  디렉토리 구조 초기화"
 
-# projects/ 는 .gitignore에 있어 git pull 시 생성되지 않음
+# WHY: projects/ 는 .gitignore에 있어 git pull 시 생성되지 않음(~/.claude/projects/)
 # Claude Code가 사용하는 메모리 디렉토리를 미리 생성
 if [ ! -d "$CLAUDE_DIR/projects" ]; then
     mkdir -p "$CLAUDE_DIR/projects"
@@ -281,29 +267,23 @@ else
     log_ok "projects/ 디렉토리 이미 존재"
 fi
 
-# long-term 메모리 디렉토리 안내
 log_warn "long-term 메모리 경로를 확인하세요."
 log_info "  memory-write.md에 설정된 경로: /data/\$(whoami)/.claude/long-term/"
 log_info "  해당 경로가 없으면: mkdir -p /data/\$(whoami)/.claude/long-term/"
 log_info "  또는 memory-write.md의 경로를 현재 서버에 맞게 수정하세요."
 
-# =============================================================
-# STEP 4: MCP 서버 설치
-# =============================================================
 log_step "4/6  MCP 서버 설치"
 
 if $SKIP_MCP; then
     log_warn "--skip-mcp 옵션 감지 → MCP 설치 건너뜀"
 else
 
-    # ── MCP 이미 등록 여부 확인 헬퍼 ──
     mcp_exists() {
         local name="$1"
         claude mcp list 2>/dev/null | grep -q "^$name " || \
         claude mcp list 2>/dev/null | grep -q "^$name$"
     }
 
-    # ── 4-1: context7 ──
     log_info "context7 MCP 설치 확인 중..."
     if mcp_exists "context7"; then
         log_ok "context7 이미 등록됨 → 건너뜀"
@@ -317,7 +297,6 @@ else
         fi
     fi
 
-    # ── 4-2: sentry (HTTP transport) ──
     log_info "sentry MCP 설치 확인 중..."
     if mcp_exists "sentry"; then
         log_ok "sentry 이미 등록됨 → 건너뜀"
@@ -331,7 +310,6 @@ else
         fi
     fi
 
-    # ── 4-3: playwright (headless) ──
     log_info "playwright MCP 설치 확인 중..."
     if mcp_exists "playwright"; then
         log_ok "playwright 이미 등록됨 → 건너뜀"
@@ -345,7 +323,6 @@ else
         fi
     fi
 
-    # ── 4-4: Atlassian / confluence (STEP 0에서 선택한 경우) ──
     log_info "confluence MCP 설치 확인 중..."
     if mcp_exists "confluence"; then
         log_ok "confluence 이미 등록됨 → 건너뜀"
@@ -385,7 +362,6 @@ else
         log_info "Atlassian MCP 건너뜀. 나중에 설치하려면 INSTALL.md 참고."
     fi
 
-    # ── 4-5: Notion (STEP 0에서 선택한 경우) ──
     log_info "notion MCP 설치 확인 중..."
     if mcp_exists "notion"; then
         log_ok "notion 이미 등록됨 → 건너뜀"
@@ -409,7 +385,6 @@ else
         log_info "Notion MCP 건너뜀. 나중에 설치하려면 INSTALL.md 참고."
     fi
 
-    # ── 4-6: 기타 MCP (STEP 0에서 선택한 경우) ──
     if $SETUP_OTHER; then
         echo ""
         log_info "기타 MCP를 직접 입력합니다. 여러 개 추가 가능 (빈 줄 입력 시 종료)."
@@ -433,13 +408,13 @@ else
 
             log_info "$OTHER_MCP_NAME MCP 등록 중..."
             if [[ -n "$OTHER_MCP_ENV" ]]; then
-                # 환경변수 파싱: KEY=VALUE 형식을 --env KEY=VALUE 로 변환
                 ENV_ARGS=()
                 IFS=',' read -ra ENV_PAIRS <<< "$OTHER_MCP_ENV"
                 for pair in "${ENV_PAIRS[@]}"; do
-                    pair=$(echo "$pair" | xargs)  # trim whitespace
+                    pair=$(echo "$pair" | xargs)
                     [[ -n "$pair" ]] && ENV_ARGS+=(--env "$pair")
                 done
+                # shellcheck disable=SC2086
                 if claude mcp add "$OTHER_MCP_NAME" "${ENV_ARGS[@]}" -- $OTHER_MCP_CMD 2>&1; then
                     log_ok "$OTHER_MCP_NAME MCP 설치 완료"
                 else
@@ -447,6 +422,7 @@ else
                     step_failed "mcp:$OTHER_MCP_NAME"
                 fi
             else
+                # shellcheck disable=SC2086
                 if claude mcp add "$OTHER_MCP_NAME" -- $OTHER_MCP_CMD 2>&1; then
                     log_ok "$OTHER_MCP_NAME MCP 설치 완료"
                 else
@@ -458,11 +434,8 @@ else
         log_info "기타 MCP 입력 완료."
     fi
 
-fi  # end SKIP_MCP
+fi
 
-# =============================================================
-# STEP 5: Claude Code 플러그인 확인 및 ntfy 안내
-# =============================================================
 log_step "5/6  플러그인 확인 및 ntfy 안내"
 
 if ! $SKIP_PLUGINS; then
@@ -476,7 +449,7 @@ if ! $SKIP_PLUGINS; then
     echo "  7. codex@openai-codex"
 fi
 
-# 2026-10-01 P6 검수: 알림 주제는 추적 파일(claude-notify.sh)이 아니라 gitignored env-config 의 USER_NTFY_TOPIC 에 둔다(주제 값은 출력하지 않는다).
+# WHY: 2026-10-01 P6 검수: 알림 주제는 추적 파일(claude-notify.sh)이 아니라 gitignored env-config 의 USER_NTFY_TOPIC 에 둔다(주제 값은 출력하지 않는다).
 if [ -f "$CLAUDE_DIR/scripts/claude-notify.sh" ]; then
     if grep -qsE '^USER_NTFY_TOPIC=.+' "$CLAUDE_DIR/env-config" "$CLAUDE_DIR/config/env-config"; then
         log_ok "ntfy USER_NTFY_TOPIC 설정됨 (env-config)"
@@ -485,9 +458,6 @@ if [ -f "$CLAUDE_DIR/scripts/claude-notify.sh" ]; then
     fi
 fi
 
-# =============================================================
-# 최종 결과 요약
-# =============================================================
 echo ""
 echo -e "${CYAN}══════════════════════════════════════════════${NC}"
 echo -e "${CYAN}  Bootstrap 완료 요약${NC}"

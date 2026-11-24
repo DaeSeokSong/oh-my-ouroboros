@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: EXE001, UP017, PLW1510, PLR0133 — pre-existing lines left untouched (2026-11-22: existing tests must not change); system python3 3.10 has no datetime.UTC
 """confluence_publish_approve.py 회귀 테스트 (임시 HOME·가짜 세션 기록 — 실제 _audit·실제 세션 기록은 건드리지 않는다).
 
 실행: python3 ~/.claude/scripts/tests/test_confluence_publish_approve.py → 실패 0 이면 exit 0
@@ -6,6 +7,7 @@
 ■ 케이스 (plan 개정 1 «문서·시험»): 승인 없음·다른 보기·자유 입력·sidechain 기록·subagents 폴더 기록·결박 안 된 tool_result·
   질문 줄 형식 오류·대상/알림/버전 설명 불일치·1시간 지남·미래 시각 → 불통. 정상 통과·재사용 불통·여러 페이지 한 질문 → 페이지별 소모·
   한 AskUserQuestion 의 여러 질문 각각 판정·큰 파일 끝 읽기·동시 소모·새 페이지·페이지 ID 정규화·stamp 폐지.
+REF: knowledge/harness/code-history/scripts__tests__test_confluence_publish_approve.py.md
 """
 import json
 import os
@@ -32,25 +34,18 @@ OK_LABEL = "게시 승인"
 
 
 def iso(delta_s=0):
-    """UTC Z time string shifted by delta_s seconds."""
     return (datetime.now(timezone.utc) + timedelta(seconds=delta_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def page_line(pages="2001", notify="notify", msg="실험 결과 추가"):
-    """Approval line for existing pages."""
     return f"게시 승인 요청 · page={pages} · 알림={notify} · 버전 설명=«{msg}»"
 
 
 def new_line(space="S1", parent="P1", title="새 페이지 제목"):
-    """Approval line for a new page."""
     return f"게시 승인 요청 · new · space={space} · parent={parent} · 제목=«{title}»"
 
 
 def ask(questions, answers, ts_ans=None, ts_ask=None, sidechain=False, session="s1", sub=False, bind=True, file=None):
-    """Append an AskUserQuestion tool_use + answered tool_result to a fake session log.
-
-    questions: list of (question string, option labels). answers: {question: answer}. bind=False breaks the tool_use_id link.
-    """
     global _n
     _n += 1
     tuid = f"toolu_{TAG}_{_n}"
@@ -68,12 +63,10 @@ def ask(questions, answers, ts_ans=None, ts_ask=None, sidechain=False, session="
 
 
 def dumps(rec):
-    """Compact JSON like the real session log (no spaces after separators, Korean kept)."""
     return json.dumps(rec, ensure_ascii=False, separators=(",", ":"))
 
 
 def raw(session, *recs):
-    """Append raw records to a fake session log."""
     path = PROJ / f"{session}.jsonl"
     with open(path, "a", encoding="utf-8") as f:
         for r in recs:
@@ -81,7 +74,6 @@ def raw(session, *recs):
 
 
 def queued(prompt, origin=None, mode="prompt"):
-    """A message typed while a turn runs: recorded only as an attachment line of type queued_command (real log shape)."""
     a = {"type": "queued_command", "prompt": prompt, "commandMode": mode}
     if origin is not None:
         a["origin"] = origin
@@ -89,18 +81,15 @@ def queued(prompt, origin=None, mode="prompt"):
 
 
 def turn(kind, ts, **extra):
-    """A minimal user/assistant conversation line."""
     return {"type": kind, "isSidechain": False, "timestamp": ts, "message": {"role": kind, "content": extra.pop("content", [])}, **extra}
 
 
 def approve(line, answer=OK_LABEL, labels=(OK_LABEL, "취소"), pre="아래 게시를 승인하시겠습니까?\n", post="\n문의는 채팅으로.", **kw):
-    """Ask one approval question whose answer is `answer`."""
     q = f"{pre}{line}{post}"
     return ask([(q, list(labels))], {q: answer}, **kw)
 
 
 def run(*args, env=None):
-    """Run the tool; return (rc, parsed JSON of the last stdout line or raw output)."""
     r = subprocess.run([sys.executable, str(TOOL), *args], capture_output=True, text=True, env=env or ENV)
     try:
         return r.returncode, json.loads(r.stdout.strip().splitlines()[-1])
@@ -109,29 +98,24 @@ def run(*args, env=None):
 
 
 def check_page(page, notify="notify", msg="실험 결과 추가", consume=False):
-    """Run check for one existing page."""
     return run("check", *(["--consume"] if consume else []), "--page", page, "--notify", notify, "--message", msg)
 
 
 def expect(name, cond, detail=""):
-    """Print one OK/FAIL line and count failures."""
     global fail
     fail += 0 if cond else 1
     print(f"{'OK ' if cond else 'FAIL'} {name}{'' if cond else f' (detail: {detail})'}")
 
 
 def blocked(name, rc_o, hint=None):
-    """Expect a failing check (rc 1, ok false, optional reason substring)."""
     rc, o = rc_o
     expect(name, rc == 1 and o["ok"] is False and (hint is None or hint in o["reason"]), o)
 
 
 try:
-    # --- 승인 없음 ---
     blocked("승인 기록이 없음(projects 폴더 비어 있음) → 불통(승인 줄 원문 포함)", check_page("1001"), "게시 승인 요청 · page=1001")
     expect("불통 사유에 AskUserQuestion 안내", "AskUserQuestion" in check_page("1001")[1]["reason"])
 
-    # --- 불통 케이스 ---
     approve(page_line("1002"), answer="취소")
     blocked("다른 보기(취소)를 고름 → 불통", check_page("1002"))
     approve(page_line("1003"), answer="그냥 바꿔주세요")
@@ -160,12 +144,10 @@ try:
     blocked("미래 시각 → 불통", check_page("1015"))
     approve(page_line("1016"), ts_ans="2026-10-07T12:00:00")
     blocked("시간대 없는 시각 → 불통", check_page("1016"))
-    # 질문 안 대상이 우연히 같아도 답은 자기 질문에만 결박: 질문 문자열이 answers 키와 다르면 불통
     q = page_line("1017")
     ask([(q, [OK_LABEL, "취소"])], {"다른 질문": OK_LABEL})
     blocked("answers 키가 질문 문자열과 다름 → 불통", check_page("1017"))
 
-    # --- 정상 ---
     approve(page_line("2001"))
     rc, o = check_page("2001")
     expect("정상 → 통과(소모 없음)", rc == 0 and o["ok"], o)
@@ -182,7 +164,6 @@ try:
     expect("같은 대상에 새 승인 질문 → 다시 통과", rc == 0 and o["ok"], o)
     expect("장부 파일 0600·폴더 0700", (AUDIT / "used.tsv").stat().st_mode & 0o777 == 0o600 and AUDIT.stat().st_mode & 0o777 == 0o700)
 
-    # --- 가장 최근 승인부터 쓴다 ---
     approve(page_line("2002"), ts_ans=iso(-1200))
     t_new = approve(page_line("2002"), ts_ans=iso(-60))
     check_page("2002", consume=True)
@@ -192,7 +173,6 @@ try:
     expect("남은 오래된 승인으로 한 번 더 통과", rc == 0, o)
     blocked("승인 둘 다 소모 → 불통", check_page("2002", consume=True))
 
-    # --- 여러 페이지 한 질문 → 페이지별 소모 ---
     approve(page_line("3001,3002", notify="quiet", msg="여러 페이지"))
     rc, o = check_page("3001", notify="quiet", msg="여러 페이지", consume=True)
     expect("여러 페이지: 첫째 소모 통과", rc == 0, o)
@@ -201,7 +181,6 @@ try:
     expect("여러 페이지: 하나 소모 뒤에도 다른 하나는 통과", rc == 0 and o["ok"], o)
     blocked("여러 페이지: 목록에 없는 페이지 → 불통", check_page("3003", notify="quiet", msg="여러 페이지"))
 
-    # --- 한 AskUserQuestion 의 여러 질문 각각 판정 ---
     qa, qb, qc = ("A 게시\n" + page_line("4001"), "B 게시\n" + page_line("4002"), "C 게시\n" + page_line("4003"))
     ask([(qa, [OK_LABEL, "취소"]), (qb, [OK_LABEL, "취소"]), (qc, [OK_LABEL, "취소"])], {qa: OK_LABEL, qb: "취소", qc: OK_LABEL})
     rc_a, _ = check_page("4001")
@@ -209,7 +188,6 @@ try:
     rc_c, _ = check_page("4003")
     expect("여러 질문: 승인한 것만 통과(A 통과·B 불통·C 통과)", (rc_a, rc_b, rc_c) == (0, 1, 0), (rc_a, rc_b, rc_c))
 
-    # --- 새 페이지 ---
     approve(new_line())
     rc, o = run("check", "--new", "--space", "S1", "--parent", "P1", "--title", "새 페이지 제목")
     expect("새 페이지: 정상", rc == 0 and o["ok"], o)
@@ -225,7 +203,6 @@ try:
     approve(page_line("4501"))
     blocked("page 줄 승인으로는 새 페이지 불가", run("check", "--new", "--space", "S1", "--parent", "P1", "--title", "4501"))
 
-    # --- 페이지 ID 정규화 ---
     approve(page_line("00123"))
     rc, o = check_page("123")
     expect("페이지 ID: 승인 줄 00123 ↔ 호출 123 같은 키", rc == 0 and o["ok"], o)
@@ -236,7 +213,6 @@ try:
         expect(f"페이지 ID: {bad!r} → 거부", rc != 0 and not o["ok"], o)
     expect("페이지 ID: 숫자 아님 사유에 «숫자 페이지 ID»", "숫자 페이지 ID" in check_page("tiny", consume=True)[1]["reason"])
 
-    # --- 큰 기록: 앞쪽의 오래된 대용량 줄은 읽지 않고, 끝에서 거꾸로 읽는다 ---
     big = PROJ / "big.jsonl"
     with open(big, "w", encoding="utf-8") as f:
         f.write(json.dumps({"type": "assistant", "isSidechain": False, "timestamp": iso(-30 * 3600), "x": "a" * 30_000_000}) + "\n")
@@ -245,7 +221,6 @@ try:
     expect("큰 파일(앞쪽 30MB 줄): 끝 읽기로 승인 발견", rc == 0 and o["ok"], o)
     big.unlink()
 
-    # 거꾸로 읽기 경계: 작은 청크로 줄 경계·긴 줄·끝 개행 없음을 확인
     import confluence_publish_approve as cpa
     sample = TMP_HOME / "sample.jsonl"
     for body in (b"a\nbb\nccc\n", b"a\nbb\nccc", b"\n\nx\n\n", b"only", b"1234567890123456789\nz\n"):
@@ -261,7 +236,6 @@ try:
             expect(f"거꾸로 읽기 {body!r}: 모든 청크 크기에서 줄 단위 일치", True)
     cpa.CHUNK = 1 << 20
 
-    # --- 동시 소모: 여러 프로세스가 같은 승인을 consume 하면 정확히 하나만 ok ---
     approve(page_line("9001"))
     procs = [subprocess.Popen([sys.executable, str(TOOL), "check", "--consume", "--page", "9001", "--notify", "notify",
                                "--message", "실험 결과 추가"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=ENV)
@@ -271,7 +245,6 @@ try:
     ledger_n = sum(1 for ln in (AUDIT / "used.tsv").read_text(encoding="utf-8").splitlines() if "\tpage:9001\t" in ln)
     expect("동시 소모: 8개 프로세스 중 정확히 하나만 ok·장부 한 줄", oks == 1 and ledger_n == 1, (oks, ledger_n, outs))
 
-    # --- 2026-10-07 qa D1·D2: 거꾸로 읽기 멈춤 판단은 user·assistant 줄만, compact 형식 기록 ---
     stale_ts = iso(-2 * 86400)
     approve(page_line("6001"), session="r1")
     raw("r1", {"type": "queue-operation", "operation": "dequeue", "timestamp": stale_ts, "sessionId": "x"})
@@ -294,7 +267,6 @@ try:
     blocked("오래된 user·assistant 줄 3줄 연속 뒤(파일 앞쪽)의 승인은 읽지 않아 불통", check_page("6005"))
     approve(page_line("6006"), session="r6", ts_ans=iso(-7200), ts_ask=iso(-7300))
     blocked("승인 답이 1시간 밖(2시간 전)이면 불통(compact 형식 기록)", check_page("6006"))
-    # 공백 있는 JSON 형식도 timestamp 를 잡는다
     spaced = PROJ / "r7.jsonl"
     spaced.write_text("".join(json.dumps(turn("assistant", stale_ts), ensure_ascii=False) + "\n" for _ in range(3)), encoding="utf-8")
     import confluence_publish_approve as cpa
@@ -303,7 +275,6 @@ try:
     expect("공백 있는 JSON(\"timestamp\": \"…\") 도 timestamp·type 을 읽음", all(k == "assistant" and h for k, h in kinds) and len(kinds) == 3, kinds)
     spaced.unlink()
 
-    # 큰 파일에서 실제로 일찍 멈추는지: 20MB 의 오래된 줄 앞에 둔 승인이 아니라, 끝쪽 승인을 찾은 뒤 앞을 읽지 않는다
     bigfile = PROJ / "r8.jsonl"
     with open(bigfile, "w", encoding="utf-8") as f:
         for _ in range(40):
@@ -313,7 +284,6 @@ try:
     orig_rev = cpa._reverse_lines
 
     def counting(path):
-        """Count the bytes of lines actually consumed."""
         for ln in orig_rev(path):
             total[0] += len(ln)
             yield ln
@@ -326,7 +296,6 @@ try:
            len(found) == 1 and total[0] < 3_000_000 < 20_000_000 <= bigfile.stat().st_size, (len(found), total[0], elapsed))
     bigfile.unlink()
 
-    # --- 2026-10-07 security #4: 승인 뒤 사람이 친 새 메시지가 있으면 무효 ---
     human_cases = {
         "7001": ("문자열 본문", turn("user", iso(), content="잠깐 보류해 주세요")),
         "7002": ("텍스트 블록", turn("user", iso(), content=[{"type": "text", "text": "내용 바꿔서 다시 해줘"}])),
@@ -373,7 +342,6 @@ try:
         rc, o = check_page(page)
         expect(f"승인 뒤 {label}만 있으면 통과", rc == 0 and o["ok"], o)
 
-    # --- 2026-10-07 security #6: 제어문자 거부 ---
     approve(new_line(title="탭\t제목"))
     blocked("새 페이지 제목에 탭 → 거부", run("check", "--new", "--space", "S1", "--parent", "P1", "--title", "탭\t제목"), "제어문자")
     approve(new_line(title="줄\n바꿈"))
@@ -388,7 +356,6 @@ try:
                        capture_output=True, text=True, env=ENV)
     expect("question 도 제어문자 거부", r.returncode == 1 and "제어문자" in r.stdout, r)
 
-    # --- stamp 폐지·question 출력·사용 오류 ---
     r = subprocess.run([sys.executable, str(TOOL), "stamp", "--quote", "x", "--page", "1"], capture_output=True, text=True, env=ENV)
     expect("stamp → exit 2·AskUserQuestion 안내·승인 줄 형식", r.returncode == 2 and "AskUserQuestion" in r.stderr and "게시 승인 요청 · page=" in r.stderr, r)
     r = subprocess.run([sys.executable, str(TOOL), "question", "--page", "7", "--page", "008", "--notify", "quiet", "--message", "설명"],
@@ -402,6 +369,154 @@ try:
     rc, o = run("check", "--cwd", "/tmp", "--page", "2001", "--notify", "notify", "--message", "x")
     expect("--cwd 는 받되 무시(하위 호환): 사용 오류가 아니라 불통 JSON", rc == 1 and o["ok"] is False, o)
     expect("승인 질문이 만든 기록 외에는 스탬프 파일이 만들어지지 않음", not list(AUDIT.glob("*.json")))
+
+    MSG = "실험 결과 추가"
+
+    def chg(page, *extra, consume=False, msg=MSG):
+        return run("check", *(["--consume"] if consume else []), "--page", page, "--notify", "notify", "--message", msg, *extra)
+
+    def question(*extra):
+        return subprocess.run([sys.executable, str(TOOL), "question", *extra], check=False, capture_output=True, text=True, env=ENV)
+
+    expect("기존 꼴 승인 줄 생성은 종전과 글자까지 같음",
+           cpa.approval_line(["page:7", "page:8"], "quiet", "설명") == page_line("7,8", "quiet", "설명")
+           and cpa.approval_line(["page:7"], "quiet", "설명", None, None) == page_line("7", "quiet", "설명"))
+    L_T, L_P, L_TP = (page_line("8001") + " · 새 제목=«새 이름»", page_line("8002") + " · 새 부모=456",
+                      page_line("8003") + " · 새 제목=«새 이름» · 새 부모=456")
+    r = question("--page", "8001", "--notify", "notify", "--message", MSG, "--set-title", "  새 이름 ")
+    expect("question: 제목만 → 새 제목 필드", r.returncode == 0 and L_T in r.stdout.splitlines(), r)
+    r = question("--page", "8002", "--notify", "notify", "--message", MSG, "--set-parent", "0456")
+    expect("question: 부모만 → 새 부모 필드(앞자리 0 제거)", r.returncode == 0 and L_P in r.stdout.splitlines(), r)
+    r = question("--page", "8003", "--notify", "notify", "--message", MSG, "--set-title", "새 이름", "--set-parent", "456")
+    expect("question: 둘 다 → 새 제목 다음 새 부모 순서", r.returncode == 0 and L_TP in r.stdout.splitlines(), r)
+    for line, want in ((L_T, ("새 이름", None)), (L_P, (None, "456")), (L_TP, ("새 이름", "456")), (page_line("8004"), (None, None))):
+        ap = cpa.parse_approval_line(line)
+        back = ap and cpa.approval_line(ap["keys"], ap["notify"], ap["message"], ap["title"], ap["parent"])
+        expect(f"생성 · 해석 왕복: {line[-30:]}", ap is not None and (ap["title"], ap["parent"]) == want and back == line, (ap, back))
+
+    approve(L_T)
+    approve(L_P)
+    approve(L_TP)
+    rc, o = chg("8001", "--set-title", "새 이름", consume=True)
+    expect("제목 변경 승인: 통과 · 소모", rc == 0 and o["ok"], o)
+    expect("제목 변경 소모 장부 키는 그대로 page:<ID>", "\tpage:8001\t" in (AUDIT / "used.tsv").read_text(encoding="utf-8"))
+    blocked("제목 변경 승인 재사용 → 불통", chg("8001", "--set-title", "새 이름", consume=True), "이미")
+    rc, o = chg("8002", "--set-parent", "456")
+    expect("이동 승인: 통과", rc == 0 and o["ok"], o)
+    rc, o = chg("8003", "--set-title", "새 이름", "--set-parent", "456")
+    expect("제목 + 이동 승인: 통과", rc == 0 and o["ok"], o)
+    blocked("새 제목 불일치 → 불통", chg("8003", "--set-title", "다른 이름", "--set-parent", "456"))
+    blocked("새 부모 불일치 → 불통", chg("8003", "--set-title", "새 이름", "--set-parent", "457"))
+    blocked("둘 다 든 승인으로 제목만 → 불통", chg("8003", "--set-title", "새 이름"))
+    blocked("둘 다 든 승인으로 이동만 → 불통", chg("8003", "--set-parent", "456"))
+
+    for page, tail in (("8101", " · 새 제목=«새 이름»"), ("8102", " · 새 부모=456"), ("8103", " · 새 제목=«새 이름» · 새 부모=456")):
+        approve(page_line(page) + tail)
+        blocked(f"8-a: 필드 든 승인({tail.strip()[:12]}…) → 훅 꼴 check(필드 없음) 불통",
+                run("check", f"--page={page}", "--notify=notify", f"--message={MSG}"), "게시 승인 기록 없음")
+    gate = TOOL.parent / "skeleton-gate.sh"
+    if shutil.which("jq") and shutil.which("python3") and shutil.which("timeout"):
+        def hook_reason(pid):
+            inp = json.dumps({"tool_name": "mcp__x__updateConfluencePage",
+                              "tool_input": {"pageId": pid, "versionMessage": MSG, "body": "<h1>x</h1>", "contentFormat": "html"}})
+            r = subprocess.run(["bash", str(gate)], check=False, input=inp, capture_output=True, text=True, env=ENV)
+            try:
+                return json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+            except (ValueError, KeyError):
+                return r.stdout + r.stderr
+        approve(page_line("8104"))
+        approve(page_line("8105") + " · 새 제목=«새 이름»")
+        r1, r2 = hook_reason("8104"), hook_reason("8105")
+        expect("8-a 훅 대조군: 필드 없는 승인은 승인 검사를 지나 다음 관문(골격 스탬프)에서 막힘", "골격" in r1 and "게시 승인 기록 없음" not in r1, r1)
+        expect("8-a 실제 훅(skeleton-gate.sh 무수정): 새 제목이 든 승인은 MCP 경로에서 «승인 기록 없음»", "게시 승인 기록 없음" in r2, r2)
+    else:
+        expect("8-a 실제 훅 시험: jq · python3 · timeout 이 있어야 함", False, "missing tool")
+
+    approve(page_line("8201"))
+    blocked("8-b: 필드 없는 승인 → 제목 변경 불통", chg("8201", "--set-title", "새 이름"))
+    blocked("8-b: 필드 없는 승인 → 이동 불통", chg("8201", "--set-parent", "456"))
+    rc, o = chg("8201")
+    expect("8-b 대조군: 같은 승인으로 필드 없는 호출은 통과", rc == 0 and o["ok"], o)
+
+    amb_msg = "a» · 새 제목=«X"
+    expect("8-c 전제: 두 호출의 승인 줄 글자가 같음", page_line("8301", msg=amb_msg) == page_line("8301", msg="a") + " · 새 제목=«X»")
+    approve(page_line("8301", msg="a") + " · 새 제목=«X»")
+    blocked("8-c: 표지가 든 버전 설명의 치환 호출 → 거부(두 가지로 읽힘)", chg("8301", msg=amb_msg), "두 가지로")
+    rc, o = chg("8301", "--set-title", "X", msg="a")
+    expect("8-c: 같은 줄은 «버전 설명 a + 새 제목 X» 호출에만 통과", rc == 0 and o["ok"], o)
+    ap = cpa.parse_approval_line(page_line("8301", msg="a") + " · 새 제목=«X»")
+    expect("8-c: 해석은 하나(버전 설명 a · 새 제목 X)", ap and (ap["message"], ap["title"]) == ("a", "X"), ap)
+    blocked("8-c: 표지가 든 새 제목 → 거부", chg("8301", "--set-title", "b» · 새 제목=«c", msg="a"), "두 가지로")
+    expect("8-c: 새 제목 표지가 두 번인 줄 → 해석 불가",
+           cpa.parse_approval_line(page_line("8302", msg="a") + " · 새 제목=«b» · 새 제목=«c»") is None)
+    expect("8-c: 버전 설명에 새 부모 표지가 든 줄 → 해석 불가", cpa.parse_approval_line(page_line("8303", msg="a» · 새 부모=5")) is None)
+    blocked("8-c: 새 부모 표지가 든 버전 설명 → 거부", check_page("8303", msg="a» · 새 부모=5"), "두 가지로")
+    r = question("--page", "8303", "--notify", "notify", "--message", amb_msg)
+    expect("8-c: question 도 표지 든 버전 설명 거부", r.returncode == 1 and "두 가지로" in r.stdout, r)
+
+    multi = page_line("8401,8402") + " · 새 제목=«X»"
+    expect("9: 여러 페이지 + 새 제목 줄 → 해석 불가", cpa.parse_approval_line(multi) is None)
+    approve(multi)
+    blocked("9: 여러 페이지 + 새 제목 승인 → 불통", chg("8401", "--set-title", "X"))
+    for bad_tail in (" · 새 부모=abc", " · 새 부모=0", " · 새 부모=5 · 새 제목=«X»", " · 새 제목=«  »"):
+        expect(f"9: 잘못된 새 필드{bad_tail!r} → 해석 불가", cpa.parse_approval_line(page_line("8403") + bad_tail) is None)
+    blocked("9: --set-parent 숫자 아님 → 거부", chg("8403", "--set-parent", "abc"), "숫자 페이지 ID")
+    blocked("9: --set-title 공백만 → 거부", chg("8403", "--set-title", "   "), "비어")
+    blocked("9: --set-title 제어문자 → 거부", chg("8403", "--set-title", "가\t나"), "제어문자")
+    approve(page_line("8405") + " · 새 부모=0456")
+    rc, o = chg("8405", "--set-parent", "456")
+    expect("9: 승인 줄 새 부모 0456 ↔ 호출 456 같은 값", rc == 0 and o["ok"], o)
+    r = question("--page", "1", "--page", "2", "--notify", "notify", "--message", MSG, "--set-title", "X")
+    expect("9: question 여러 페이지 + --set-title → 사용 오류", r.returncode == 2, r)
+    r = question("--new", "--space", "S", "--title", "T", "--set-parent", "5")
+    expect("9: question --new + --set-parent → 사용 오류(새 페이지 만들기와 구별)", r.returncode == 2, r)
+    blocked("9: check() 직접 호출 — 새 페이지 대상 + 새 제목 → 거부",
+            (1 if not cpa.check(cpa.new_key("S", "P", "T"), title="X")[0] else 0, {"ok": False, "reason": ""}))
+
+    for bad in (chr(0x202E) + "뒤집힘", "폭" + chr(0x200B) + "없음", chr(0x2066) + "격리"):
+        r = question("--page", "8501", "--notify", "notify", "--message", MSG, "--set-title", bad)
+        expect(f"보이지 않는 글자 {bad!r}: question 거부", r.returncode == 1 and "보이지 않는 글자" in r.stdout, r)
+        approve(page_line("8501") + f" · 새 제목=«{bad}»")
+        blocked(f"보이지 않는 글자 {bad!r}: check 거부", chg("8501", "--set-title", bad), "보이지 않는 글자")
+        expect(f"보이지 않는 글자 {bad!r}: 승인 줄 해석 불가", cpa.parse_approval_line(page_line("8501") + f" · 새 제목=«{bad}»") is None)
+    good = "새 «이름» Name 2"
+    r = question("--page", "8502", "--notify", "notify", "--message", MSG, "--set-title", good)
+    expect("일반 한글 · 영문 · «» 제목: question 통과", r.returncode == 0 and (page_line("8502") + f" · 새 제목=«{good}»") in r.stdout, r)
+    approve(page_line("8502") + f" · 새 제목=«{good}»")
+    rc, o = chg("8502", "--set-title", good)
+    expect("일반 한글 · 영문 · «» 제목: check 통과", rc == 0 and o["ok"], o)
+
+    COLON = "«:»"
+    clash1, clash2 = new_line("1", "5:판1", "결과"), new_line("1:5", "없음", "x")
+    expect("«:» 충돌 줄 1(부모에 «:») → 해석 불가", cpa.parse_approval_line(clash1) is None)
+    expect("«:» 충돌 줄 2(공간에 «:») → 해석 불가", cpa.parse_approval_line(clash2) is None)
+    approve(clash1)
+    approve(clash2)
+    blocked("«:» 충돌 1: 부모 5:판1 승인이 (1, 5, 판1:결과) 호출에 통과하지 않음",
+            run("check", "--new", "--space", "1", "--parent", "5", "--title", "판1:결과"))
+    blocked("«:» 충돌 2: 공간 1:5 승인이 (1, 5, :x) 호출에 통과하지 않음",
+            run("check", "--new", "--space", "1", "--parent", "5", "--title", ":x"))
+    blocked("check --new: 부모에 «:» → 거부(훅 꼴)", run("check", "--new", "--space=1", "--parent=5:판1", "--title=결과"), COLON)
+    blocked("check --new: 공간에 «:» → 거부", run("check", "--new", "--space", "1:5", "--title", "x"), COLON)
+    r = subprocess.run([sys.executable, str(TOOL), "question", "--new", "--space", "1:5", "--title", "x"],
+                       check=False, capture_output=True, text=True, env=ENV)
+    expect("question --new: 공간에 «:» → 오류", r.returncode == 1 and COLON in r.stdout, r)
+    r = subprocess.run([sys.executable, str(TOOL), "question", "--new", "--space", "1", "--parent", "5:판1", "--title", "x"],
+                       check=False, capture_output=True, text=True, env=ENV)
+    expect("question --new: 부모에 «:» → 오류", r.returncode == 1 and COLON in r.stdout, r)
+    try:
+        cpa.check_and_consume_new("1", "5:판1", "결과")
+        expect("check_and_consume_new: 부모에 «:» → 종료", False)
+    except SystemExit as e:
+        expect("check_and_consume_new: 부모에 «:» → 종료(사유 포함)", COLON in str(e.code), e.code)
+    approve(new_line("S1", "P1", "판1: 결과 · 비교"))
+    rc, o = run("check", "--new", "--space", "S1", "--parent", "P1", "--title", "판1: 결과 · 비교")
+    expect("제목에 «:» 가 든 정상 새 페이지 줄 → 통과", rc == 0 and o["ok"], o)
+    ap = cpa.parse_approval_line(new_line("S1", "P1", "판1: 결과"))
+    expect("제목에 «:» 가 든 줄의 키는 종전과 같음", ap and ap["keys"] == ["new:S1:P1:판1: 결과"], ap)
+
+    expect("is_approval_question: 새 필드 든 승인 질문 인정",
+           cpa.is_approval_question({"questions": [{"question": "확인\n" + L_TP, "options": [{"label": OK_LABEL}, {"label": "취소"}]}]}))
 finally:
     shutil.rmtree(TMP_HOME, ignore_errors=True)
 

@@ -5,7 +5,7 @@ set -euo pipefail
 
 SECRETS_FILE="$HOME/.claude/mcp-secrets.env"
 if [[ -f "$SECRETS_FILE" ]]; then
-  set -a                 # 이후 source되는 변수를 export 형식 무관하게 자동 export
+  set -a
   # shellcheck disable=SC1090
   source "$SECRETS_FILE"
   set +a
@@ -13,10 +13,10 @@ else
   echo "[launch-tavily] $SECRETS_FILE 없음 — TAVILY_API_KEY 미설정" >&2
 fi
 
-# npx 경로는 머신마다 다름(서버마다 nvm 또는 system) → 동적 해석: nvm(최신) → PATH → 절대경로 폴백
+# WHY: npx 경로는 머신마다 다름(서버마다 nvm 또는 system) → 동적 해석: nvm(최신, ~/.nvm/versions/node/) → PATH → 절대경로 폴백
 _resolve() {
   local b="$1" c
-  # The glob lists only existing files (like ls did); with no match it stays literal and fails the -x test below.
+  # WHY: The glob (~/.nvm/versions/node/*/bin/) lists only existing files (like ls did); with no match it stays literal and fails the -x test below.
   c="$(printf '%s\n' "$HOME"/.nvm/versions/node/*/bin/"$b" | sort -V | tail -1 || true)"
   [[ -n "$c" && -x "$c" ]] && { printf '%s\n' "$c"; return 0; }
   c="$(command -v "$b" 2>/dev/null || true)"

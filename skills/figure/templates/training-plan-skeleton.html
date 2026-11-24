@@ -1,0 +1,1243 @@
+<!--
+학습 계획서 뼈대 견본. 정본 양식: rules-lazy/background-task.md 의 학습 계획서 보고 양식 절.
+세션은 PLAN 객체와 title 만 고친다. 그 아래 코드(렌더 · 확대 · 토글 · 메모)는 고치지 않는다.
+검사: python3 -I skills/figure/templates/check_template.py <이 파일의 사본>
+
+채울 곳 목록 (본문과 자료에 같은 번호가 하나씩 있어야 한다):
+채움[F01] title: 계획 이름 (2 ~ 4 낱말, 설명을 붙이지 않는다)
+채움[F02] PLAN.meta: 제목 · 의뢰서 경로 · 커밋 · 상태 · 작성
+채움[F03] PLAN.conclusion: 결론 2줄
+채움[F04] PLAN.flow: 전체 흐름 ASCII 도해
+채움[F05] PLAN.stages: 단계 표
+채움[F06] PLAN.base: 기준판 구조도 (블록과 연결)
+채움[F07] PLAN.blockInfo: 기준판 블록 설명 (무엇 · 어떻게 · 왜 · 그림)
+채움[F08] PLAN.cards: 실험 카드 (설정 하나 = 카드 한 장, 차이 diffs 포함)
+채움[F09] PLAN.terms: 용어표
+채움[F10] PLAN.decisions: 결정 필요 항목
+채움[F11] PLAN.brief 와 PLAN.confidence: Brief 와 정확도
+채움[F12] plan-code: 블록별 실제 코드와 줄별 해설
+
+작성 지침:
+ - 자리값은 «<여기에 …>» 나 «<용어 …>» 꼴로 쓴다. 채운 뒤에는 이 꼴이 하나도 남으면 안 된다
+   (검사: check_template.py 에 --filled 를 붙인다).
+ - written 은 «YYYY-MM-DD HH:MM» 꼴로 쓴다.
+ - 견본 두 카드의 diffs 종류는 예시일 뿐이다. 카드 수와 카드마다의 diffs 는 자기 설정에 맞게 바꾼다.
+   달라진 블록이 없는 카드는 diffs: {} 로 둔다.
+ - kind 는 changed(바뀜) · new(새로 생김) · off(꺼짐) · frozen(얼림) 넷 중 하나다. 한 블록에는 하나만 쓴다.
+ - 새로 생긴 블록은 그 카드의 extraBlocks 에 { id, label, x, y, w, h } 로 넣는다
+   (좌표는 base.blocks 와 같은 좌표계, 겹치지 않게). 연결은 extraEdges 에 [fromId, toId] 로 넣는다
+   (기준판 edges 에 더해 그려진다). diffs 에 같은 id 로 kind: "new" 를 두고, before 에는 그 자리의
+   기준판 블록 설명이나 전용 «전» 그림을 넣는다.
+ - base.blocks 의 수 · 좌표 · id 도 자기 구조에 맞게 바꾼다 (id 는 blockInfo · diffs 의 키와 맞춘다).
+ - decisions 는 개수 제한이 없고, 없으면 빈 배열이다 (견본의 두 줄은 예시).
+ - 블록 예시 그림(blockInfo · diffs 의 img)은 생성형(Codex 이미지 생성 · Grok)으로만 만든다. 코드로 그린 그림을 넣지 않는다.
+   채운 계획서에 img: null 이 남으면 --filled 검사가 실패한다.
+ - plan-code 는 JSON 이다(큰따옴표 · 끝 쉼표 없음 · 코드 속 `"` 와 `\` 는 `\"` · `\\` 로, `</script>` 는 `<\/script>` 로 적는다).
+ - 블록마다 그 블록을 구현한 실제 코드를 전부 싣고 줄마다 무엇을 · 어떻게 · 왜를 적는다. import 줄 · 빈 줄 · 주석 줄은 싣지 않고 n 은 실제 파일 줄 번호를 쓴다.
+ - 같은 꼴이 반복되는 줄은 대표 줄에만 해설을 쓰고 covers 에 적용 줄을 적는다(예: "L10 · L12 · L14", "L44 ~ L51"). 나머지 줄은 ref 로 대표 줄 번호만 가리킨다. 여러 줄에 걸친 한 문장(괄호만 있는 줄 포함)도 첫 줄을 대표로 삼는다.
+ - 수식이 든 줄과 모델 관련 줄(layer · optimizer · loss 등)에만 aid 를 둔다. 그림은 생성형(Codex 이미지 생성 · Grok)으로만 만든다. 참고 줄은 대표 줄의 그림을 함께 쓴다.
+ - 선택 근거와 참고 자료(choice)는 class 줄이나 def 줄에만 둔다(줄 · 개념 단위로 두지 않는다). why 에는 그 class 나 def 의 구조 · 방법을 왜 골랐는지를 대안과 견주어 적고, refs 에는 근거가 된 논문 · 기술 보고서를 title · year · url · note · check 로 적는다. class 안의 메서드는 그 class 의 choice 로 묶는다.
+ - 논문은 인용 검증(citation-verifier)을 거친 것만 싣고 check 에 검증 결과와 날짜를 적는다. 논문이 아닌 자료는 check 에 확인한 방법과 날짜를 적는다. url 은 http(s) 주소만 쓴다.
+ - 그림은 만들기 전에 온톨로지에서 먼저 찾는다(개념 그림 knowledge/concepts/, 블록 예시 그림 knowledge/<프로젝트>/figures/). 새로 만든 그림은 검수 뒤 그 자리에 노트와 함께 보관한다(skills/figure/SKILL.md § 그림 보관과 재사용).
+ - 전/후가 있는 블록은 diffs 에 기준판 코드(before)와 이 판 코드(after)를 따로 싣고, 이 판에서 새로 생긴 줄은 mark: "new", 바뀐 줄은 mark: "changed" 로 표시한다. 코드가 없는 블록은 none 에 까닭을 적는다.
+
+게시 방법:
+ 1) 선언 capabilities: {db: {}, user: {}} 로 게시한다 (메모 저장에 쓴다).
+ 2) 실제 그림은 게시할 때 함께 올리는 파일로 두고 상대 경로를 img 에 적는다. img 가 null 이면 코드가 자리값 그림을 만든다. 코드 이해용 그림도 같은 방식으로 올리고 plan-code 의 aid.img 에 상대 경로를 적는다.
+ 3) 계획서 확인이 끝나면 메모 저장소를 세션 임시 폴더에 백업한 뒤 아티팩트를 지운다
+    (정본: rules-lazy/background-task.md 의 학습 계획서 보고 양식 절, 확인 뒤 삭제 · 삭제 전 백업 항목).
+-->
+<title>학습 계획서 견본</title><!-- 채움[F01] -->
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --fg: #1d2433; --muted: #566074; --line: #cfd5df;
+  --accent: #b45400; --on-accent: #ffffff; --ring: #0072b2; --ok: #00795a;
+  --k-chg: #E69F00; --k-chg-on: #1a1a1a; --k-chg-soft: #fdeed0;
+  --k-new: #CC79A7; --k-new-on: #1a1a1a; --k-new-soft: #f8e3ee;
+  --k-off: #6b7280; --k-off-on: #ffffff; --k-off-soft: #eceef2;
+  --k-frz: #0072B2; --k-frz-on: #ffffff; --k-frz-soft: #dcecf6;
+  --rv-ing: #E69F00; --rv-ing-on: #1a1a1a; --rv-done: #00795a; --rv-done-on: #ffffff;
+  --m-yellow: #fff3c4; --m-yellow-b: #c99700; --m-pink: #fbdde9; --m-pink-b: #cc4f86;
+  --m-sky: #d9eefb; --m-sky-b: #2b8cc4; --m-green: #d7f2e6; --m-green-b: #0b8a5f;
+  --m-purple: #e8e0f7; --m-purple-b: #7a5cc4;
+  --c-math: #8a4b00; --c-math-bg: #fbefdc; --c-model: #2f4fa8; --c-model-bg: #e6ecfb; --c-hit: #fff3c4;
+  --sans: system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Noto Sans Mono CJK KR", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12151b; --panel: #1b2029; --fg: #e6e9ef; --muted: #a0a9b8; --line: #363e4c;
+    --accent: #f08a3c; --on-accent: #14171d; --ring: #56b4e9; --ok: #3fbf95;
+    --k-chg-soft: #3d2e10; --k-new-soft: #3a2233;
+    --k-off: #9aa3b2; --k-off-on: #14171d; --k-off-soft: #262b33;
+    --k-frz: #56B4E9; --k-frz-on: #10141a; --k-frz-soft: #14293a;
+    --rv-done: #3fbf95; --rv-done-on: #10141a;
+    --m-yellow: #3d3415; --m-yellow-b: #e8c040; --m-pink: #3d2030; --m-pink-b: #f08ab4;
+    --m-sky: #152f40; --m-sky-b: #6cc0ee; --m-green: #163a2c; --m-green-b: #4fd2a0;
+    --m-purple: #2c2440; --m-purple-b: #b39cf0;
+    --c-math: #f0b866; --c-math-bg: #3a2a10; --c-model: #9db4ff; --c-model-bg: #1c2748; --c-hit: #4a3f12;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12151b; --panel: #1b2029; --fg: #e6e9ef; --muted: #a0a9b8; --line: #363e4c;
+  --accent: #f08a3c; --on-accent: #14171d; --ring: #56b4e9; --ok: #3fbf95;
+  --k-chg-soft: #3d2e10; --k-new-soft: #3a2233;
+  --k-off: #9aa3b2; --k-off-on: #14171d; --k-off-soft: #262b33;
+  --k-frz: #56B4E9; --k-frz-on: #10141a; --k-frz-soft: #14293a;
+  --rv-done: #3fbf95; --rv-done-on: #10141a;
+  --m-yellow: #3d3415; --m-yellow-b: #e8c040; --m-pink: #3d2030; --m-pink-b: #f08ab4;
+  --m-sky: #152f40; --m-sky-b: #6cc0ee; --m-green: #163a2c; --m-green-b: #4fd2a0;
+  --m-purple: #2c2440; --m-purple-b: #b39cf0;
+  --c-math: #f0b866; --c-math-bg: #3a2a10; --c-model: #9db4ff; --c-model-bg: #1c2748; --c-hit: #4a3f12;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.wrap { max-width: 960px; margin: 0 auto; padding-block: 28px 80px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1 { font-size: 1.75rem; line-height: 1.3; margin: 0 0 6px; text-wrap: balance; }
+h2 { font-size: 1.2rem; margin: 40px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); text-wrap: balance; }
+h3 { font-size: 1.05rem; margin: 0; text-wrap: balance; }
+code { font-family: var(--mono); font-size: .85em; }
+header h1 { padding-right: 250px; }
+@media (max-width: 560px) { header h1 { padding-right: 0; padding-top: 44px; } }
+.meta { color: var(--muted); font-size: .88rem; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.meta span { min-width: 0; }
+.concl { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent); padding: 12px 16px; margin-top: 18px; }
+.concl p { margin: 4px 0; }
+.scroll { overflow-x: auto; max-width: 100%; }
+pre.flowtxt { margin: 0; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); overflow-x: auto; max-width: 100%; font-family: var(--mono); font-size: .85rem; line-height: 1.5; }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; background: var(--panel); }
+th, td { border: 1px solid var(--line); padding: 7px 9px; text-align: left; vertical-align: top; }
+th { background: var(--bg); font-weight: 600; }
+.terms td:first-child { white-space: nowrap; font-weight: 600; }
+.note { font-size: .82rem; color: var(--muted); margin: 0 0 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .78rem; color: var(--muted); margin: 6px 0 10px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.legend i { display: inline-block; width: 16px; height: 11px; border: 2px solid var(--kc); background: var(--kcs); flex: none; }
+.legend .k-off i { background: repeating-linear-gradient(45deg, var(--k-off-soft) 0 3px, var(--k-off) 3px 5px); border-style: dotted; }
+.k-chg { --kc: var(--k-chg); --kcs: var(--k-chg-soft); --kco: var(--k-chg-on); }
+.k-new { --kc: var(--k-new); --kcs: var(--k-new-soft); --kco: var(--k-new-on); }
+.k-off { --kc: var(--k-off); --kcs: var(--k-off-soft); --kco: var(--k-off-on); }
+.k-frz { --kc: var(--k-frz); --kcs: var(--k-frz-soft); --kco: var(--k-frz-on); }
+.card { background: var(--panel); border: 1px solid var(--line); margin-bottom: 16px; min-width: 0; }
+.card .txt { padding: 14px 16px; min-width: 0; }
+.card .fig { padding: 12px; border-top: 1px solid var(--line); min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 8px; }
+.chip { font-size: .74rem; border: 1px solid var(--line); padding: 1px 7px; color: var(--muted); }
+dl { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; font-size: .9rem; }
+dt { color: var(--muted); white-space: nowrap; }
+dd { margin: 0; min-width: 0; }
+.ex { font-family: var(--mono); font-size: .8rem; background: var(--bg); padding: 6px 8px; margin-top: 2px; }
+button { font: inherit; font-size: .82rem; border: 1px solid var(--line); background: var(--panel); color: var(--fg); padding: 4px 10px; cursor: pointer; }
+button:disabled { color: var(--muted); cursor: default; }
+.figbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.tog { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.tog .lab { font-size: .78rem; color: var(--muted); margin-right: 4px; }
+.tog button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.tog.ba button[aria-pressed="true"][data-s="after"] { background: var(--kc); border-color: var(--kc); color: var(--kco); }
+.zoom { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.zoom button { min-width: 30px; padding: 3px 9px; }
+.zoom input[type=range] { width: 120px; max-width: 100%; accent-color: var(--accent); }
+.zoom output { font-family: var(--mono); font-size: .78rem; color: var(--muted); min-width: 42px; text-align: right; }
+.figbox { overflow: auto; max-height: 70vh; max-width: 100%; border: 1px solid var(--line); background: var(--bg); }
+svg.dia { display: block; width: 100%; height: auto; }
+.hint { font-size: .76rem; color: var(--muted); }
+svg .nd { cursor: pointer; }
+svg .nd:focus { outline: none; }
+svg .nd .bx { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+svg .nd text { fill: var(--fg); font-family: var(--sans); font-size: 13px; }
+svg .nd:focus-visible .bx, svg .nd.sel .bx { stroke: var(--ring); stroke-width: 3; }
+svg .nd.changed .bx { fill: var(--k-chg-soft); stroke: var(--k-chg); stroke-width: 2.4; }
+svg .nd.new .bx { fill: var(--k-new-soft); stroke: var(--k-new); stroke-width: 2.4; stroke-dasharray: 5 3; }
+svg .nd.off .bx { stroke: var(--k-off); stroke-width: 2; stroke-dasharray: 2 3; }
+svg .nd.off text.lb { text-decoration: line-through; }
+svg .nd.frozen .bx { fill: var(--k-frz-soft); stroke: var(--k-frz); stroke-width: 2.2; }
+svg .nd .tagbg { stroke: none; }
+svg .nd.changed .tagbg { fill: var(--k-chg); } svg .nd.changed .tag { fill: var(--k-chg-on); }
+svg .nd.new .tagbg { fill: var(--k-new); } svg .nd.new .tag { fill: var(--k-new-on); }
+svg .nd.off .tagbg { fill: var(--k-off); } svg .nd.off .tag { fill: var(--k-off-on); }
+svg .nd.frozen .tagbg { fill: var(--k-frz); } svg .nd.frozen .tag { fill: var(--k-frz-on); }
+svg .nd text.tag { font-size: 10px; font-weight: 700; }
+svg .hatch-bg { fill: var(--k-off-soft); }
+svg .hatch-ln { stroke: var(--k-off); stroke-width: 3; stroke-opacity: .4; }
+svg .ed { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+svg .ed.off { stroke: var(--k-off); stroke-dasharray: 2 3; opacity: .6; }
+svg .ah { fill: var(--muted); }
+.info { border: 1px solid var(--line); background: var(--panel); padding: 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.info.diff { border-left: 6px solid var(--kc); }
+.info h4 { margin: 0 0 4px; font-size: .95rem; }
+.info p { margin: 0; font-size: .88rem; line-height: 1.6; }
+.info .wl { display: inline-block; min-width: 3.2em; font-size: .78rem; color: var(--muted); font-weight: 700; }
+.info .dtxt { padding: 6px 9px; }
+.info.diff .dtxt.after { background: var(--kcs); border: 1px solid var(--kc); }
+.info.diff .dtxt.before { border: 1px dashed var(--line); }
+.kbadge { display: inline-block; font-size: .74rem; font-weight: 700; padding: 1px 7px; margin-bottom: 3px; background: var(--kc); color: var(--kco); }
+.info.diff .dtxt.before .kbadge { background: var(--muted); color: var(--bg); }
+.cdsec { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cdmeta { font-family: var(--mono); font-size: .8rem; color: var(--muted); overflow-wrap: anywhere; }
+.cdmsg { color: var(--muted); }
+.cdtab { border: 1px solid var(--line); min-width: 0; }
+.cdln { display: grid; grid-template-columns: 2.8rem minmax(0, 1.05fr) minmax(0, 1fr) 176px; gap: 4px 12px; align-items: start; padding: 7px 10px; border-top: 1px solid var(--line); min-width: 0; }
+.cdln:first-child { border-top: 0; }
+.cdln.cdhd { font-size: .8rem; font-weight: 700; color: var(--muted); background: var(--bg); }
+.cdln.cdhit { background: var(--c-hit); }
+.cdln.cdmk { box-shadow: inset 4px 0 0 var(--k-chg); }
+.cdno { font-family: var(--mono); font-size: .8rem; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; padding-top: 3px; }
+.cdno b { display: block; font-family: var(--sans); font-size: .68rem; color: var(--accent); }
+pre.cdsrc { margin: 0; min-width: 0; overflow-x: auto; white-space: pre; font-family: var(--mono); font-size: .8rem; line-height: 1.55; background: var(--bg); padding: 3px 8px; }
+.cdex { min-width: 0; }
+.cdex .cdcov { margin-top: 3px; font-size: .78rem; font-weight: 700; color: var(--accent); }
+.cddim { font-size: .76rem; color: var(--muted); }
+button.cdref { background: transparent; border-color: var(--accent); color: var(--accent); font-weight: 700; padding: 1px 9px; }
+.cdaid { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.cdkind { align-self: flex-start; font-size: .72rem; font-weight: 700; padding: 0 7px; border: 1px solid currentColor; }
+.cdkind.math { color: var(--c-math); background: var(--c-math-bg); }
+.cdkind.model { color: var(--c-model); background: var(--c-model-bg); }
+button.cdbtn { display: block; width: 100%; max-width: 260px; padding: 0; background: var(--panel); }
+button.cdbtn img { display: block; width: 100%; height: auto; }
+.cdwhy { margin-top: 6px; border: 1px solid var(--line); background: var(--bg); min-width: 0; }
+.cdwhy summary { cursor: pointer; padding: 3px 8px; font-size: .8rem; font-weight: 700; color: var(--accent); }
+.cdwhy .cdwb { padding: 4px 10px 8px; font-size: .82rem; overflow-wrap: anywhere; }
+.cdwhy .cdwb p { margin: 2px 0 6px; }
+.cdwhy ol { margin: 2px 0 0; padding-left: 1.4em; }
+.cdwhy li { margin-bottom: 4px; overflow-wrap: anywhere; }
+.cdwhy a { color: var(--ring); overflow-wrap: anywhere; }
+.cdwhy .cdwk { font-weight: 700; color: var(--muted); font-size: .76rem; }
+@media (max-width: 860px) {
+  .cdln { grid-template-columns: 2.2rem minmax(0, 1fr); }
+  .cdln .cdex, .cdln .cdaid { grid-column: 2; }
+  .cdln.cdhd { display: none; }
+}
+@media (prefers-reduced-motion: no-preference) { .cdln { transition: background-color .5s; } }
+.imgbox { position: relative; overflow: auto; max-height: 80vh; max-width: 100%; border: 1px solid var(--line); background: var(--panel); }
+.imgbox img { display: block; max-width: none; width: 100%; }
+.imgbox .stamp { position: absolute; left: 10px; top: 10px; font-size: .85rem; font-weight: 700; padding: 3px 9px; color: var(--kco); background: var(--kc); }
+.imgbox.ov-off img { filter: grayscale(1); opacity: .45; }
+.imgbox.ov-off::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(45deg, transparent 0 12px, var(--k-off) 12px 14px); opacity: .35; }
+.imgbox.ov-frozen img { filter: saturate(.35); }
+.imgbox.ov-frozen::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: var(--k-frz); opacity: .14; }
+.ov, .imgov { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; flex-direction: column; gap: 8px; overflow: auto; padding-top: calc(10px + env(safe-area-inset-top, 0px)); padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px)); }
+.imgov { z-index: 60; }
+.ov .figbox { max-height: none; }
+.imgov .imgbox { flex: 1; max-height: none; }
+.brief { margin-top: 32px; font-size: .92rem; background: var(--panel); border: 1px solid var(--line); padding: 12px 16px; }
+.mfabs { position: fixed; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 40; display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: calc(100vw - 32px); }
+.mfab2 { font-size: .88rem; padding: 8px 12px; border: 1px solid var(--fg); }
+.mfab2[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.mfabs .mcopyfab { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
+.mfabs .mcopyfab:disabled { background: var(--panel); color: var(--muted); border-color: var(--line); font-weight: 400; }
+.mcopybox { position: fixed; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(62px + env(safe-area-inset-bottom, 0px)); z-index: 41; display: flex; justify-content: flex-end; max-width: calc(100vw - 32px); }
+@media (max-width: 560px) { .mcopybox { bottom: calc(104px + env(safe-area-inset-bottom, 0px)); } }
+.mcopybox { flex-direction: column; align-items: flex-end; gap: 4px; }
+.mcopymsg { font-size: .8rem; background: var(--panel); border: 1px solid var(--line); padding: 3px 7px; max-width: 70vw; }
+.mcopymsg:empty { display: none; }
+.mcopyform { display: flex; flex-direction: column; gap: 4px; width: min(420px, calc(100vw - 32px)); max-width: 100%; box-sizing: border-box; background: var(--panel); border: 1px solid var(--line); padding: 6px; }
+.mcopyform textarea { font: inherit; font-size: .84rem; width: 100%; max-width: 100%; min-height: 96px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); padding: 6px; box-sizing: border-box; }
+.mnote { position: fixed; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 40; font-size: .82rem; background: var(--panel); border: 1px solid var(--line); padding: 6px 10px; max-width: calc(100vw - 32px); }
+.mrvtop { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); right: calc(16px + env(safe-area-inset-right, 0px)); z-index: 45; display: flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--line); padding: 4px 6px; max-width: calc(100vw - 32px); }
+.mrvtop .mrvlab { font-size: .78rem; color: var(--muted); }
+.mrvtop button { padding: 5px 10px; font-size: .84rem; }
+.mrvtop [data-rv="검토 중"] { border-color: var(--rv-ing); border-width: 2px; }
+.mrvtop [data-rv="검토 완료"] { border-color: var(--rv-done); border-width: 2px; }
+.mrvtop [data-rv="검토 중"][aria-pressed="true"] { background: var(--rv-ing); color: var(--rv-ing-on); }
+.mrvtop [data-rv="검토 완료"][aria-pressed="true"] { background: var(--rv-done); color: var(--rv-done-on); }
+.mdrawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100%); z-index: 45; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; overflow: auto; padding-top: calc(14px + env(safe-area-inset-top, 0px)); padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); padding-left: 16px; padding-right: calc(16px + env(safe-area-inset-right, 0px)); }
+.mstat { font-size: .78rem; color: var(--muted); }
+.memo { border-left: 5px solid var(--mb); background: var(--mf); color: var(--fg); padding: 6px 9px; font-size: .86rem; display: flex; gap: 8px; align-items: flex-start; }
+.memo.busy { opacity: .5; }
+.memo .mt { flex: 1; min-width: 0; white-space: pre-wrap; }
+.memo .mm { font-size: .74rem; color: var(--muted); display: block; margin-bottom: 2px; }
+.macts { display: flex; flex-direction: column; gap: 4px; }
+.mbtn { font-size: .76rem; padding: 2px 8px; }
+.mbadge { display: inline-block; font-size: .75rem; padding: 0 5px; border: 1px solid var(--line); margin-right: 2px; }
+.mbadge.ok { border-color: var(--accent); }
+.mfu { margin-top: 6px; padding-left: 10px; border-left: 2px solid var(--mb); display: flex; flex-direction: column; gap: 4px; font-size: .88rem; }
+.memos { display: flex; flex-direction: column; gap: 5px; }
+.mform { border: 1px dashed var(--line); background: var(--panel); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.mform textarea { font: inherit; font-size: .88rem; width: 100%; min-height: 64px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); padding: 6px; }
+.mpop { position: fixed; z-index: 70; border: 1px solid var(--fg); border-style: solid; margin: 0; }
+.sw { display: flex; flex-wrap: wrap; gap: 6px; }
+.sw label { display: flex; align-items: center; gap: 4px; font-size: .78rem; border: 1px solid var(--line); padding: 2px 7px; cursor: pointer; background: var(--panel); color: var(--fg); }
+.dot { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--mb); background: var(--mf); flex: none; }
+.purp { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 8px; align-items: center; }
+.purp input { font: inherit; font-size: .85rem; background: var(--panel); color: var(--fg); border: 1px solid var(--line); padding: 4px 6px; min-width: 0; }
+.chipf { display: flex; flex-wrap: wrap; gap: 6px; }
+.chipf button[aria-pressed="true"] { outline: 2px solid var(--fg); }
+.mpins { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 35; }
+.mpin { position: absolute; font-size: .74rem; line-height: 1.2; padding: 2px 7px; background: var(--mf); color: var(--fg); border: 1.5px solid var(--mb); border-radius: 10px; white-space: nowrap; }
+[data-memo] { outline: 2px solid var(--mb) !important; outline-offset: 2px; }
+.mflash { outline: 3px solid var(--accent) !important; }
+body.memomode .wrap * { cursor: crosshair; }
+body.memomode .wrap :hover { outline: 1px dashed var(--accent); outline-offset: 1px; }
+@media (prefers-reduced-motion: no-preference) { svg .nd .bx, svg .ed { transition: stroke .2s, fill .2s, opacity .2s; } }
+</style>
+
+<div class="wrap">
+  <header id="hd"></header>
+
+  <h2>1. 결론 (2줄)</h2>
+  <div class="concl" id="concl"></div>
+
+  <h2>2. 전체 흐름</h2>
+  <pre class="flowtxt" id="flow" tabindex="0" aria-label="전체 흐름 도해"></pre>
+
+  <h2>3. 단계 표</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>단계</th><th>의의 (이 단계가 답하는 질문)</th><th>판 수</th><th>선행 조건</th><th>상태</th></tr></thead>
+    <tbody id="stages"></tbody>
+  </table></div>
+
+  <h2>4. 실험 카드</h2>
+  <p class="note">구조도의 «기준판 / 이 판» 단추로 두 구조를 번갈아 봅니다. 블록을 누르면 설명과 그림이 열립니다.</p>
+  <div class="legend" aria-label="달라진 블록 표시">
+    <span class="k-chg"><i></i>바뀜 (주황)</span>
+    <span class="k-new"><i></i>새로 생김 (분홍)</span>
+    <span class="k-off"><i></i>꺼짐 (회색 빗금)</span>
+    <span class="k-frz"><i></i>얼림 (파랑)</span>
+  </div>
+  <div id="cards"></div>
+
+  <h2>5. 용어표</h2>
+  <div class="scroll"><table class="terms">
+    <thead><tr><th>용어</th><th>뜻 + 예시 수치</th></tr></thead>
+    <tbody id="terms"></tbody>
+  </table></div>
+
+  <h2>6. 결정 필요 항목</h2>
+  <ul id="decisions"></ul>
+
+  <div class="brief" id="brief"></div>
+</div>
+
+<!-- 채움[F12] plan-code: 블록별 실제 코드와 줄별 해설 -->
+<script type="application/json" id="plan-code">
+{
+  "blocks": {
+    "a": { "path": "<여기에 블록 A 의 파일 경로를 적는다>", "commit": "<여기에 커밋을 적는다>", "lines": [
+      { "n": 8, "src": "class <여기에 class 나 def 선언 줄을 적는다>:", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "choice": { "why": "<여기에 이 class 나 def 의 구조 · 방법을 왜 골랐는지 대안과 견주어 적는다>", "refs": [ { "title": "<여기에 근거가 된 논문이나 기술 보고서의 제목을 적는다>", "year": "<여기에 연도를 적는다>", "url": "<여기에 http(s) 주소를 적는다>", "note": "<여기에 한 줄 요지를 적는다>", "check": "<여기에 검증 결과와 날짜를 적는다>" } ] } },
+      { "n": 10, "src": "<여기에 블록 A 의 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "covers": "L10 · L12", "aid": { "kind": "model", "topic": "<여기에 이해용 그림이 보여 줄 것을 적는다>", "img": null } },
+      { "n": 12, "src": "<여기에 대표 줄과 같은 꼴의 코드 한 줄을 적는다>", "ref": 10 },
+      { "n": 14, "src": "<여기에 블록 A 의 다른 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>" }
+    ] },
+    "b": { "path": "<여기에 블록 B 의 파일 경로를 적는다>", "commit": "<여기에 커밋을 적는다>", "lines": [
+      { "n": 18, "src": "class <여기에 class 나 def 선언 줄을 적는다>:", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "choice": { "why": "<여기에 이 class 나 def 의 구조 · 방법을 왜 골랐는지 대안과 견주어 적는다>", "refs": [ { "title": "<여기에 근거가 된 논문이나 기술 보고서의 제목을 적는다>", "year": "<여기에 연도를 적는다>", "url": "<여기에 http(s) 주소를 적는다>", "note": "<여기에 한 줄 요지를 적는다>", "check": "<여기에 검증 결과와 날짜를 적는다>" } ] } },
+      { "n": 20, "src": "<여기에 블록 B 의 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "aid": { "kind": "math", "topic": "<여기에 이해용 그림이 보여 줄 것을 적는다>", "img": null } },
+      { "n": 21, "src": "<여기에 블록 B 의 다른 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>" }
+    ] },
+    "c": { "path": "<여기에 블록 C 의 파일 경로를 적는다>", "commit": "<여기에 커밋을 적는다>", "lines": [
+      { "n": 28, "src": "class <여기에 class 나 def 선언 줄을 적는다>:", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "choice": { "why": "<여기에 이 class 나 def 의 구조 · 방법을 왜 골랐는지 대안과 견주어 적는다>", "refs": [ { "title": "<여기에 근거가 된 논문이나 기술 보고서의 제목을 적는다>", "year": "<여기에 연도를 적는다>", "url": "<여기에 http(s) 주소를 적는다>", "note": "<여기에 한 줄 요지를 적는다>", "check": "<여기에 검증 결과와 날짜를 적는다>" } ] } },
+      { "n": 30, "src": "<여기에 블록 C 의 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "covers": "L30 · L31" },
+      { "n": 31, "src": "<여기에 대표 줄과 같은 꼴의 코드 한 줄을 적는다>", "ref": 30 }
+    ] },
+    "d": { "path": "<여기에 블록 D 의 파일 경로를 적는다>", "commit": "<여기에 커밋을 적는다>", "lines": [
+      { "n": 38, "src": "class <여기에 class 나 def 선언 줄을 적는다>:", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "choice": { "why": "<여기에 이 class 나 def 의 구조 · 방법을 왜 골랐는지 대안과 견주어 적는다>", "refs": [ { "title": "<여기에 근거가 된 논문이나 기술 보고서의 제목을 적는다>", "year": "<여기에 연도를 적는다>", "url": "<여기에 http(s) 주소를 적는다>", "note": "<여기에 한 줄 요지를 적는다>", "check": "<여기에 검증 결과와 날짜를 적는다>" } ] } },
+      { "n": 40, "src": "<여기에 블록 D 의 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>" },
+      { "n": 42, "src": "<여기에 블록 D 의 다른 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>" }
+    ] },
+    "e": { "none": "<여기에 블록 E 에 코드가 없는 까닭을 적는다>" }
+  },
+  "diffs": {
+    "c1": {
+      "b": {
+        "before": { "path": "<여기에 기준판 블록 B 의 파일 경로를 적는다>", "commit": "<여기에 기준판 커밋을 적는다>", "lines": [
+          { "n": 18, "src": "class <여기에 class 나 def 선언 줄을 적는다>:", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "choice": { "why": "<여기에 이 class 나 def 의 구조 · 방법을 왜 골랐는지 대안과 견주어 적는다>", "refs": [ { "title": "<여기에 근거가 된 논문이나 기술 보고서의 제목을 적는다>", "year": "<여기에 연도를 적는다>", "url": "<여기에 http(s) 주소를 적는다>", "note": "<여기에 한 줄 요지를 적는다>", "check": "<여기에 검증 결과와 날짜를 적는다>" } ] } },
+          { "n": 20, "src": "<여기에 기준판 블록 B 의 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "aid": { "kind": "math", "topic": "<여기에 이해용 그림이 보여 줄 것을 적는다>", "img": null } },
+          { "n": 21, "src": "<여기에 기준판 블록 B 의 다른 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>" }
+        ] },
+        "after": { "path": "<여기에 이 판 블록 B 의 파일 경로를 적는다>", "commit": "<여기에 이 판 커밋을 적는다>", "lines": [
+          { "n": 18, "src": "class <여기에 class 나 def 선언 줄을 적는다>:", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "choice": { "why": "<여기에 이 class 나 def 의 구조 · 방법을 왜 골랐는지 대안과 견주어 적는다>", "refs": [ { "title": "<여기에 근거가 된 논문이나 기술 보고서의 제목을 적는다>", "year": "<여기에 연도를 적는다>", "url": "<여기에 http(s) 주소를 적는다>", "note": "<여기에 한 줄 요지를 적는다>", "check": "<여기에 검증 결과와 날짜를 적는다>" } ] } },
+          { "n": 20, "src": "<여기에 이 판 블록 B 의 바뀐 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "aid": { "kind": "math", "topic": "<여기에 이해용 그림이 보여 줄 것을 적는다>", "img": null }, "mark": "changed" },
+          { "n": 21, "src": "<여기에 이 판 블록 B 의 같은 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>" },
+          { "n": 22, "src": "<여기에 이 판 블록 B 의 새 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "mark": "new" }
+        ] }
+      },
+      "f": {
+        "before": { "none": "<여기에 기준판에는 이 자리의 코드가 없는 까닭을 적는다>" },
+        "after": { "path": "<여기에 새 블록 F 의 파일 경로를 적는다>", "commit": "<여기에 이 판 커밋을 적는다>", "lines": [
+          { "n": 48, "src": "class <여기에 class 나 def 선언 줄을 적는다>:", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "choice": { "why": "<여기에 이 class 나 def 의 구조 · 방법을 왜 골랐는지 대안과 견주어 적는다>", "refs": [ { "title": "<여기에 근거가 된 논문이나 기술 보고서의 제목을 적는다>", "year": "<여기에 연도를 적는다>", "url": "<여기에 http(s) 주소를 적는다>", "note": "<여기에 한 줄 요지를 적는다>", "check": "<여기에 검증 결과와 날짜를 적는다>" } ] }, "mark": "new" },
+          { "n": 50, "src": "<여기에 새 블록 F 의 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "covers": "L50 · L51", "aid": { "kind": "model", "topic": "<여기에 이해용 그림이 보여 줄 것을 적는다>", "img": null }, "mark": "new" },
+          { "n": 51, "src": "<여기에 대표 줄과 같은 꼴의 코드 한 줄을 적는다>", "ref": 50, "mark": "new" }
+        ] }
+      }
+    },
+    "c2": {
+      "d": {
+        "before": { "path": "<여기에 기준판 블록 D 의 파일 경로를 적는다>", "commit": "<여기에 기준판 커밋을 적는다>", "lines": [
+          { "n": 38, "src": "class <여기에 class 나 def 선언 줄을 적는다>:", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "choice": { "why": "<여기에 이 class 나 def 의 구조 · 방법을 왜 골랐는지 대안과 견주어 적는다>", "refs": [ { "title": "<여기에 근거가 된 논문이나 기술 보고서의 제목을 적는다>", "year": "<여기에 연도를 적는다>", "url": "<여기에 http(s) 주소를 적는다>", "note": "<여기에 한 줄 요지를 적는다>", "check": "<여기에 검증 결과와 날짜를 적는다>" } ] } },
+          { "n": 40, "src": "<여기에 기준판 블록 D 의 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>" }
+        ] },
+        "after": { "path": "<여기에 이 판 블록 D 의 파일 경로를 적는다>", "commit": "<여기에 이 판 커밋을 적는다>", "lines": [
+          { "n": 38, "src": "class <여기에 class 나 def 선언 줄을 적는다>:", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "choice": { "why": "<여기에 이 class 나 def 의 구조 · 방법을 왜 골랐는지 대안과 견주어 적는다>", "refs": [ { "title": "<여기에 근거가 된 논문이나 기술 보고서의 제목을 적는다>", "year": "<여기에 연도를 적는다>", "url": "<여기에 http(s) 주소를 적는다>", "note": "<여기에 한 줄 요지를 적는다>", "check": "<여기에 검증 결과와 날짜를 적는다>" } ] } },
+          { "n": 40, "src": "<여기에 이 판 블록 D 의 바뀐 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "mark": "changed" }
+        ] }
+      },
+      "e": {
+        "before": { "path": "<여기에 기준판 블록 E 의 파일 경로를 적는다>", "commit": "<여기에 기준판 커밋을 적는다>", "lines": [
+          { "n": 58, "src": "class <여기에 class 나 def 선언 줄을 적는다>:", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "choice": { "why": "<여기에 이 class 나 def 의 구조 · 방법을 왜 골랐는지 대안과 견주어 적는다>", "refs": [ { "title": "<여기에 근거가 된 논문이나 기술 보고서의 제목을 적는다>", "year": "<여기에 연도를 적는다>", "url": "<여기에 http(s) 주소를 적는다>", "note": "<여기에 한 줄 요지를 적는다>", "check": "<여기에 검증 결과와 날짜를 적는다>" } ] } },
+          { "n": 60, "src": "<여기에 기준판 블록 E 의 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>" }
+        ] },
+        "after": { "path": "<여기에 이 판 블록 E 의 파일 경로를 적는다>", "commit": "<여기에 이 판 커밋을 적는다>", "lines": [
+          { "n": 58, "src": "class <여기에 class 나 def 선언 줄을 적는다>:", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "choice": { "why": "<여기에 이 class 나 def 의 구조 · 방법을 왜 골랐는지 대안과 견주어 적는다>", "refs": [ { "title": "<여기에 근거가 된 논문이나 기술 보고서의 제목을 적는다>", "year": "<여기에 연도를 적는다>", "url": "<여기에 http(s) 주소를 적는다>", "note": "<여기에 한 줄 요지를 적는다>", "check": "<여기에 검증 결과와 날짜를 적는다>" } ] } },
+          { "n": 60, "src": "<여기에 이 판 블록 E 의 바뀐 코드 한 줄을 적는다>", "what": "<여기에 무엇을 하는 줄인지 적는다>", "how": "<여기에 어떻게 하는지 적는다>", "why": "<여기에 왜 쓰는지 적는다>", "mark": "changed" }
+        ] }
+      }
+    }
+  }
+}
+</script>
+
+<script>
+const PLAN = {
+  // 채움[F02]
+  // written 은 "YYYY-MM-DD HH:MM" 꼴로 쓴다.
+  meta: {
+    title: "<여기에 계획 이름을 적는다>",
+    intentPath: "<여기에 의뢰서 경로를 적는다>",
+    commit: "<여기에 커밋을 적는다>",
+    status: "<여기에 상태를 적는다>",
+    written: "<여기에 작성 날짜 시각을 적는다>",
+  },
+  // 채움[F03]
+  conclusion: [
+    "<여기에 단계 수 · 총 판 수 · 무엇을 보려는 계획인지 적는다>",
+    "<여기에 결정이 필요한 항목 수와 제목을 적는다>",
+  ],
+  // 채움[F04]
+  flow: [
+    "[단계 1] ------> [단계 2]",
+    " 설정 2판          설정 N판",
+    " 넘어가는 조건: <여기에 조건을 적는다>",
+  ].join("\n"),
+  // 채움[F05]
+  stages: [
+    { name: "단계 1", question: "<여기에 이 단계가 답하는 질문을 적는다>", count: "<여기에 판 수를 적는다>", precondition: "<여기에 선행 조건을 적는다>", status: "<여기에 상태를 적는다>" },
+    { name: "단계 2", question: "<여기에 이 단계가 답하는 질문을 적는다>", count: "<여기에 판 수를 적는다>", precondition: "<여기에 선행 조건을 적는다>", status: "<여기에 상태를 적는다>" },
+  ],
+  // 채움[F06]
+  base: {
+    blocks: [
+      { id: "a", label: "블록 A", x: 10, y: 60, w: 150, h: 56 },
+      { id: "b", label: "블록 B", x: 200, y: 60, w: 150, h: 56 },
+      { id: "c", label: "블록 C", x: 390, y: 60, w: 150, h: 56 },
+      { id: "d", label: "블록 D", x: 580, y: 60, w: 150, h: 56 },
+      { id: "e", label: "블록 E", x: 770, y: 60, w: 150, h: 56 },
+    ],
+    edges: [["a", "b"], ["b", "c"], ["c", "d"], ["d", "e"]],
+  },
+  // 채움[F07]
+  blockInfo: {
+    a: { what: "<여기에 블록 A 가 무엇인지 적는다>", how: "<여기에 어떻게 동작하는지 적는다>", why: "<여기에 왜 있는지 적는다>", img: null },
+    b: { what: "<여기에 블록 B 가 무엇인지 적는다>", how: "<여기에 어떻게 동작하는지 적는다>", why: "<여기에 왜 있는지 적는다>", img: null },
+    c: { what: "<여기에 블록 C 가 무엇인지 적는다>", how: "<여기에 어떻게 동작하는지 적는다>", why: "<여기에 왜 있는지 적는다>", img: null },
+    d: { what: "<여기에 블록 D 가 무엇인지 적는다>", how: "<여기에 어떻게 동작하는지 적는다>", why: "<여기에 왜 있는지 적는다>", img: null },
+    e: { what: "<여기에 블록 E 가 무엇인지 적는다>", how: "<여기에 어떻게 동작하는지 적는다>", why: "<여기에 왜 있는지 적는다>", img: null },
+  },
+  // 채움[F08]
+  // 두 카드의 diffs 종류는 예시다. 카드 수와 diffs 는 자기 설정에 맞게 바꾸고, 달라진 블록이 없으면 diffs: {} 로 둔다.
+  // kind 는 changed · new · off · frozen 중 하나, 한 블록에 하나.
+  // 새 블록은 extraBlocks 에 { id, label, x, y, w, h }(기준판과 같은 좌표계, 겹치지 않게), 연결은 extraEdges 에 [fromId, toId].
+  // diffs 에 같은 id 로 kind: "new" 를 두고 before 에는 그 자리 기준판 블록 설명이나 전용 «전» 그림을 넣는다.
+  // base.blocks 의 수 · 좌표 · id 도 자기 구조에 맞게 바꾼다(id 는 blockInfo · diffs 의 키와 맞춘다).
+  cards: [
+    {
+      id: "c1", name: "설정 1", alias: "<여기에 별칭을 적는다>", stage: "단계 1", tasks: "<여기에 과제를 적는다>",
+      when: "<여기에 단계 · 선행 조건 · 시작 시점을 적는다>",
+      what: "<여기에 바꾸는 것 하나를 적는다>",
+      how: "<여기에 설정 · 걸음 수 · 평가 지점 · 대조 기준판을 적는다>",
+      why: "<여기에 검증하는 가설을 적는다>",
+      criterion: "<여기에 미리 정한 판정 규칙을 적는다>",
+      exampleIn: "입력: <여기에 판이 받는 것을 한 줄로 적는다>",
+      exampleOut: "출력: <여기에 판이 내는 것을 한 줄로 적는다>",
+      extraBlocks: [{ id: "f", label: "블록 F", x: 390, y: 165, w: 150, h: 56 }],
+      extraEdges: [["b", "f"], ["f", "d"]],
+      diffs: {
+        b: {
+          kind: "changed",
+          before: { what: "<여기에 기준판의 블록 B 를 적는다>", how: "<여기에 기준판의 동작을 적는다>", why: "<여기에 기준판의 이유를 적는다>", img: null },
+          after: { what: "<여기에 이 판의 블록 B 를 적는다>", how: "<여기에 이 판의 동작을 적는다>", why: "<여기에 이 판의 이유를 적는다>", img: null },
+        },
+        f: {
+          kind: "new",
+          before: { what: "<여기에 기준판에는 이 자리에 무엇이 없는지 적는다>", how: "<여기에 기준판에서 이 자리가 어떻게 이어지는지 적는다>", why: "<여기에 전용 전 그림이 필요한 이유를 적는다>", img: null },
+          after: { what: "<여기에 새 블록 F 를 적는다>", how: "<여기에 새 블록의 동작을 적는다>", why: "<여기에 새 블록이 생긴 이유를 적는다>", img: null },
+        },
+      },
+    },
+    {
+      id: "c2", name: "설정 2", alias: "<여기에 별칭을 적는다>", stage: "단계 1", tasks: "<여기에 과제를 적는다>",
+      when: "<여기에 단계 · 선행 조건 · 시작 시점을 적는다>",
+      what: "<여기에 바꾸는 것 하나를 적는다>",
+      how: "<여기에 설정 · 걸음 수 · 평가 지점 · 대조 기준판을 적는다>",
+      why: "<여기에 검증하는 가설을 적는다>",
+      criterion: "<여기에 미리 정한 판정 규칙을 적는다>",
+      exampleIn: "입력: <여기에 판이 받는 것을 한 줄로 적는다>",
+      exampleOut: "출력: <여기에 판이 내는 것을 한 줄로 적는다>",
+      extraBlocks: [],
+      extraEdges: [],
+      diffs: {
+        d: {
+          kind: "off",
+          before: { what: "<여기에 기준판의 블록 D 를 적는다>", how: "<여기에 기준판의 동작을 적는다>", why: "<여기에 기준판의 이유를 적는다>", img: null },
+          after: { what: "<여기에 이 판에서 꺼진 블록 D 를 적는다>", how: "<여기에 꺼진 상태의 동작을 적는다>", why: "<여기에 끄는 이유를 적는다>", img: null },
+        },
+        e: {
+          kind: "frozen",
+          before: { what: "<여기에 기준판의 블록 E 를 적는다>", how: "<여기에 기준판의 동작을 적는다>", why: "<여기에 기준판의 이유를 적는다>", img: null },
+          after: { what: "<여기에 이 판에서 얼린 블록 E 를 적는다>", how: "<여기에 얼린 상태의 동작을 적는다>", why: "<여기에 얼리는 이유를 적는다>", img: null },
+        },
+      },
+    },
+  ],
+  // 채움[F09]
+  terms: [
+    { term: "<용어 1>", meaning: "<여기에 뜻과 예시 수치를 적는다>" },
+    { term: "<용어 2>", meaning: "<여기에 뜻과 예시 수치를 적는다>" },
+  ],
+  // 채움[F10]
+  // 결정 항목은 개수 제한이 없고 없으면 빈 배열이다. 아래 두 줄은 예시다.
+  decisions: [
+    "<여기에 결정 필요 항목 제목을 적는다>",
+    "<여기에 이 계획서를 확정할지 묻는 항목을 적는다>",
+  ],
+  // 채움[F11]
+  brief: "<여기에 Brief 2 ~ 3줄을 적는다>",
+  confidence: "<여기에 정확도(높음 · 중간 · 낮음)와 근거를 적는다>",
+};
+
+/* ===== 여기 아래는 고치지 않는다: 렌더 · 확대 · 토글 · 메모 코드 (PLAN 만 읽는다) ===== */
+
+// 네임스페이스 주소를 두 조각으로 쪼갠 것은 파일에 외부 주소 글자가 남지 않게 하려는 것이다 (자리값 그림 data URI 에만 쓴다)
+const XNS = "ht" + "tp://www.w3.org/2000/svg";
+const KIND = { changed: { t: "바뀜", c: "k-chg" }, new: { t: "새로", c: "k-new" }, off: { t: "꺼짐", c: "k-off" }, frozen: { t: "얼림", c: "k-frz" } };
+const COLORS = [["yellow", "노랑"], ["pink", "분홍"], ["sky", "하늘"], ["green", "초록"], ["purple", "보라"]];
+
+/** 코드 자료(plan-code JSON 칸)를 한 번 읽는다. 읽지 못하면 빈 꼴로 두고 설명 창의 코드 자리에만 안내가 나온다 */
+let CODE = { blocks: {}, diffs: {} }, codeBad = false;
+try {
+  const cj = JSON.parse(document.getElementById("plan-code").textContent);
+  if (!cj || typeof cj !== "object" || Array.isArray(cj)) throw new Error("shape");
+  CODE = { blocks: cj.blocks && typeof cj.blocks === "object" ? cj.blocks : {}, diffs: cj.diffs && typeof cj.diffs === "object" ? cj.diffs : {} };
+} catch (err) {
+  codeBad = true;
+}
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
+const cardOf = (id) => PLAN.cards.find((c) => c.id === id);
+const blockOf = (c, id) => PLAN.base.blocks.concat(c ? c.extraBlocks : []).find((b) => b.id === id);
+
+/** 무엇 · 어떻게 · 왜 이름표가 붙은 세 줄 */
+function wwh(d) {
+  const rows = [["무엇", d.what], ["어떻게", d.how], ["왜", d.why]];
+  return rows.map((r) => '<p><b class="wl">' + r[0] + "</b> " + esc(r[1]) + "</p>").join("");
+}
+
+/** 자리값 그림: 토큰 값을 읽어 SVG data URI 로 만든다 */
+function tok(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888888";
+}
+function phSrc(label) {
+  const svg = '<svg xmlns="' + XNS + '" viewBox="0 0 480 270"><rect width="480" height="270" fill="' + tok("--panel") + '" stroke="' + tok("--line") + '" stroke-width="3"/>' +
+    '<text x="240" y="142" text-anchor="middle" font-family="sans-serif" font-size="22" fill="' + tok("--fg") + '">' + esc(label) + "</text></svg>";
+  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+}
+function imgTag(img, label, alt) {
+  if (img) return '<img src="' + esc(img) + '" alt="' + esc(alt) + '">';
+  return '<img data-ph="' + esc(label) + '" src="' + phSrc(label) + '" alt="' + esc(alt) + '">';
+}
+function refreshPh() {
+  document.querySelectorAll("img[data-ph]").forEach((i) => { i.src = phSrc(i.dataset.ph); });
+}
+if (window.matchMedia) {
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  if (mq.addEventListener) mq.addEventListener("change", refreshPh);
+}
+
+/** 확대 · 축소 막대 (40 ~ 300%) */
+function zoomHtml(id, label) {
+  return '<div class="zoom" role="group" aria-label="' + esc(label) + ' 확대 축소"><button type="button" data-d="-20" aria-label="축소">−</button>' +
+    '<input type="range" id="' + id + '" min="40" max="300" step="10" value="100" aria-label="' + esc(label) + ' 크기">' +
+    '<button type="button" data-d="20" aria-label="확대">+</button><output for="' + id + '">100%</output></div>';
+}
+function bindZoom(z, target) {
+  const r = z.querySelector("input"), o = z.querySelector("output");
+  const apply = (v) => { v = Math.max(40, Math.min(300, v)); r.value = v; o.textContent = v + "%"; target.style.width = v + "%"; };
+  r.addEventListener("input", () => apply(+r.value));
+  z.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => apply(+r.value + +b.dataset.d)));
+  apply(100);
+}
+
+/** 화면 가득 덮개: Esc 나 닫기로 맨 위 것부터 닫는다 */
+const overlays = [];
+function pushOv(node) {
+  node._opener = document.activeElement;
+  document.body.appendChild(node);
+  overlays.push(node);
+}
+function popOv() {
+  const n = overlays.pop();
+  if (!n) return;
+  n.remove();
+  if (n._opener && n._opener.focus) n._opener.focus();
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && overlays.length) { e.stopImmediatePropagation(); popOv(); }
+}, true);
+
+function openImg(img, label, title) {
+  const o = document.createElement("div");
+  o.className = "imgov";
+  o.setAttribute("role", "dialog");
+  o.setAttribute("aria-modal", "true");
+  o.setAttribute("aria-label", title + " 그림 크게 보기");
+  o.innerHTML = '<div class="figbar"><h3>' + esc(title) + "</h3>" + zoomHtml("zimg", "그림") + '<button type="button" class="close">닫기</button></div><div class="imgbox">' + imgTag(img, label, title + " 크게") + "</div>";
+  pushOv(o);
+  bindZoom(o.querySelector(".zoom"), o.querySelector("img"));
+  const c = o.querySelector(".close");
+  c.addEventListener("click", popOv);
+  c.focus();
+}
+
+/** 구조도 그리기 */
+function specFor(c, view) {
+  if (view === "base") return { blocks: PLAN.base.blocks, edges: PLAN.base.edges, st: {} };
+  const st = {};
+  Object.keys(c.diffs).forEach((id) => { st[id] = c.diffs[id].kind; });
+  return { blocks: PLAN.base.blocks.concat(c.extraBlocks), edges: PLAN.base.edges.concat(c.extraEdges), st };
+}
+function clip(b, to) {
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2, dx = to[0] - cx, dy = to[1] - cy;
+  if (!dx && !dy) return [cx, cy];
+  const t = Math.min(dx ? b.w / 2 / Math.abs(dx) : 1e9, dy ? b.h / 2 / Math.abs(dy) : 1e9);
+  return [cx + dx * t, cy + dy * t];
+}
+function draw(svg, spec) {
+  const sid = svg.id, by = {};
+  spec.blocks.forEach((b) => { by[b.id] = b; });
+  let h = '<defs><marker id="' + sid + '-ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="ah"/></marker>' +
+    '<pattern id="' + sid + '-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="8" height="8" class="hatch-bg"/><line x1="0" y1="0" x2="0" y2="8" class="hatch-ln"/></pattern></defs>';
+  spec.edges.forEach((e) => {
+    const a = by[e[0]], b = by[e[1]];
+    if (!a || !b) return;
+    const off = spec.st[e[0]] === "off" || spec.st[e[1]] === "off";
+    const p = clip(a, [b.x + b.w / 2, b.y + b.h / 2]), q = clip(b, [a.x + a.w / 2, a.y + a.h / 2]);
+    h += '<line class="ed' + (off ? " off" : "") + '" x1="' + p[0].toFixed(1) + '" y1="' + p[1].toFixed(1) + '" x2="' + q[0].toFixed(1) + '" y2="' + q[1].toFixed(1) + '"' + (off ? "" : ' marker-end="url(#' + sid + '-ah)"') + "/>";
+  });
+  spec.blocks.forEach((b) => {
+    const k = spec.st[b.id], K = k ? KIND[k] : null;
+    h += '<g class="nd' + (k ? " " + k : "") + '" data-id="' + esc(b.id) + '" tabindex="0" role="button" aria-label="' + esc(b.label) + (K ? " (" + K.t + ")" : "") + ' 설명 보기">' +
+      '<rect class="bx" x="' + b.x + '" y="' + b.y + '" width="' + b.w + '" height="' + b.h + '" rx="3"/>' +
+      (k === "off" ? '<rect class="hx" x="' + b.x + '" y="' + b.y + '" width="' + b.w + '" height="' + b.h + '" rx="3" fill="url(#' + sid + '-hatch)" pointer-events="none"/>' : "") +
+      '<text class="lb" x="' + (b.x + b.w / 2) + '" y="' + (b.y + b.h / 2 + 4) + '" text-anchor="middle">' + esc(b.label) + "</text>";
+    if (K) h += '<rect class="tagbg" x="' + (b.x + b.w - 40) + '" y="' + (b.y - 9) + '" width="36" height="16" rx="2"/><text class="tag" x="' + (b.x + b.w - 22) + '" y="' + (b.y + 3) + '" text-anchor="middle">' + K.t + "</text>";
+    h += "</g>";
+  });
+  svg.innerHTML = h;
+}
+
+/** 블록 설명 창: 일반 블록은 세 줄 + 그림, 달라진 블록은 색 띠 + 표지 + 전/후 토글 */
+function closeInfo(fig) {
+  fig.querySelector(".info").hidden = true;
+  fig.querySelectorAll("svg .nd.sel").forEach((n) => n.classList.remove("sel"));
+  delete fig.dataset.sel;
+}
+/** 실제 코드 칸: showInfo 가 고르는 설명 자료와 같은 기준으로 코드를 고른다 (diff 보기이면 전/후 코드, 아니면 기준 코드) */
+const toInt = (v) => Math.trunc(Number(v)) || 0;
+function pickCode(cardId, id, d, after) {
+  if (d) { const e = (CODE.diffs[cardId] || {})[id]; return e ? (after ? e.after : e.before) : null; }
+  return CODE.blocks[id] || null;
+}
+function codeRow(key, lines, i) {
+  const ln = lines[i], n = toInt(ln.n), mk = ln.mark === "new" || ln.mark === "changed" ? KIND[ln.mark] : null;
+  let ex = "", aid = "";
+  if (ln.ref != null) {
+    const r = toInt(ln.ref), rep = lines.find((x) => toInt(x.n) === r);
+    ex = '<button type="button" class="cdref" data-to="' + esc(key + "-L" + r) + '">L' + r + " 설명 참고</button>";
+    if (rep && rep.aid) aid = '<span class="cddim">그림: L' + r + " 참고</span>";
+  } else {
+    ex = wwh(ln) + (ln.covers ? '<p class="cdcov">이 설명은 ' + esc(ln.covers) + " 에 적용</p>" : "");
+    if (ln.choice && typeof ln.choice === "object") {
+      const c = ln.choice, refs = Array.isArray(c.refs) ? c.refs.filter((x) => x && typeof x === "object") : [];
+      const lis = refs.map((x) => {
+        const u = String(x.url == null ? "" : x.url), t = esc(x.title);
+        const head = /^https?:\/\//i.test(u) ? '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + t + "</a>" : t;
+        return "<li>" + head + (x.year ? " (" + esc(x.year) + ")" : "") + (x.note ? "<br>" + esc(x.note) : "") + (x.check ? '<br><span class="cdwk">검증 </span>' + esc(x.check) : "") + "</li>";
+      }).join("");
+      ex += '<details class="cdwhy"><summary>선택 근거와 참고 자료</summary><div class="cdwb"><p><span class="cdwk">선택 근거</span><br>' + esc(c.why) +
+        '</p><p class="cdwk">참고 자료</p>' + (lis ? "<ol>" + lis + "</ol>" : "<p>참고 자료가 아직 없습니다.</p>") + "</div></details>";
+    }
+    if (ln.aid) {
+      const a = ln.aid, k = a.kind === "math" ? ["math", "수식"] : ["model", "모델"];
+      aid = '<span class="cdkind ' + k[0] + '">' + k[1] + '</span><button type="button" class="cdbtn" data-i="' + i + '" aria-label="L' + n + ' 이해용 그림 크게 보기">' +
+        imgTag(a.img, "그림 자리 · L" + n, (a.topic || "") + " (이해용 그림)") + '</button><span class="cddim">' + esc(a.topic) + "</span>";
+    }
+  }
+  return '<div class="cdln' + (mk ? " cdmk" : "") + '" id="' + esc(key + "-L" + n) + '"><span class="cdno">' + n + (mk ? "<b>" + mk.t + "</b>" : "") +
+    '</span><pre class="cdsrc">' + esc(ln.src) + '</pre><div class="cdex">' + ex + '</div><div class="cdaid">' + aid + "</div></div>";
+}
+function showCode(p, fig, id, d, after) {
+  const host = p.querySelector(".cdsec");
+  const note = (t) => { host.innerHTML = '<h4>실제 코드</h4><p class="cdmsg">' + t + "</p>"; };
+  try {
+    if (codeBad) return note("코드 자료를 읽지 못했습니다(plan-code 의 JSON 형식을 확인하십시오).");
+    const code = pickCode(fig.dataset.card, id, d, after);
+    if (!code) return note("이 블록의 코드가 아직 없습니다.");
+    if (code.none) return note("코드 없음: " + esc(code.none));
+    const lines = Array.isArray(code.lines) ? code.lines.filter((x) => x && typeof x === "object") : [];
+    if (!lines.length) return note("이 블록의 코드가 아직 없습니다.");
+    const key = "cl-" + fig.dataset.zid + "-" + id + "-" + (d ? (after ? "a" : "b") : "x");
+    let rows = "";
+    for (let i = 0; i < lines.length; i++) rows += codeRow(key, lines, i);
+    host.innerHTML = '<h4>실제 코드</h4><p class="cdmeta">' + esc(code.path) + " · L" + toInt(lines[0].n) + " ~ L" + toInt(lines[lines.length - 1].n) + " · 커밋 " + esc(code.commit) + "</p>" +
+      '<div class="cdtab"><div class="cdln cdhd"><span>줄</span><span>코드</span><span>해설</span><span>이해용 그림</span></div>' + rows + "</div>";
+    host.addEventListener("click", (e) => {
+      const r = e.target.closest(".cdref"), a = e.target.closest(".cdbtn");
+      if (r) {
+        const row = document.getElementById(r.dataset.to);
+        if (!row) return;
+        const calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        row.scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
+        row.classList.add("cdhit");
+        setTimeout(() => row.classList.remove("cdhit"), 2000);
+      } else if (a) {
+        const ln = lines[+a.dataset.i], n = toInt(ln.n);
+        openImg(ln.aid.img || null, "그림 자리 · L" + n, "이해용 그림 · L" + n);
+      }
+    });
+  } catch (err) {
+    note("코드를 그리지 못했습니다(plan-code 의 내용을 확인하십시오).");
+  }
+}
+function showInfo(fig, id, side) {
+  const c = cardOf(fig.dataset.card), b = blockOf(c, id);
+  if (!b) return;
+  const p = fig.querySelector(".info");
+  const d = fig.dataset.view === "this" ? c.diffs[id] : null;
+  const after = (side || "after") === "after";
+  const info = d ? (after ? d.after : d.before) : (PLAN.blockInfo[id] || {});
+  const K = d ? KIND[d.kind] : null;
+  const title = d ? b.label + (after ? " · 이 판" : " · 기준판") : b.label;
+  const phName = d ? b.label + (after ? " 후" : " 전") : b.label + " 기준";
+  let ovc = "", stamp = "";
+  if (d && after && d.kind === "off") { ovc = " ov-off"; stamp = '<span class="stamp">이 판에서는 꺼짐</span>'; }
+  if (d && after && d.kind === "frozen") { ovc = " ov-frozen"; stamp = '<span class="stamp">얼림 · 학습 안 함</span>'; }
+  fig.querySelectorAll("svg .nd").forEach((n) => n.classList.toggle("sel", n.dataset.id === id));
+  fig.dataset.sel = id;
+  p.hidden = false;
+  p.className = "info" + (d ? " diff " + K.c : "");
+  const tog = d ? '<div class="tog ba" role="group" aria-label="전후 비교"><span class="lab">비교</span>' +
+    '<button type="button" data-s="before" aria-pressed="' + !after + '">전 (기준판)</button>' +
+    '<button type="button" data-s="after" aria-pressed="' + after + '">후 (이 판)</button></div>' : "";
+  p.innerHTML = '<div class="dtxt ' + (after ? "after" : "before") + '">' + (d ? '<span class="kbadge">' + (after ? K.t : "기준판") + "</span>" : "") +
+    "<h4>" + esc(title) + "</h4>" + wwh(info) + "</div>" +
+    '<div class="figbar">' + tog + zoomHtml("zi-" + fig.dataset.zid, "블록 그림") + '<button type="button" class="bigimg">그림 크게 보기</button></div>' +
+    '<div class="imgbox' + ovc + '">' + imgTag(info.img, "그림 자리 · " + phName, title + " 예시 그림") + stamp + "</div>" +
+    '<div><button type="button" class="x">닫기</button></div>' +
+    '<div class="cdsec"></div>';
+  bindZoom(p.querySelector(".zoom"), p.querySelector(".imgbox img"));
+  p.querySelector(".bigimg").addEventListener("click", () => openImg(info.img, "그림 자리 · " + phName, title));
+  p.querySelector(".x").addEventListener("click", () => closeInfo(fig));
+  p.querySelectorAll(".tog.ba button").forEach((btn) => btn.addEventListener("click", () => {
+    showInfo(fig, id, btn.dataset.s);
+    const f = fig.querySelector('.tog.ba [data-s="' + btn.dataset.s + '"]');
+    if (f) f.focus();
+  }));
+  showCode(p, fig, id, d, after);
+  if (p.scrollIntoView) p.scrollIntoView({ block: "nearest" });
+}
+
+/** 구조도 한 벌 (카드 안 · 크게 보기 덮개 안에서 같이 쓴다) */
+function buildFig(fig, c, view, big) {
+  const zid = big ? "big" : c.id;
+  fig.dataset.card = c.id;
+  fig.dataset.zid = zid;
+  fig.dataset.view = view;
+  fig.innerHTML = '<div class="figbar fbar"><div class="tog" role="group" aria-label="구조도 보기"><span class="lab">구조도</span>' +
+    '<button type="button" data-v="base" aria-pressed="' + (view === "base") + '">기준판</button>' +
+    '<button type="button" data-v="this" aria-pressed="' + (view !== "base") + '">이 판</button></div>' +
+    zoomHtml("z-" + zid, "구조도") + (big ? "" : '<button type="button" class="big">크게 보기</button>') + "</div>" +
+    '<div class="figbox"><svg class="dia" id="svg-' + zid + '" viewBox="0 0 960 240" aria-label="' + esc(c.name) + ' 구조도"></svg></div>' +
+    '<span class="hint">블록을 누르면 예시 그림과 설명이 열립니다. 색칠된 블록은 이 판에서 달라진 점과 전/후 비교가 나옵니다.</span><div class="info" hidden></div>';
+  const svg = fig.querySelector("svg");
+  draw(svg, specFor(c, view));
+  bindZoom(fig.querySelector(".fbar .zoom"), svg);
+  fig.querySelectorAll(".fbar .tog button").forEach((btn) => btn.addEventListener("click", () => {
+    fig.dataset.view = btn.dataset.v;
+    fig.querySelectorAll(".fbar .tog button").forEach((x) => x.setAttribute("aria-pressed", String(x === btn)));
+    draw(svg, specFor(c, btn.dataset.v));
+    closeInfo(fig);
+  }));
+  const pick = (e) => {
+    const g = e.target.closest && e.target.closest("g.nd");
+    if (g) showInfo(fig, g.dataset.id);
+  };
+  svg.addEventListener("click", pick);
+  svg.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(e); } });
+  const bg = fig.querySelector(".big");
+  if (bg) bg.addEventListener("click", () => openBig(c, fig.dataset.view));
+}
+function openBig(c, view) {
+  const o = document.createElement("div");
+  o.className = "ov";
+  o.setAttribute("role", "dialog");
+  o.setAttribute("aria-modal", "true");
+  o.setAttribute("aria-label", c.name + " 구조도 크게 보기");
+  o.innerHTML = '<div class="figbar"><h3>' + esc(c.name) + '</h3><button type="button" class="close">닫기</button></div><div class="fig"></div>';
+  pushOv(o);
+  buildFig(o.querySelector(".fig"), c, view, true);
+  const cl = o.querySelector(".close");
+  cl.addEventListener("click", popOv);
+  cl.focus();
+}
+
+/** 본문 렌더 (런타임 기능과 무관하게 먼저 끝난다) */
+function renderPage() {
+  const m = PLAN.meta;
+  $("hd").innerHTML = "<h1>" + esc(m.title) + '</h1><div class="meta"><span>의뢰서 <code>' + esc(m.intentPath) + "</code></span><span>커밋 " + esc(m.commit) + "</span><span>상태: " + esc(m.status) + "</span><span>작성 " + esc(m.written) + "</span></div>";
+  $("concl").innerHTML = PLAN.conclusion.map((t) => "<p>" + esc(t) + "</p>").join("");
+  $("flow").textContent = PLAN.flow;
+  $("stages").innerHTML = PLAN.stages.map((s) => "<tr><td>" + esc(s.name) + "</td><td>" + esc(s.question) + "</td><td>" + esc(s.count) + "</td><td>" + esc(s.precondition) + "</td><td>" + esc(s.status) + "</td></tr>").join("");
+  const host = $("cards");
+  PLAN.cards.forEach((c) => {
+    const a = document.createElement("article");
+    a.className = "card";
+    a.id = "card-" + c.id;
+    a.innerHTML = '<div class="txt"><h3>' + esc(c.name) + " · " + esc(c.alias) + '</h3><div class="chips"><span class="chip">' + esc(c.stage) + '</span><span class="chip">' + esc(c.tasks) + "</span></div>" +
+      "<dl><dt>언제</dt><dd>" + esc(c.when) + "</dd><dt>무엇을</dt><dd>" + esc(c.what) + "</dd><dt>어떻게</dt><dd>" + esc(c.how) + "</dd><dt>왜</dt><dd>" + esc(c.why) +
+      "</dd><dt>판정 기준</dt><dd>" + esc(c.criterion) + '</dd><dt>예시</dt><dd><div class="ex">' + esc(c.exampleIn) + "<br>" + esc(c.exampleOut) + "</div></dd></dl></div>" +
+      '<div class="fig"></div>';
+    host.appendChild(a);
+    buildFig(a.querySelector(".fig"), c, "this", false);
+  });
+  $("terms").innerHTML = PLAN.terms.map((t) => "<tr><td>" + esc(t.term) + "</td><td>" + esc(t.meaning) + "</td></tr>").join("");
+  $("decisions").innerHTML = PLAN.decisions.map((t) => "<li>" + esc(t) + "</li>").join("");
+  $("brief").innerHTML = "<b>[Brief]</b> " + esc(PLAN.brief) + " · 정확도: " + esc(PLAN.confidence);
+}
+renderPage();
+
+/* ===== 메모: db 저장소(memos 컬렉션 + memo_meta 문서 둘). 세션에는 안내 글을 클립보드로 복사해 사용자가 붙여 넣는다 ===== */
+let db = null, memos = [], purpose = {}, review = "검토 중", memoMode = false, filter = "all", lastColor = "yellow";
+let pop = null, pinPop = null, pinLayer = null, formSeq = 0;
+
+const safeColor = (k) => (COLORS.some((c) => c[0] === k) ? k : "yellow");
+const cvar = (k) => "--mf:var(--m-" + safeColor(k) + ");--mb:var(--m-" + safeColor(k) + "-b)";
+const hm = (s) => (s ? String(s).slice(5, 16).replace("T", " ") : "");
+function plabel(k) {
+  const n = COLORS.find((x) => x[0] === k);
+  return String(purpose[k] || "").trim() || ((n ? n[1] : k) + " (용도 미정)");
+}
+function setStat(t) {
+  const s = $("mstat");
+  if (s) s.textContent = t;
+  const m = $("mcopymsg");
+  if (m) { m.textContent = t; clearTimeout(setStat.t); setStat.t = setTimeout(() => { m.textContent = ""; }, 8000); }
+}
+/** 아직 복사하지 않은 메모 수 [새 메모, 추가 메모]. 옛 필드(sent)만 있는 기록은 «아직 복사 안 함» 으로 본다 */
+function uncopiedCount() {
+  let n = 0, k = 0;
+  memos.forEach((m) => { if (!m.copied) n++; (m.followups || []).forEach((f) => { if (!f.copied) k++; }); });
+  return [n, k];
+}
+
+/** 위치: body 아래 요소 순번 경로와 사람이 읽는 설명 */
+function pathOf(el) {
+  const p = [];
+  while (el && el !== document.body && el.parentElement) { p.unshift(Array.prototype.indexOf.call(el.parentElement.children, el)); el = el.parentElement; }
+  return p.join("/");
+}
+function byPath(s) {
+  if (!s) return null;
+  let el = document.body;
+  s.split("/").forEach((i) => { el = el && el.children[+i]; });
+  return el || null;
+}
+function describe(el, sel) {
+  const parts = [], card = el.closest && el.closest(".card"), nd = el.closest && el.closest("g.nd");
+  let h2 = null;
+  document.querySelectorAll("h2").forEach((x) => { if (x.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) h2 = x; });
+  if (el.closest && el.closest("header")) parts.push("머리"); else if (h2) parts.push("절 «" + h2.textContent.trim() + "»");
+  if (card) parts.push("카드 «" + card.querySelector("h3").textContent.trim() + "»");
+  if (nd && card) { const b = blockOf(cardOf(card.id.replace("card-", "")), nd.dataset.id); if (b) parts.push("구조도 블록 «" + b.label + "»"); }
+  const dd = el.closest && el.closest("dd");
+  if (dd && dd.previousElementSibling) parts.push("«" + dd.previousElementSibling.textContent.trim() + "» 줄");
+  const tx = (el.textContent || "").replace(/\s+/g, " ").trim();
+  if (sel) parts.push("고른 글 «" + sel.slice(0, 200) + (sel.length > 200 ? "…" : "") + "»");
+  else if (tx) parts.push("요소 글 «" + tx.slice(0, 60) + (tx.length > 60 ? "…" : "") + "»");
+  return parts.join(" · ") || "페이지";
+}
+
+/** 메모 한 장: 복사한 메모는 지우지 않고 «복사함 날짜» 만 표시, 추가 메모는 followups */
+function memoEl(m, place) {
+  const col = safeColor(m.color), fu = m.followups || [], fuId = "m-fu-" + place + "-" + String(m.id).replace(/[^\w-]/g, "_");
+  const d = document.createElement("div");
+  d.className = "memo" + (m.copied ? " copied" : "");
+  d.setAttribute("style", cvar(col));
+  const badge = m.copied ? '<span class="mbadge ok">복사함 ' + esc(hm(m.copiedAt)) + "</span>" : '<span class="mbadge">아직 복사 안 함</span>';
+  const fuHtml = fu.length ? '<div class="mfu"><b>추가 메모 ' + fu.length + "회</b>" + fu.map((f, i) => "<div><span class=\"mm\">" + (i + 1) + "회 · " + esc(hm(f.at)) + " · " + (f.copied ? "복사함 " + esc(hm(f.copiedAt)) : "아직 복사 안 함") + "</span>" + esc(f.text) + "</div>").join("") + "</div>" : "";
+  d.innerHTML = '<div class="mt"><span class="mm">#' + esc(m.no || "?") + " " + badge + " " + esc(plabel(col)) + " · " + esc(m.where || "") + (m.at ? " · " + esc(hm(m.at)) : "") + "</span>" + esc(m.text || "") + fuHtml + '<div class="mfuhost"></div></div>' +
+    '<div class="macts"><button type="button" class="mbtn go">위치로</button>' + (m.copied ? '<button type="button" class="mbtn addfu">추가 메모</button>' : '<button type="button" class="mbtn del">지우기</button>') + "</div>";
+  d.querySelector(".go").addEventListener("click", () => goMemo(m));
+  const del = d.querySelector(".del");
+  if (del) del.addEventListener("click", () => {
+    if (del.dataset.armed !== "1") {
+      del.dataset.armed = "1";
+      del.textContent = "정말 지우기";
+      setTimeout(() => { del.dataset.armed = ""; del.textContent = "지우기"; }, 4000);
+      return;
+    }
+    d.classList.add("busy");
+    db.collection("memos").doc(m.id).delete().catch(() => { d.classList.remove("busy"); setStat("지우지 못했습니다. 잠시 뒤 다시 눌러 주십시오."); });
+  });
+  const af = d.querySelector(".addfu");
+  if (af) af.addEventListener("click", () => {
+    const host = d.querySelector(".mfuhost");
+    if (host.firstChild) { host.innerHTML = ""; return; }
+    host.innerHTML = '<form class="mform"><label class="mstat" for="' + fuId + '">추가 메모 내용</label><textarea id="' + fuId + '" maxlength="1000"></textarea><div class="figbar"><button type="submit" class="mbtn">작성 완료</button><button type="button" class="mbtn cancel">취소</button></div></form>';
+    const f = host.querySelector("form"), ta = f.querySelector("textarea");
+    ta.focus();
+    f.querySelector(".cancel").addEventListener("click", () => { host.innerHTML = ""; });
+    f.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const t = ta.value.trim();
+      if (!t) { ta.focus(); return; }
+      const sb = f.querySelector("[type=submit]");
+      sb.disabled = true;
+      db.collection("memos").doc(m.id).update({ followups: fu.concat([{ text: t, at: new Date().toISOString(), copied: false, copiedAt: "" }]) })
+        .then(() => setStat("#" + m.no + " 에 추가 메모를 남겼습니다(아직 복사 안 함)."))
+        .catch(() => { sb.disabled = false; setStat("추가 메모를 저장하지 못했습니다."); });
+    });
+  });
+  return d;
+}
+
+/** 위치로: 카드와 보기 · 블록 설명 창을 먼저 열고 그 요소로 이동한 뒤 메모 내역을 펼친다 */
+function goMemo(m) {
+  try {
+    let card = m.card ? $("card-" + m.card) : null;
+    if (!card && m.path) { const t0 = byPath(m.path); card = t0 && t0.closest ? t0.closest(".card") : null; }
+    const dr = $("mdr");
+    if (dr) dr.hidden = true;
+    closePinList();
+    if (card) {
+      const fig = card.querySelector(".fig");
+      // 메모를 달 때의 보기(기준판 / 이 판)로 먼저 되돌린 뒤 설명 창을 연다
+      const want = m.view === "base" || m.view === "this" ? m.view : "";
+      if (fig && want && fig.dataset.view !== want) { const tb = fig.querySelector('.fbar .tog button[data-v="' + want + '"]'); if (tb) tb.click(); }
+      if (fig && m.inInfo && m.node) showInfo(fig, m.node);
+    }
+    let t = byPath(m.path);
+    if (t && m.inInfo && card && !card.contains(t)) t = null;
+    if (!t && card) t = (m.inInfo && card.querySelector(".info:not([hidden])")) || card;
+    if (!t) { setStat("위치를 찾지 못했습니다."); return; }
+    setTimeout(() => {
+      t.scrollIntoView({ block: "center" });
+      t.classList.add("mflash");
+      setTimeout(() => t.classList.remove("mflash"), 1800);
+      markAnchors();
+      setTimeout(() => {
+        const btn = pinBtn(m.path);
+        openPinList(m.path, btn && !btn.hidden ? btn : t);
+      }, 350);
+    }, 60);
+  } catch (err) {
+    setStat("위치를 찾지 못했습니다.");
+  }
+}
+/** 경로 문자열은 선택자에 넣지 않고 순회로 비교한다 (저장소에서 읽은 값이라 따옴표가 있어도 예외가 나지 않는다) */
+function pinBtn(path) {
+  return pinLayer ? Array.from(pinLayer.querySelectorAll(".mpin")).find((b) => b.dataset.path === path) || null : null;
+}
+
+/** 메모를 단 자리마다 «메모 N» 표지 (body 끝 겹침 층이라 본문 요소 경로는 바뀌지 않는다) */
+function markAnchors() {
+  document.querySelectorAll("[data-memo]").forEach((e) => { e.removeAttribute("data-memo"); e.style.removeProperty("--mb"); });
+  if (!pinLayer) { pinLayer = document.createElement("div"); pinLayer.className = "mpins"; document.body.appendChild(pinLayer); }
+  pinLayer.innerHTML = "";
+  const groups = {};
+  memos.forEach((m) => { if (m.path) (groups[m.path] = groups[m.path] || []).push(m); });
+  Object.keys(groups).forEach((p) => {
+    const t = byPath(p), g = groups[p].slice().sort((a, b) => (a.no || 0) - (b.no || 0)), last = g[g.length - 1];
+    if (!t || !t.setAttribute) return;
+    const col = safeColor(last.color);
+    t.setAttribute("data-memo", col);
+    t.style.setProperty("--mb", "var(--m-" + col + "-b)");
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "mpin";
+    b.dataset.path = p;
+    b.setAttribute("style", cvar(col));
+    const nf = g.reduce((a, m) => a + (m.followups || []).length, 0);
+    b.textContent = "메모 " + g.length + (nf ? " · 추가 " + nf : "");
+    b.setAttribute("aria-label", "이 자리 메모 " + g.length + "개 보기");
+    b.addEventListener("click", (e) => { e.stopPropagation(); openPinList(p, b); });
+    pinLayer.appendChild(b);
+  });
+  placePins();
+}
+function placePins() {
+  if (!pinLayer) return;
+  pinLayer.querySelectorAll(".mpin").forEach((b) => {
+    const t = byPath(b.dataset.path), r = t && t.getBoundingClientRect ? t.getBoundingClientRect() : null;
+    if (!r || (!r.width && !r.height)) { b.hidden = true; return; }
+    b.hidden = false;
+    const w = b.offsetWidth || 60;
+    b.style.left = Math.max(4, Math.min(r.right + window.scrollX - w, document.documentElement.scrollWidth - w - 4)) + "px";
+    b.style.top = Math.max(4, r.top + window.scrollY - 10) + "px";
+  });
+}
+let pinT = null;
+function placeSoon() { clearTimeout(pinT); pinT = setTimeout(placePins, 60); }
+function closePinList() { if (pinPop) { pinPop.remove(); pinPop = null; } }
+function closePop() { if (pop) { pop.remove(); pop = null; } }
+function openPinList(p, anchorEl) {
+  closePinList();
+  closePop();
+  const g = memos.filter((m) => m.path === p).sort((a, b) => (a.no || 0) - (b.no || 0));
+  if (!g.length) return;
+  pinPop = document.createElement("div");
+  pinPop.className = "mform mpop";
+  pinPop.setAttribute("role", "dialog");
+  pinPop.setAttribute("aria-label", "이 자리 메모 내역");
+  pinPop.dataset.path = p;
+  pinPop.innerHTML = '<div class="figbar"><b>이 자리 메모 ' + g.length + '개</b><button type="button" class="mbtn close" style="margin-left:auto">닫기</button></div><div class="mstat">' + esc(g[0].where || "") + '</div><div class="memos" style="max-height:60vh;overflow:auto"></div>';
+  const box = pinPop.querySelector(".memos");
+  g.forEach((m) => box.appendChild(memoEl(m, "pin")));
+  document.body.appendChild(pinPop);
+  const r = anchorEl.getBoundingClientRect(), w = Math.min(420, window.innerWidth - 24);
+  pinPop.style.width = w + "px";
+  pinPop.style.left = Math.max(12, Math.min(r.left, window.innerWidth - w - 12)) + "px";
+  pinPop.style.top = Math.max(12, Math.min(r.bottom + 6, window.innerHeight - pinPop.offsetHeight - 12)) + "px";
+  const cl = pinPop.querySelector(".close");
+  cl.addEventListener("click", closePinList);
+  cl.focus();
+}
+
+function renderReview() {
+  document.querySelectorAll("[data-rv]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.rv === review)));
+  const c = uncopiedCount(), s = $("mcopyfab");
+  if (s) { s.textContent = "메모 복사 (새 메모 " + c[0] + " · 추가 " + c[1] + ")"; s.disabled = !(c[0] || c[1]); }
+}
+function setReview(v) {
+  if (!db) return;
+  review = v;
+  renderReview();
+  db.doc("memo_meta/review").set({ status: v, at: new Date().toISOString() }).catch(() => setStat("검토 상태를 저장하지 못했습니다."));
+}
+function renderMemos() {
+  markAnchors();
+  const list = $("mlist");
+  if (list) {
+    list.innerHTML = "";
+    const shown = memos.filter((m) => filter === "all" || safeColor(m.color) === filter);
+    if (!shown.length) list.innerHTML = '<p class="mstat">메모가 없습니다. «메모 모드» 를 켜고 페이지 아무 곳이나 누르거나 글자를 고르면 메모를 남길 수 있습니다.</p>';
+    shown.forEach((m) => list.appendChild(memoEl(m, "list")));
+  }
+  const fab = $("mfab");
+  if (fab) fab.textContent = "메모 목록 " + memos.length;
+  renderReview();
+  if (pinPop) {
+    const pp = pinPop.dataset.path, btn = pinBtn(pp);
+    if (btn) openPinList(pp, btn); else closePinList();
+  }
+  document.querySelectorAll("#mchips button[data-k]").forEach((b) => {
+    const k = b.dataset.k;
+    if (k !== "all") b.lastChild.textContent = " " + plabel(k) + " (" + memos.filter((m) => safeColor(m.color) === k).length + ")";
+  });
+}
+
+/** 메모 모드: 페이지 어디든 누르거나 글자를 고르면 그 자리에 메모 창. «작성 완료» 는 저장만 한다 */
+function swatches(name, sel) {
+  return '<div class="sw" role="radiogroup" aria-label="메모 색">' + COLORS.map((c) => '<label style="' + cvar(c[0]) + '"><input type="radio" name="' + name + '" value="' + c[0] + '"' + (c[0] === sel ? " checked" : "") + '><span class="dot"></span>' + esc(plabel(c[0])) + "</label>").join("") + "</div>";
+}
+function openAt(el, sel, x, y) {
+  closePop();
+  const nm = "mc" + (++formSeq), where = describe(el, sel);
+  pop = document.createElement("form");
+  pop.id = "m-form";
+  pop.className = "mform mpop";
+  pop.innerHTML = '<div class="mstat">위치: ' + esc(where) + "</div>" + swatches(nm, lastColor) + '<textarea id="m-text" maxlength="1500" aria-label="메모 내용"></textarea><div class="figbar"><button type="submit" class="mbtn">작성 완료</button><button type="button" class="mbtn cancel">취소</button></div><div class="mstat perr"></div>';
+  document.body.appendChild(pop);
+  const w = Math.min(380, window.innerWidth - 24);
+  pop.style.width = w + "px";
+  pop.style.left = Math.max(12, Math.min(x + 8, window.innerWidth - w - 12)) + "px";
+  pop.style.top = Math.max(12, Math.min(y + 8, window.innerHeight - pop.offsetHeight - 12)) + "px";
+  const ta = pop.querySelector("textarea");
+  ta.focus();
+  pop.querySelector(".cancel").addEventListener("click", closePop);
+  pop.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = ta.value.trim();
+    if (!text) { ta.focus(); return; }
+    const color = safeColor((pop.querySelector("input[name=" + nm + "]:checked") || {}).value);
+    lastColor = color;
+    const sb = pop.querySelector("[type=submit]"), err = pop.querySelector(".perr");
+    sb.disabled = true;
+    const no = memos.reduce((a, m) => Math.max(a, m.no || 0), 0) + 1;
+    const cd = el.closest && el.closest(".card"), fg = el.closest && el.closest(".fig"), gn = el.closest && el.closest("g.nd");
+    const inInfo = !!(el.closest && el.closest(".info"));
+    const node = inInfo && fg ? (fg.dataset.sel || "") : (gn ? gn.dataset.id : "");
+    const blk = cd && node ? blockOf(cardOf(cd.id.replace("card-", "")), node) : null;
+    const rec = { no, color, text, where, card: cd ? cd.id.replace("card-", "") : "", node, nodeLabel: blk ? blk.label : "", view: fg ? (fg.dataset.view || "this") : "", inInfo, path: pathOf(el), at: new Date().toISOString(), copied: false, copiedAt: "", followups: [] };
+    db.collection("memos").add(rec)
+      .then(() => { closePop(); setStat("#" + no + " 메모를 저장했습니다(아직 복사 안 함). 다 쓰셨으면 «메모 복사» 를 누르십시오."); })
+      .catch(() => { sb.disabled = false; err.textContent = "저장하지 못했습니다. 다시 눌러 주십시오."; });
+  });
+}
+function setMode(on) {
+  memoMode = on;
+  document.body.classList.toggle("memomode", on);
+  const b = $("mmode");
+  if (b) { b.setAttribute("aria-pressed", String(on)); b.textContent = on ? "메모 모드 끄기" : "메모 모드"; }
+  if (!on) closePop();
+}
+const inMemoUi = (t) => t.closest && t.closest(".mpop,.mdrawer,.mfabs,.mrvtop,.mpins,.mcopybox,.mnote,.ov,.imgov");
+
+/** 메모 복사: 클릭 처리기 안에서만 부른다. 세션 채팅에 붙여 넣을 안내 글(메모 내용 없이 번호만)을 클립보드에 복사한다 */
+function copyMemos() {
+  const c = uncopiedCount();
+  if (!c[0] && !c[1]) { setStat("복사할 새 메모가 없습니다."); return; }
+  const fresh = [], more = [];
+  memos.slice().sort((a, b) => (a.no || 0) - (b.no || 0)).forEach((m) => {
+    if (!m.copied) fresh.push("#" + m.no);
+    if ((m.followups || []).some((f) => !f.copied)) more.push("#" + m.no);
+  });
+  const parts = [];
+  if (c[0]) parts.push("새 메모 " + c[0] + "건(" + fresh.join(" · ") + ")");
+  if (c[1]) parts.push("추가 메모 " + c[1] + "건(" + more.join(" · ") + ")");
+  const text = "학습 계획서 «" + PLAN.meta.title + "» 에 메모를 남겼습니다. " + parts.join(", ") + ". 계획서 아티팩트의 메모 저장소(memos 컬렉션)를 읽어 확인해 주십시오. 검토 상태: " + review + ".";
+  const targets = memos.filter((m) => !m.copied || (m.followups || []).some((f) => !f.copied));
+  const form = $("mcopyform"), ta = $("mcopytext");
+  const fallback = () => {
+    ta.value = text;
+    form.hidden = false;
+    ta.focus();
+    ta.select();
+    setStat("복사가 막혀 있습니다. 아래 글을 직접 복사해 세션 채팅에 붙여 넣어 주십시오.");
+  };
+  // 클릭 처리기 안에서 그 앞에 기다림 없이 곧바로 부른다 (사용자 몸짓 창을 넘기지 않기 위해). 미지원과 거절은 모두 글 상자로 떨어진다
+  let p = null;
+  try { if (navigator.clipboard && navigator.clipboard.writeText) p = navigator.clipboard.writeText(text); } catch (err) { p = null; }
+  if (p) p.then(() => { form.hidden = true; setStat("안내 글을 복사했습니다. 세션 채팅에 붙여 넣어 주십시오."); }).catch(fallback);
+  else fallback();
+  const now = new Date().toISOString();
+  Promise.all(targets.map((m) => {
+    const patch = { followups: (m.followups || []).map((f) => (f.copied ? f : Object.assign({}, f, { copied: true, copiedAt: now }))) };
+    if (!m.copied) { patch.copied = true; patch.copiedAt = now; }
+    return db.collection("memos").doc(m.id).update(patch);
+  })).catch(() => setStat("메모의 «복사함» 표시를 저장하지 못했습니다. 메모는 그대로 남아 있습니다."));
+}
+
+function buildMemoUi() {
+  const fabs = document.createElement("div");
+  fabs.className = "mfabs";
+  fabs.innerHTML = '<button type="button" id="mmode" class="mfab2" aria-pressed="false">메모 모드</button><button type="button" id="mfab" class="mfab2">메모 목록</button><button type="button" id="mcopyfab" class="mfab2 mcopyfab">메모 복사</button>';
+  document.body.appendChild(fabs);
+  const rv = document.createElement("div");
+  rv.className = "mrvtop";
+  rv.innerHTML = '<span class="mrvlab">검토 상태</span><button type="button" id="rv-ing" data-rv="검토 중" aria-pressed="true">검토 중</button><button type="button" id="rv-done" data-rv="검토 완료" aria-pressed="false">검토 완료</button>';
+  document.body.appendChild(rv);
+  const sb = document.createElement("div");
+  sb.className = "mcopybox";
+  sb.innerHTML = '<div class="mcopyform" id="mcopyform" hidden><textarea id="mcopytext" readonly aria-label="세션 채팅에 붙여 넣을 안내 글"></textarea><div class="figbar"><button type="button" class="mbtn" id="mcopyclose">닫기</button></div></div><span class="mcopymsg" id="mcopymsg" role="status"></span>';
+  document.body.appendChild(sb);
+  const dr = document.createElement("aside");
+  dr.className = "mdrawer";
+  dr.id = "mdr";
+  dr.hidden = true;
+  dr.setAttribute("aria-label", "메모 모아 보기");
+  dr.innerHTML = '<div class="figbar"><h3>메모</h3><button type="button" class="mbtn" id="mclose" style="margin-left:auto">닫기</button></div><p class="mstat" id="mstat">메모 저장소에 연결하는 중입니다.</p>' +
+    '<div><b>색별 용도</b> <span class="mstat">(직접 입력, 입력을 멈추면 저장)</span><div class="purp" id="mpurp">' + COLORS.map((c) => '<span class="dot" style="' + cvar(c[0]) + '"></span><input id="mp-' + c[0] + '" data-k="' + c[0] + '" aria-label="' + c[1] + ' 용도">').join("") + "</div></div>" +
+    '<div class="chipf" id="mchips" role="group" aria-label="색으로 거르기"><button type="button" data-k="all" aria-pressed="true">전체</button>' + COLORS.map((c) => '<button type="button" data-k="' + c[0] + '" aria-pressed="false" style="' + cvar(c[0]) + '"><span class="dot"></span><span></span></button>').join("") + "</div>" +
+    '<p class="mstat">«작성 완료» 는 저장만 합니다. 우하단 «메모 복사» 가 새 메모를 알리는 안내 글을 클립보드에 복사합니다. 그 글을 세션 채팅에 붙여 넣으면 세션이 메모를 읽습니다. 복사한 메모는 «복사함» 표시로 남고 «추가 메모» 로 덧붙일 수 있습니다.</p>' +
+    '<div class="memos" id="mlist"></div>';
+  document.body.appendChild(dr);
+  $("mmode").addEventListener("click", () => setMode(!memoMode));
+  $("mfab").addEventListener("click", () => { dr.hidden = !dr.hidden; if (!dr.hidden) $("mclose").focus(); });
+  $("mclose").addEventListener("click", () => { dr.hidden = true; $("mfab").focus(); });
+  $("mcopyfab").addEventListener("click", copyMemos);
+  $("mcopyclose").addEventListener("click", () => { $("mcopyform").hidden = true; });
+  document.querySelectorAll("[data-rv]").forEach((b) => b.addEventListener("click", () => setReview(b.dataset.rv)));
+  dr.querySelectorAll("#mchips button").forEach((b) => b.addEventListener("click", () => {
+    filter = b.dataset.k;
+    dr.querySelectorAll("#mchips button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    renderMemos();
+  }));
+  const timers = {};
+  dr.querySelectorAll("#mpurp input").forEach((inp) => inp.addEventListener("input", () => {
+    const k = inp.dataset.k;
+    clearTimeout(timers[k]);
+    timers[k] = setTimeout(() => {
+      const v = inp.value.trim();
+      if ((purpose[k] || "") === v) return;
+      purpose[k] = v;
+      const all = {};
+      COLORS.forEach((c) => { all[c[0]] = purpose[c[0]] || ""; });
+      db.doc("memo_meta/colors").set(all).then(renderMemos).catch(() => setStat("용도를 저장하지 못했습니다."));
+    }, 700);
+  }));
+  document.addEventListener("click", (e) => {
+    if (!memoMode || inMemoUi(e.target)) return;
+    const s = window.getSelection && window.getSelection(), st = s && !s.isCollapsed ? s.toString().trim() : "";
+    e.preventDefault();
+    e.stopPropagation();
+    let el = e.target;
+    if (st && s.rangeCount) { const a = s.getRangeAt(0).commonAncestorContainer; el = a.nodeType === 1 ? a : a.parentElement; }
+    if (el.closest && el.closest("g.nd")) el = el.closest("g.nd"); else if (el.closest && el.closest("svg")) el = el.closest("svg");
+    openAt(el, st, e.clientX, e.clientY);
+  }, true);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && (pop || pinPop)) { closePop(); closePinList(); e.stopImmediatePropagation(); }
+  }, true);
+  window.addEventListener("resize", placeSoon);
+  window.addEventListener("load", placeSoon);
+  document.addEventListener("click", placeSoon);
+}
+
+function subscribeMemos() {
+  const t = setTimeout(() => setStat("메모 저장소 응답을 기다리는 중입니다. 표시된 메모가 최신이 아닐 수 있습니다."), 10000);
+  db.collection("memos").orderBy("at", "desc").onSnapshot((s) => {
+    if (!s.metadata || !s.metadata.fromCache) { clearTimeout(t); setStat("메모 " + s.size + "개 · 저장소 연결됨"); }
+    memos = s.docs.map((d) => Object.assign({}, d.data(), { id: d.id }));
+    renderMemos();
+  }, () => { clearTimeout(t); setStat("메모 저장소 연결이 끊겼습니다. 페이지를 다시 열어 주십시오."); });
+  db.doc("memo_meta/review").onSnapshot((s) => {
+    const v = s.exists && s.data().status;
+    review = v === "검토 완료" ? v : "검토 중";
+    renderReview();
+  }, () => {});
+  db.doc("memo_meta/colors").onSnapshot((s) => {
+    purpose = s.exists ? Object.assign({}, s.data()) : {};
+    COLORS.forEach((c) => { const i = $("mp-" + c[0]); if (i && document.activeElement !== i) i.value = purpose[c[0]] || ""; });
+    renderMemos();
+  }, () => {});
+}
+
+/** 시작: 본문은 이미 그려졌다. use() 가 풀리지 않거나 null 이면 메모 기능만 끈다 */
+const within = (p, ms) => Promise.race([Promise.resolve(p), new Promise((res) => setTimeout(() => res(null), ms))]);
+async function initMemo() {
+  const note = document.createElement("div");
+  note.className = "mnote";
+  note.id = "mnote";
+  note.setAttribute("role", "status");
+  note.textContent = "메모 저장소에 연결하는 중입니다.";
+  document.body.appendChild(note);
+  try {
+    db = await within(window.claude?.use?.("db"), 10000);
+  } catch (err) {
+    db = null;
+  }
+  if (!db) { note.textContent = "이 화면에서는 메모를 쓸 수 없습니다"; return; }
+  note.remove();
+  buildMemoUi();
+  subscribeMemos();
+  renderMemos();
+}
+initMemo().catch(() => {
+  const n = $("mnote");
+  if (n) n.textContent = "이 화면에서는 메모를 쓸 수 없습니다";
+});
+</script>

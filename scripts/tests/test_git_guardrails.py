@@ -1,14 +1,9 @@
 """git-guardrails.sh 회귀 테스트 (자체 완결 — 실제 git 명령을 돌리지 않고 훅 판정만 본다).
 
 실행: python3 ~/.claude/scripts/tests/test_git_guardrails.py → 실패 0 이면 exit 0
-케이스: push·pull·reset --hard·commit --no-verify·config core.hooksPath 차단 /
-        stash push·drop·clear·pop·apply 차단, 조회(list·show)는 통과(2026-09-14) /
-        복합 명령 세그먼트 평가(2026-09-14 재감사 B3·B4): `stash list && stash drop`·`config --get ; config set` 차단,
-        조회만 이어 붙인 복합은 통과 — 허용 예외가 그 조각 밖까지 덮던 구멍 /
-        셸 `-c` 페이로드 안의 push·reset 차단(2026-09-08 security 재현) /
-        `git -c protocol.version=2 push` 차단(옵션과 값이 별개 토큰) /
-        통과 쌍: git status·log, 인용 메시지 안의 「git push」·「-n」 글자, 하네스 훅 경로 지정, `bash -c 'git status'`.
+GIT_GUARDRAILS_HOOK 가 있으면 그 경로의 훅을 본다(수정 전 사본 대조용).
 차단마다 통과 쌍을 함께 둔다. 오탐이 나면 이 훅은 일상 커밋을 막아 작업이 멈춘다.
+REF: knowledge/harness/code-history/scripts__tests__test_git_guardrails.py.md
 """
 import json
 import os
@@ -16,37 +11,32 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOOK = Path(os.environ.get("GIT_GUARDRAILS_HOOK") or Path.home() / ".claude/scripts/git-guardrails.sh")   # 수정 전 사본 대조용
+HOOK = Path(os.environ.get("GIT_GUARDRAILS_HOOK") or Path.home() / ".claude/scripts/git-guardrails.sh")
 HOOKS_DIR = str(Path.home() / ".claude/.git/hooks")
 
 
 def blocked(cmd: str) -> bool:
-    """훅을 실행해 deny 판정이 나왔는지 반환."""
     payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}})
     r = subprocess.run(["bash", str(HOOK)], input=payload, check=False, capture_output=True, text=True)
     return '"deny"' in r.stdout
 
 
 def reason(cmd: str) -> str:
-    """훅을 실행해 deny 사유 문구를 반환(통과면 빈 문자열)."""
     payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}})
     r = subprocess.run(["bash", str(HOOK)], input=payload, check=False, capture_output=True, text=True)
     return json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if '"deny"' in r.stdout else ""
 
 
-AQ = "# APPROVED 사용자 «그렇게 진행해 주세요»\n"   # 승인 마커 줄(인용의 로그 실재는 bash-write-check 소관)
-STRICT = "승인 표시(# APPROVED)로도 통과하지 않습니다"   # 2026-11-12 결정 F1·G1: 마커로 안 풀리는 차단의 문구
+AQ = "# APPROVED 사용자 «그렇게 진행해 주세요»\n"
+STRICT = "승인 표시(# APPROVED)로도 통과하지 않습니다"
 
-# (이름, 명령, 차단 기대)
 CASES = [
-    # ── 차단 ──
     ("git push origin main → 차단", "git push origin main", True),
     ("bash -c 'git push' → 차단", "bash --noprofile --norc -c 'git push'", True),
     ("sh -c 'git reset --hard' → 차단", "sh -c 'git reset --hard HEAD~1'", True),
     ("git -c protocol.version=2 push → 차단", "git -c protocol.version=2 push origin main", True),
     ("git commit --no-verify → 차단", "git commit --no-verify -m x", True),
     ("git config core.hooksPath → 차단", "git config core.hooksPath /dev/null", True),
-    # stash (2026-09-14) — 훅 밖이던 유일한 git 파괴 동작
     ("git stash (인자 없음=push) → 차단", "git stash", True),
     ("git stash push -m → 차단", "git stash push -m wip", True),
     ("git stash drop → 차단", "git stash drop stash@{0}", True),
@@ -54,18 +44,15 @@ CASES = [
     ("git stash pop → 차단", "git stash pop", True),
     ("git stash apply → 차단", "git stash apply", True),
     ("bash -c 'git stash' → 차단", "bash -c 'git stash drop'", True),
-    # 복합 명령 세그먼트 평가 (2026-09-14 재감사 B3·B4) — 앞 조각의 허용 예외가 뒤 조각을 덮던 구멍
     ("stash list && stash drop → 차단", "git stash list && git stash drop stash@{0}", True),
     ("stash show ; stash clear → 차단", "git stash show -p stash@{0}; git stash clear", True),
     ("config --get ; config set → 차단", "git config --get core.hooksPath ; git config core.hooksPath /tmp/evil", True),
-    # 2026-10-01 감사 — 공백 없는 인용은 셸이 벗기고 실행한다(지워서 통과시키던 구멍)
     ("git 'push' → 차단", "git 'push' origin main", True),
     ('git "stash" → 차단', 'git "stash"', True),
     ('git checkout "." → 차단', 'git checkout "."', True),
     ('git commit "--no-verify" → 차단', 'git commit "--no-verify" -m x', True),
     ('git pu"s"h → 차단', 'git pu"s"h origin main', True),
     ("bash -c 'git \"push\"' → 차단", "bash -c 'git \"push\"'", True),
-    # 2026-10-01 감사 — 작업트리 폐기의 다른 표기
     ("git checkout ./ → 차단", "git checkout ./", True),
     ("git restore :/ → 차단", "git restore :/", True),
     ("git checkout -f main → 차단", "git checkout -f main", True),
@@ -73,7 +60,6 @@ CASES = [
     ("git switch --discard-changes → 차단", "git switch --discard-changes main", True),
     ("git checkout --force → 차단", "git checkout --force main", True),
     ("git -c alias.x=checkout x . → 차단", "git -c alias.x=checkout x .", True),
-    # ── 통과 (차단 쌍) ──
     ("git status → 통과", "git status", False),
     ("커밋 메시지 안의 「git push」 → 통과", "git commit -m 'docs: git push 규칙 보강'", False),
     ("커밋 메시지 안의 「-n」 → 통과", "git commit -m 'fix: -n flag note'", False),
@@ -86,7 +72,6 @@ CASES = [
     ("# APPROVED + git stash → 통과", "# APPROVED\ngit stash", False),
     ("stash list 단독 → 통과 (세그먼트 평가 뒤에도)", "git stash list", False),
     ("조회 두 조각 → 통과", "git stash list && git stash show -p stash@{0}", False),
-    # 2026-10-01 감사 — 여러 줄 커밋 메시지 본문의 «git push» 글자는 오차단하지 않는다(줄 단위 따옴표 제거가 쌍을 못 접던 결함)
     ("여러 줄 커밋 메시지 속 git push → 통과", 'git commit -m "docs: line1\nnote: git push 규칙\nline3"', False),
     ("heredoc 커밋 메시지 속 git push → 차단(r5 H)", "git commit -m \"$(cat <<'EOF'\nfix: x\n\ngit push 는 사용자 직접\nEOF\n)\"", True),
     ("여러 줄 명령의 앞 줄 stash list 가 뒷 줄 drop 을 덮지 않음 → 차단", "git stash list\ngit stash drop", True),
@@ -95,11 +80,9 @@ CASES = [
     ("git switch -c → 통과", "git switch -c feature-x", False),
     ("인용 속 -f 글자 → 통과", "git commit -m 'checkout -f 규칙 보강'", False),
     ("공백 없는 인용 메시지 → 통과", 'git commit -m "WIP"', False),
-    # 2026-10-01 P6 검수 — 큰따옴표 속 아포스트로피 둘이 작은따옴표 쌍으로 읽혀 사이의 push 를 지우던 구멍(따옴표는 왼쪽부터 짝짓는다)
     ("큰따옴표 속 아포스트로피 둘 사이의 push → 차단", "git commit -m \"it's a\" && git push && echo \"don't\"", True),
     ("작은따옴표 속 큰따옴표 둘 사이의 push → 차단", "git commit -m 'a \"b' && git push && echo 'c\" d'", True),
     ("아포스트로피 든 커밋 메시지 단독 → 통과", "git commit -m \"it's a fix, don't worry\"", False),
-    # 2026-10-01 P6 보안 재검수 H — 따옴표 벗기기와 짝짓기를 한 번의 왼쪽→오른쪽 주사로(P1-2·P2-3)
     ("P1-2 echo \"it's\" && git push && echo \"don't\" → 차단", "echo \"it's\" && git push && echo \"don't\"", True),
     ("P1-2 echo '\"' ; git push ; echo '\"' → 차단", "echo '\"' ; git push ; echo '\"'", True),
     ("P1-2 git commit -m \"it's a\" && git push && echo \"don't\" → 차단", "git commit -m \"it's a\" && git push && echo \"don't\"", True),
@@ -113,8 +96,6 @@ CASES = [
     ("가용성 git log --format → 통과", "git log --format='%h %s'", False),
     ("가용성 echo \"don't\" 단독 → 통과", "echo \"don't\"", False),
     ("가용성 주석 달린 읽기 → 통과", "ls # it's fine", False),
-    # 2026-10-02 I: 주석 구간은 지우지 않고 남긴다(주석 오판이 뒤 명령을 숨기지 못하게 하는 닫힘 방향 설계). 그래서 주석 속 «git push» 글자는
-    #   차단된다 — 직전 묶음의 «통과» 기대를 «차단»으로 바꾼다(오탐 허용, 미탐 불허).
     ("주석 속 git push 글자 → 차단(닫힘 방향 오탐 허용)", "git status # git push 는 사용자 직접", True),
     ("I 이스케이프 공백 뒤 # 는 주석 아님 → 차단", "echo a\\ #b; git push", True),
     ("I ${x:- #} 안의 # 뒤 push → 차단", "echo ${x:- #}; git push", True),
@@ -129,7 +110,6 @@ CASES = [
     ("I 인용 속 # → 통과", "git log --format='%h %s # x'", False),
     ("I URL 속 # → 통과", "curl -s https://a/b#c", False),
     ("가용성 # 낱말 속 → 통과", "git log --format=%h#x", False),
-    # 2026-10-17 core.hooksPath 변형 (외부 검토 반례)
     ("hooksPath 소문자 키 → 차단", "git -c core.hookspath=/dev/null commit -m x", True),
     ("hooksPath -c 붙여쓰기 → 차단", "git -cCore.hooksPath=/dev/null commit -m x", True),
     ("hooksPath --config-env → 차단", "git --config-env=core.hooksPath=X commit -m x", True),
@@ -169,7 +149,6 @@ CASES = [
     ("ANSI-C 인용으로 감춘 GIT_CONFIG 환경 변수 → 차단",
      "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=$'core.hooks\\x50ath' GIT_CONFIG_VALUE_0=/dev/null git commit -m x", True),
     ("커밋 메시지 인자의 $'a' (과차단 허용) → 차단", "git commit -m $'a'", True),
-    # ── 2026-10-17 검수팀 보안 A1: 커밋 -n 묶음 어디든
     ("commit -nm → 차단", "git commit -nm x", True),
     ("commit -nS → 차단", "git commit -nS", True),
     ("commit -na → 차단", "git commit -na", True),
@@ -182,7 +161,6 @@ CASES = [
     ("commit -mn (메시지 n) → 통과", "git commit -mn", False),
     ("commit -S -m x → 통과", "git commit -S -m x", False),
     ("git commit -m x → 통과", "git commit -m x", False),
-    # A2: --no-verify 약어 (git 2.34.1 실측: --no-veri 부터 훅 건너뜀, 그 아래는 --no-verbose 와 모호)
     ("commit --no-verif → 차단", "git commit --no-verif -m x", True),
     ("commit --no-veri → 차단", "git commit --no-veri -m x", True),
     ("commit --no-ve → 차단", "git commit --no-ve -m x", True),
@@ -190,7 +168,6 @@ CASES = [
     ("commit --no-edit → 통과", "git commit --no-edit", False),
     ("commit 백슬래시로 쪼갠 --no-ver\\ify → 차단", "git commit --no-ver\\ify -m x", True),
     ("commit 메시지 속 --no-verify 글자 → 통과", 'git commit -m "docs: --no-verify 설명"', False),
-    # A3: 브랜치 강제 삭제 조합
     ("branch -D → 차단", "git branch -D x", True),
     ("branch -fd → 차단", "git branch -fd x", True),
     ("branch -df → 차단", "git branch -df x", True),
@@ -201,7 +178,6 @@ CASES = [
     ("branch -d x → 통과", "git branch -d x", False),
     ("branch -f x HEAD~1 (강제 이동) → 차단(r5 C, 2026-11-09 F5C)", "git branch -f x HEAD~1", True),
     ("branch --list → 통과", "git branch --list", False),
-    # A4: 훅 설정 2단계 우회
     ("config include.path → 차단", "git config include.path /tmp/evil", True),
     ("config includeIf.path → 차단", "git config includeIf.gitdir:/x/.path /tmp/evil", True),
     ("-c include.path= → 차단", "git -c include.path=/tmp/evil commit -m x", True),
@@ -212,7 +188,6 @@ CASES = [
     ("GIT_COMMON_DIR → 차단", "GIT_COMMON_DIR=/x git commit -m x", True),
     ("bash -c 안 GIT_DIR → 차단", "bash -c 'GIT_DIR=/x git commit -m x'", True),
     ("HARNESS_GIT_DIR 같은 이름은 통과", "HARNESS_GIT_DIR=/x git status", False),
-    # A5: push 우회
     ("config alias 셸 정의 → 차단", "git config alias.p '!git push'", True),
     ("config --global alias 함수 정의 → 차단", "git config --global alias.x '!f() { git push; }; f'", True),
     ("-c alias.= 셸 → 차단", "git -c alias.p='!git push' p", True),
@@ -236,7 +211,6 @@ CASES = [
     ("git config 소문자 키 영구 지정 → 차단", "git config core.hookspath /dev/null", True),
     ("git config 소문자 키 --get → 통과", "git config --get core.hookspath", False),
     ("hooksPath 하네스 경로 + 소문자 키 → 통과", f"git -c core.hookspath={HOOKS_DIR} commit -m x", False),
-    # ── 2026-11-12 결정 F1·G1: push · pull 은 마커로도 안 풀린다(I1), 그 밖의 확정된 차단은 마커로 풀린다(I2)
     ("I2 마커 + reset --hard → 통과", AQ + "git reset --hard HEAD~1", False),
     ("I2 마커 + checkout . → 통과", AQ + "git checkout .", False),
     ("I2 마커 + clean -fd → 통과", AQ + "git clean -fd", False),
@@ -259,7 +233,6 @@ CASES = [
     ("I1 마커 + submodule foreach → 차단", AQ + "git submodule foreach git status", True),
     ("I1 마커 + 풀리는 --output 이 뒤 규칙을 가리지 않음(difftool -x) → 차단", AQ + "git difftool --output=x -x cat", True),
     ("I2 마커 + 설정된 difftool(명령 문자열 없음) → 통과", AQ + "git difftool HEAD", False),
-    # 2026-11-12 security: push 계열 낱말 누락 보완(lfs push · svn 올려 보내기)
     ("git lfs push → 차단", "git lfs push origin main", True),
     ("git lfs push --all → 차단", "git lfs push --all origin", True),
     ("git svn dcommit → 차단", "git svn dcommit", True),
@@ -270,12 +243,10 @@ CASES = [
     ("git svn log → 통과", "git svn log", False),
     ("커밋 메시지 속 git lfs push → 통과", "git commit -m 'docs: git lfs push 안내'", False),
     ("커밋 메시지 속 git svn dcommit → 통과", "git commit -m 'docs: git svn dcommit 안내'", False),
-    # 2026-11-12: lfs pull 은 pull 과 같은 급(마커로도 안 풀림), 조회는 통과
     ("git lfs pull → 차단", "git lfs pull origin", True),
     ("git lfs status → 통과", "git lfs status", False),
     ("git lfs env → 통과", "git lfs env", False),
     ("커밋 메시지 속 git lfs pull → 통과", "git commit -m 'docs: git lfs pull 안내'", False),
-    # 2026-11-12: 줄 이음(백슬래시+줄바꿈)은 셸이 지운다 → 이어 붙인 사본으로 판정
     ("줄 이음으로 쪼갠 git 이름 + push → 차단", "gi\\\nt push origin main", True),
     ("줄 이음으로 쪼갠 git 이름 + pull → 차단", "g\\\nit pull", True),
     ("줄 이음으로 쪼갠 하위 명령 push → 차단", "git pu\\\nsh origin main", True),
@@ -285,7 +256,6 @@ CASES = [
     ("여러 줄 커밋 메시지(줄 이음 없음) → 통과", 'git commit -m "fix: a\n\nb 설명"', False),
     ("I1 마커 + 원문의 줄 이음이 든 git 명령 → 차단(판정 불가 종류)", AQ + "git log \\\n  --oneline -3", True),
     ("I1 마커 + 줄 이음으로 나눈 stash → 차단(판정 불가 종류)", AQ + "git \\\n  stash", True),
-    # 2026-11-12: 승인 마커로 풀리지 않는 범위는 push · pull 을 감출 수 있는 꼴로 한정 — 감출 수 없는 것은 풀린다
     ("I2 마커 + --work-tree → 통과", AQ + "git --work-tree /tmp/w status", False),
     ("I2 마커 + init --template → 통과", AQ + "git init --template=/tmp/t x", False),
     ("I2 마커 + maintenance start → 통과", AQ + "git maintenance start", False),
@@ -293,7 +263,6 @@ CASES = [
     ("I1 마커 + filter-branch 셸 필터 → 차단", AQ + "git filter-branch --tree-filter 'git push' HEAD", True),
     ("I2 마커 + GIT_INDEX_FILE → 통과", AQ + "GIT_INDEX_FILE=/tmp/i git status", False),
     ("I1 마커 + 풀리는 변수 뒤 GIT_CONFIG_* → 차단", AQ + "GIT_INDEX_FILE=/tmp/i GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.st GIT_CONFIG_VALUE_0=push git st", True),
-    # ── 2026-11-12 reviewer · security 반송: 원문은 HEAD 검사 그대로 + 이어 붙인 사본은 추가 검사
     ("줄 끝 겹 백슬래시 + 인용 사이의 push → 차단", "echo \\\\\n\"x\" ; git push origin main ; echo \\\\\n\"y\"", True),
     ("I1 마커 + 줄 끝 겹 백슬래시 + 인용 사이의 push → 차단", AQ + "echo \\\\\n\"x\" ; git push origin main ; echo \\\\\n\"y\"", True),
     ("I1 마커 + 인용 속 겹 백슬래시 줄 끝 뒤 push → 차단", AQ + "echo \"a\\\\\n\" ; git push origin main ; echo \"b\"", True),
@@ -328,8 +297,6 @@ for name, cmd, want in CASES:
     fail += 0 if ok else 1
     print(f"{'OK ' if ok else 'FAIL'} {name}: deny={got} (기대 {want})")
 
-# I1 표: 마커 없이 «마커로 안 풀리는» 사유(push · pull 사유 포함)로 막히는 경우마다 마커를 붙여도 같은 사유 종류로 막히는지 본다.
-#   push · pull 사유 문구는 모두 그 종류여야 한다(«# APPROVED 로 재실행» 안내가 붙으면 안 된다).
 n_i1 = 0
 for name, cmd, _ in CASES:
     if cmd.startswith("# APPROVED"):
@@ -343,12 +310,335 @@ for name, cmd, _ in CASES:
     ok = STRICT in r0 and STRICT in r1 and "터미널에서 직접" in r1
     fail += 0 if ok else 1
     print(f"{'OK ' if ok else 'FAIL'} I1 마커 변형 {name}: {'차단' if r1 else '통과'}")
-assert n_i1 >= 40, n_i1   # 표가 비어 공허하게 통과하지 않게
-# 문구: 풀리는 차단은 종전 안내(# APPROVED 로 재실행)를 그대로 쓴다
+assert n_i1 >= 40, n_i1
 r_ok = reason("git stash")
 ok = "'# APPROVED'로 재실행" in r_ok and STRICT not in r_ok
 fail += 0 if ok else 1
 print(f"{'OK ' if ok else 'FAIL'} 풀리는 차단 문구 유지(git stash)")
 
-print(f"\n{'ALL PASS' if fail == 0 else f'FAIL {fail}'} ({len(CASES)} cases)")
+SUBMSG = "서브 에이전트는 커밋하지 않습니다"
+MAIN, GITOPS, CODER = {}, {"agent_id": "a1b2c3d4", "agent_type": "gitops"}, {"agent_id": "a1b2c3d4", "agent_type": "coder"}
+
+
+def reason_as(cmd: str, who: dict) -> str:
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}, **who})
+    r = subprocess.run(["bash", str(HOOK)], input=payload, check=False, capture_output=True, text=True)
+    return json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if '"deny"' in r.stdout else ""
+
+
+SUB_CASES = [
+    ("coder git commit", CODER, "git commit -m x", "sub"),
+    ("coder 빈 커밋", CODER, 'git commit --allow-empty -m "chore: 모든 세션에 알림"', "sub"),
+    ("coder git -C x commit", CODER, "git -C /tmp/x commit -m x", "sub"),
+    ("coder git -C 공백 든 경로 commit", CODER, 'git -C "/tmp/a b" commit -m x', "sub"),
+    ("coder git -c a=b commit", CODER, "git -c user.name=a commit -m x", "sub"),
+    ("coder 환경 변수 접두 commit", CODER, "FOO=1 git commit -m x", "sub"),
+    ("coder env git commit", CODER, "env git commit -m x", "sub"),
+    ("coder status && commit", CODER, "git status && git commit -m x", "sub"),
+    ("coder 여러 줄 두 번째 줄 commit", CODER, "git add a\ngit commit -m x", "sub"),
+    ("coder commit-tree", CODER, "git commit-tree HEAD^{tree} -m x", "sub"),
+    ("coder cherry-pick", CODER, "git cherry-pick abc123", "sub"),
+    ("coder revert", CODER, "git revert HEAD", "sub"),
+    ("coder merge", CODER, "git merge feature", "sub"),
+    ("coder rebase", CODER, "git rebase main", "sub"),
+    ("coder rebase --abort", CODER, "git rebase --abort", "sub"),
+    ("coder am", CODER, "git am x.patch", "sub"),
+    ("coder update-ref", CODER, "git update-ref refs/heads/x HEAD", "sub"),
+    ("coder bash -c 페이로드 commit", CODER, "bash -c 'git commit -m x'", "sub"),
+    ("coder 서브셸 (git commit)", CODER, "(git commit -m x)", "sub"),
+    ("coder 백슬래시로 쪼갠 g\\it commit", CODER, "g\\it commit -m x", "sub"),
+    ("coder 따옴표로 쪼갠 co\"mm\"it", CODER, 'git co"mm"it -m x', "sub"),
+    ("coder 줄 이음으로 쪼갠 com⏎mit(기존 줄 이음 차단이 먼저)", CODER, "git com\\\nmit -m x", "deny"),
+    ("coder commit --no-verify(새 문구가 먼저)", CODER, "git commit --no-verify -m x", "sub"),
+    ("coder 마커 + commit(안 풀림)", CODER, AQ + "git commit -m x", "sub"),
+    ("coder 마커 + merge(안 풀림)", CODER, AQ + "git merge feature", "sub"),
+    ("agent_type 없음 + commit(닫힌 쪽)", {"agent_id": "a1b2c3d4"}, "git commit -m x", "sub"),
+    ("agent_type 빈 값 + commit", {"agent_id": "a1b2c3d4", "agent_type": ""}, "git commit -m x", "sub"),
+    ("agent_type null + commit", {"agent_id": "a1b2c3d4", "agent_type": None}, "git commit -m x", "sub"),
+    ("teammate 이름(reviewer-1) + commit", {"agent_id": "a1b2c3d4", "agent_type": "reviewer-1"}, "git commit -m x", "sub"),
+    ("agent_type 대문자 Gitops + commit", {"agent_id": "a1b2c3d4", "agent_type": "Gitops"}, "git commit -m x", "sub"),
+    ("coder echo 따옴표 속 git commit", CODER, 'echo "git commit 은 main 이 합니다"', "pass"),
+    ("coder 작은따옴표 속 git commit", CODER, "echo 'run git commit later'", "pass"),
+    ("coder git log --grep=commit", CODER, "git log --grep=commit", "pass"),
+    ("coder git log --merges", CODER, "git log --merges --oneline", "pass"),
+    ("coder git merge-base", CODER, "git merge-base main HEAD", "pass"),
+    ("coder git cat-file commit HEAD", CODER, "git cat-file commit HEAD", "pass"),
+    ("coder git hash-object", CODER, "git hash-object a.txt", "pass"),
+    ("coder git status", CODER, "git status", "pass"),
+    ("coder git diff", CODER, "git diff HEAD~1", "pass"),
+    ("coder git show", CODER, "git show HEAD --stat", "pass"),
+    ("coder git rev-parse", CODER, "git rev-parse HEAD", "pass"),
+    ("coder git ls-files", CODER, "git ls-files", "pass"),
+    ("coder git add", CODER, "git add scripts/a.sh", "pass"),
+    ("coder git 없는 명령", CODER, "ls commit", "pass"),
+    ("agent_id 빈 값(main 과 같게) + commit", {"agent_id": "", "agent_type": "coder"}, "git commit -m x", "pass"),
+    ("main git commit", MAIN, "git commit -m x", "pass"),
+    ("main git merge", MAIN, "git merge feature", "pass"),
+    ("main git revert", MAIN, "git revert HEAD", "pass"),
+    ("gitops git commit", GITOPS, "git commit -m x", "pass"),
+    ("gitops 빈 커밋", GITOPS, "git commit --allow-empty -m x", "pass"),
+    ("gitops git -C x commit", GITOPS, "git -C /tmp/x commit -m x", "pass"),
+    ("gitops git merge", GITOPS, "git merge feature", "pass"),
+    ("gitops git cherry-pick", GITOPS, "git cherry-pick abc123", "pass"),
+]
+N2_CASES = [
+    ("coder bash -lc", CODER, "bash -lc 'git commit --allow-empty -m x'", "sub"),
+    ("coder bash -ic", CODER, "bash -ic 'git commit -m x'", "sub"),
+    ("coder zsh -lc", CODER, "zsh -lc 'git commit -m x'", "sub"),
+    ("coder sh -ec", CODER, "sh -ec 'git commit -m x'", "sub"),
+    ("coder bash -l -c", CODER, "bash -l -c 'git commit -m x'", "sub"),
+    ("coder eval 작은따옴표", CODER, "eval 'git commit -m x'", "sub"),
+    ("coder eval 큰따옴표", CODER, 'eval "git commit -m x"', "sub"),
+    ("coder eval 맨몸", CODER, "eval git commit -m x", "sub"),
+    ("coder 파이프로 셸에", CODER, "echo 'git commit' | sh", "sub"),
+    ("coder printf 파이프로 bash", CODER, "printf 'git commit -m x' | bash", "sub"),
+    ("coder 이스케이프 공백 경로", CODER, "git -C /tmp/a\\ b commit -m x", "sub"),
+    ("coder bash -lc cd && commit-tree", CODER, "bash -lc 'cd /tmp && git commit-tree HEAD^{tree} -m x'", "sub"),
+    ("coder bash -lc cd && cherry-pick", CODER, "bash -lc 'cd /tmp && git cherry-pick abc123'", "sub"),
+    ("coder bash -lc cd && revert", CODER, "bash -lc 'cd /tmp && git revert HEAD'", "sub"),
+    ("coder bash -lc cd && merge", CODER, "bash -lc 'cd /tmp && git merge other'", "sub"),
+    ("coder bash -lc cd && am", CODER, "bash -lc 'cd /tmp && git am x.patch'", "sub"),
+    ("coder git-commit 실행 파일", CODER, "git-commit -m x", "sub"),
+    ("coder git-core 절대 경로 git-commit", CODER, "/usr/lib/git-core/git-commit -m x", "sub"),
+    ("coder git-core 절대 경로 git", CODER, "/usr/lib/git-core/git commit -m x", "sub"),
+    ("coder 여러 줄 페이로드", CODER, "bash -c 'true\ngit commit -m x'", "sub"),
+    ("coder env -S", CODER, "env -S 'git commit -m x'", "sub"),
+    ("coder su -c", CODER, "su -c 'git commit -m x'", "sub"),
+    ("coder flock -c", CODER, "flock /tmp/l -c 'git commit -m x'", "sub"),
+    ("coder watch", CODER, "watch git commit -m x", "sub"),
+    ("coder tmux 따옴표 페이로드", CODER, "tmux new-session 'git commit -m x'", "sub"),
+    ("coder timeout 래퍼", CODER, "timeout 5 git commit -m x", "sub"),
+    ("coder sudo -u 래퍼", CODER, "sudo -u root git commit -m x", "sub"),
+    ("coder xargs git commit", CODER, "xargs git commit -m x", "sub"),
+    ("coder xargs 로 하위 명령 넣기", CODER, "echo commit | xargs git", "sub"),
+    ("coder $(git commit)", CODER, "echo $(git commit -m x)", "sub"),
+    ("coder if then", CODER, "if true; then git commit -m x; fi", "sub"),
+    ("coder cd && commit", CODER, "cd /tmp && git commit -m x", "sub"),
+    ("coder 마커 + bash -lc(안 풀림)", CODER, AQ + "bash -lc 'git commit -m x'", "sub"),
+    ("coder 커밋 메시지 속 git push", CODER, 'git commit -m "git push"', "sub"),
+    ("main bash -lc commit", MAIN, "bash -lc 'git commit -m x'", "pass"),
+    ("main eval commit", MAIN, "eval 'git commit -m x'", "pass"),
+    ("main 이스케이프 공백 경로 commit", MAIN, "git -C /tmp/a\\ b commit -m x", "pass"),
+    ("main git-core 절대 경로 git-commit", MAIN, "/usr/lib/git-core/git-commit -m x", "pass"),
+    ("main 여러 줄 페이로드 commit", MAIN, "bash -c 'true\ngit commit -m x'", "pass"),
+    ("main 파이프로 셸에(bash-write-check 소관)", MAIN, "echo 'git commit' | sh", "pass"),
+    ("gitops bash -lc commit", GITOPS, "bash -lc 'git commit -m x'", "pass"),
+    ("gitops git-core 절대 경로 git-commit", GITOPS, "/usr/lib/git-core/git-commit -m x", "pass"),
+    ("coder 오탐 해소 git --no-pager log commit", CODER, "git --no-pager log commit", "pass"),
+    ("coder 오탐 해소 git --no-pager show merge", CODER, "git --no-pager show merge", "pass"),
+    ("coder 오탐 해소 git --no-pager log -- am", CODER, "git --no-pager log -- am", "pass"),
+    ("coder 오탐 해소 git --no-pager diff am", CODER, "git --no-pager diff am", "pass"),
+    ("coder 오탐 해소 git --no-pager diff --stat revert", CODER, "git --no-pager diff --stat revert", "pass"),
+    ("coder 오탐 해소 git --no-pager log --oneline merge", CODER, "git --no-pager log --oneline merge", "pass"),
+    ("coder 오탐 해소 git -C /repo --no-pager log commit", CODER, "git -C /repo --no-pager log commit", "pass"),
+    ("coder 오탐 해소 git --no-pager -c color.ui=never log -3 commit", CODER, "git --no-pager -c color.ui=never log -3 commit", "pass"),
+    ("coder 오탐 해소 git --no-pager branch --contains commit", CODER, "git --no-pager branch --contains commit", "pass"),
+    ("coder 오탐 해소 git --no-pager log --oneline --graph --all am", CODER, "git --no-pager log --oneline --graph --all am", "pass"),
+    ("coder 오탐 해소 git diff --stat --no-pager commit", CODER, "git diff --stat --no-pager commit", "pass"),
+    ("coder 오탐 해소 git -p log commit", CODER, "git -p log commit", "pass"),
+    ("coder 오탐 해소 git -P log merge", CODER, "git -P log merge", "pass"),
+    ("coder 오탐 해소 ls .git commit", CODER, "ls /home/x/.claude/.git commit", "pass"),
+    ("coder 오탐 해소 cat .git am", CODER, "cat .git am", "pass"),
+    ("coder 오탐 해소 grep digit commit", CODER, "grep -rn digit commit scripts", "pass"),
+    ("coder 오탐 해소 echo git commit", CODER, "echo git commit", "pass"),
+    ("coder 오탐 해소 echo git merge is blocked", CODER, "echo git merge is blocked", "pass"),
+    ("coder 오탐 해소 grep -n git commit 파일", CODER, "grep -n git commit skills/commit/SKILL.md", "pass"),
+    ("coder 오탐 해소 wc -l git merge.md", CODER, "wc -l git merge.md", "pass"),
+    ("coder 오탐 해소 ls git rebase.md", CODER, "ls git rebase.md", "pass"),
+    ("coder echo git commit 은 셸 페이로드 안에서도 통과", CODER, "bash -c 'echo git commit'", "pass"),
+    ("coder 한계 cat | grep git rebase(기존 rebase 판정, main 도 같음)", CODER, "cat file.txt | grep git rebase", "deny"),
+    ("main 같은 꼴 cat | grep git rebase", MAIN, "cat file.txt | grep git rebase", "deny"),
+]
+SUB_CASES += N2_CASES
+# WHY: 3차(2026-11-24 사용자 결정 «세 명령도 막음»): fast-import · HEAD 를 옮기는 reset · propagate-queue.sh 실행. "pq" 는 전파 대기열 문구.
+PQMSG = "[git 차단] 서브 에이전트는 전파 대기열에 직접 쓰지 않습니다. 커밋과 전파는 main 이 합니다."
+PQ = "scripts/propagate-queue.sh"
+N3_CASES = [
+    ("coder fast-import", CODER, "git fast-import < x", "sub"),
+    ("coder fast-import --quiet", CODER, "git fast-import --quiet", "sub"),
+    ("coder bash -lc fast-import", CODER, "bash -lc 'git fast-import < x'", "sub"),
+    ("coder eval fast-import", CODER, "eval 'git fast-import'", "sub"),
+    ("coder $(fast-import)", CODER, "echo $(git fast-import)", "sub"),
+    ("coder 마커 + fast-import", CODER, AQ + "git fast-import < x", "sub"),
+    ("coder reset --soft", CODER, "git reset --soft HEAD~1", "sub"),
+    ("coder reset --mixed", CODER, "git reset --mixed HEAD~1", "sub"),
+    ("coder reset --hard", CODER, "git reset --hard", "sub"),
+    ("coder reset --keep", CODER, "git reset --keep HEAD~1", "sub"),
+    ("coder reset --merge", CODER, "git reset --merge", "sub"),
+    ("coder reset --so 약어", CODER, "git reset --so HEAD~1", "sub"),
+    ("coder reset HEAD~1", CODER, "git reset HEAD~1", "sub"),
+    ("coder reset abc123", CODER, "git reset abc123", "sub"),
+    ("coder reset main", CODER, "git reset main", "sub"),
+    ("coder reset -q HEAD~1", CODER, "git reset -q HEAD~1", "sub"),
+    ("coder reset <낱말>(경로인지 모름)", CODER, "git reset a.txt", "sub"),
+    ("coder bash -lc reset --soft", CODER, "bash -lc 'git reset --soft HEAD~1'", "sub"),
+    ("coder eval reset", CODER, "eval 'git reset HEAD~1'", "sub"),
+    ("coder $(reset --soft)", CODER, "echo $(git reset --soft HEAD~1)", "sub"),
+    ("coder 마커 + reset --hard(안 풀림)", CODER, AQ + "git reset --hard HEAD~1", "sub"),
+    ("coder 마커 + reset --soft", CODER, AQ + "git reset --soft HEAD~1", "sub"),
+    ("coder 스테이징 해제 git reset", CODER, "git reset", "pass"),
+    ("coder 스테이징 해제 git reset -q", CODER, "git reset -q", "pass"),
+    ("coder 스테이징 해제 git reset -- 경로", CODER, "git reset -- a.txt b.txt", "pass"),
+    ("coder 스테이징 해제 git reset HEAD", CODER, "git reset HEAD", "pass"),
+    ("coder 스테이징 해제 git reset HEAD -- 경로", CODER, "git reset HEAD -- a.txt", "pass"),
+    ("coder 스테이징 해제 git reset HEAD 경로", CODER, "git reset HEAD a.txt", "pass"),
+    ("coder reset -p(위치 인자 없음, 기존대로)", CODER, "git reset -p", "pass"),
+    ("coder 전파 스크립트 직접", CODER, f"{PQ} enqueue", "pq"),
+    ("coder 전파 스크립트 절대 경로", CODER, "/home/x/.claude/scripts/propagate-queue.sh enqueue", "pq"),
+    ("coder 전파 스크립트 ./", CODER, "cd scripts && ./propagate-queue.sh enqueue", "pq"),
+    ("coder bash 전파 스크립트", CODER, f"bash {PQ} enqueue", "pq"),
+    ("coder sh 전파 스크립트", CODER, f"sh {PQ} enqueue", "pq"),
+    ("coder zsh 전파 스크립트", CODER, f"zsh {PQ} enqueue", "pq"),
+    ("coder source 전파 스크립트", CODER, f"source {PQ} enqueue", "pq"),
+    ("coder . 전파 스크립트", CODER, f". {PQ} enqueue", "pq"),
+    ("coder env 전파 스크립트", CODER, f"env FOO=1 {PQ} enqueue", "pq"),
+    ("coder exec 전파 스크립트", CODER, f"exec {PQ} enqueue", "pq"),
+    ("coder command 전파 스크립트", CODER, f"command {PQ} enqueue", "pq"),
+    ("coder nohup bash 전파 스크립트", CODER, f"nohup bash {PQ} enqueue", "pq"),
+    ("coder timeout 전파 스크립트", CODER, f"timeout 5 {PQ} enqueue", "pq"),
+    ("coder xargs 전파 스크립트", CODER, f"echo enqueue | xargs {PQ}", "pq"),
+    ("coder sudo -u bash 전파 스크립트", CODER, f"sudo -u x bash {PQ} enqueue", "pq"),
+    ("coder 변수 대입 + 전파 스크립트", CODER, f"X=1 {PQ} enqueue", "pq"),
+    ("coder 따옴표로 쪼갠 이름", CODER, 'scripts/propagate-"queue".sh enqueue', "pq"),
+    ("coder bash -lc 전파 스크립트", CODER, f"bash -lc '{PQ} enqueue'", "pq"),
+    ("coder bash -c 전파 스크립트 맨몸", CODER, f"bash -c {PQ}", "pq"),
+    ("coder bash -c 안 bash 전파 스크립트", CODER, f'bash -c "bash {PQ} enqueue"', "pq"),
+    ("coder eval 전파 스크립트", CODER, f"eval '{PQ} enqueue'", "pq"),
+    ("coder $(전파 스크립트)", CODER, f"echo $({PQ} enqueue)", "pq"),
+    ("coder 파이프로 셸에 전파 스크립트", CODER, f"echo {PQ} enqueue | bash", "pq"),
+    ("coder < 로 셸에 전파 스크립트", CODER, f"bash < {PQ}", "pq"),
+    ("coder 마커 + bash 전파 스크립트", CODER, AQ + f"bash {PQ} enqueue", "pq"),
+    ("coder 읽기 cat", CODER, f"cat {PQ}", "pass"),
+    ("coder 읽기 grep", CODER, f"grep -n enqueue {PQ}", "pass"),
+    ("coder 읽기 sed -n", CODER, f"sed -n 1,20p {PQ}", "pass"),
+    ("coder 읽기 head", CODER, f"head -5 {PQ}", "pass"),
+    ("coder 읽기 wc", CODER, f"wc -l {PQ}", "pass"),
+    ("coder 읽기 git diff --", CODER, f"git diff -- {PQ}", "pass"),
+    ("coder 읽기 git show HEAD:", CODER, f"git show HEAD:{PQ}", "pass"),
+    ("coder 읽기 git log --", CODER, f"git log -- {PQ}", "pass"),
+    ("coder bash -c cat(허용 목록 밖 bash, 4차부터 거부)", CODER, f"bash -c 'cat {PQ}'", "pq"),
+    ("coder 읽기 ls", CODER, f"ls {PQ}", "pass"),
+    ("main fast-import", MAIN, "git fast-import < x", "pass"),
+    ("main reset --soft", MAIN, "git reset --soft HEAD~1", "pass"),
+    ("main reset HEAD~1", MAIN, "git reset HEAD~1", "pass"),
+    ("main reset --hard(기존 차단)", MAIN, "git reset --hard", "deny"),
+    ("main 마커 + reset --hard(기존대로 풀림)", MAIN, AQ + "git reset --hard HEAD~1", "pass"),
+    ("main bash 전파 스크립트", MAIN, f"bash {PQ} enqueue", "pass"),
+    ("main bash -lc 전파 스크립트", MAIN, f"bash -lc '{PQ} enqueue'", "pass"),
+    ("gitops fast-import", GITOPS, "git fast-import < x", "pass"),
+    ("gitops reset --soft", GITOPS, "git reset --soft HEAD~1", "pass"),
+    ("gitops bash 전파 스크립트", GITOPS, f"bash {PQ} enqueue", "pass"),
+]
+SUB_CASES += N3_CASES
+# WHY: 4차(2026-11-24 security 3차 F1~F5): 전파 스크립트는 읽기 허용 목록으로만 통과, xargs 뒤 reset 거부, 20,000자 넘는 명령은 분석 전 거부.
+LONG = "echo " + "git status " * 400
+N4_CASES = [
+    ("coder xargs git reset", CODER, "printf HEAD~1 | xargs git reset", "sub"),
+    ("coder xargs git reset -q", CODER, "echo -q | xargs git reset", "sub"),
+    ("coder 낱말에 $E 덧붙임", CODER, f"bash {PQ}$E", "pq"),
+    ("coder 중괄호 전개", CODER, "bash scripts/{propagate-queue.sh,}", "pq"),
+    ("coder ${E} 덧붙임", CODER, f"bash {PQ}" + "${E}", "pq"),
+    ("coder $(true) 덧붙임", CODER, f"bash {PQ}$(true)", "pq"),
+    ("coder exec -c", CODER, f"exec -c {PQ}", "pq"),
+    ("coder setsid -c", CODER, f"setsid -c {PQ}", "pq"),
+    ("coder find -exec", CODER, f"find . -maxdepth 0 -exec {PQ} enqueue abc \\;", "pq"),
+    ("coder find -execdir", CODER, f"find . -maxdepth 0 -execdir {PQ} \\;", "pq"),
+    ("coder coproc", CODER, f"coproc {PQ}", "pq"),
+    ("coder strace", CODER, f"strace {PQ}", "pq"),
+    ("coder systemd-run", CODER, f"systemd-run --user {PQ}", "pq"),
+    ("coder here-string 으로 셸에 전파 스크립트", CODER, f"cat <<< {PQ} | bash", "pq"),
+    ("coder here-string 으로 셸에 git commit", CODER, "cat <<< 'git commit -m x' | bash", "sub"),
+    ("coder 프로세스 치환 echo", CODER, f"bash <(echo {PQ})", "pq"),
+    ("coder 프로세스 치환 cat", CODER, f"bash <(cat {PQ})", "pq"),
+    ("coder 프로세스 치환으로 git commit", CODER, "bash <(echo git commit -m x)", "sub"),
+    ("coder sh -c $(cat)", CODER, f'sh -c "$(cat {PQ})"', "pq"),
+    ("coder bash $(echo)", CODER, f"bash $(echo {PQ})", "pq"),
+    ("coder ls | xargs bash", CODER, f"ls {PQ} | xargs bash", "pq"),
+    ("coder uv run 전파 스크립트", CODER, f"uv run {PQ} enqueue", "pq"),
+    ("coder uv run bash", CODER, f"uv run bash {PQ}", "pq"),
+    ("coder rg --pre", CODER, f"rg --pre {PQ} x .", "pq"),
+    ("coder sort --compress-program", CODER, f"sort --compress-program={PQ} big.txt", "pq"),
+    ("coder cp 뒤 bash", CODER, f"cp {PQ} /tmp/pq.sh && bash /tmp/pq.sh", "pq"),
+    ("coder 긴 명령(상한 초과)", CODER, LONG, "sub"),
+    ("coder 통과 ls -l 두 파일", CODER, f"ls -l {PQ} scripts/git-guardrails.sh", "pass"),
+    ("coder 통과 grep -c", CODER, f"grep -c enqueue {PQ}", "pass"),
+    ("coder 통과 cat | head", CODER, f"cat {PQ} | head -20", "pass"),
+    ("coder 통과 cat | grep", CODER, f"cat {PQ} | grep enqueue", "pass"),
+    ("coder 통과 [ -x ] && echo", CODER, f"[ -x {PQ} ] && echo ok", "pass"),
+    ("coder 통과 git reset -q HEAD -- 전파 스크립트", CODER, f"git reset -q HEAD -- {PQ}", "pass"),
+    ("coder 통과 python3 -I 검사 스크립트", CODER, f"python3 -I scripts/comment_check.py {PQ}", "pass"),
+    ("coder 통과 uv run python", CODER, f"uv run --no-project python scripts/comment_cleanup_verify.py {PQ}", "pass"),
+    ("coder 통과 echo 따옴표 문장", CODER, f"echo 'see {PQ} for details'", "pass"),
+    ("coder 통과 grep -rn .", CODER, "grep -rn propagate-queue .", "pass"),
+    ("coder 통과 git log -p --", CODER, f"git log -p -- {PQ}", "pass"),
+    ("coder 받아들인 한계 글롭 이름", CODER, "bash scripts/propagate-q*.sh", "pass"),
+    ("coder 오탐 bash -n", CODER, f"bash -n {PQ}", "pq"),
+    ("main xargs git reset", MAIN, "printf HEAD~1 | xargs git reset", "pass"),
+    ("main uv run 전파 스크립트", MAIN, f"uv run {PQ} enqueue", "pass"),
+    ("main 긴 명령", MAIN, LONG, "pass"),
+    ("gitops 긴 명령", GITOPS, LONG, "pass"),
+    ("gitops bash <(cat 전파 스크립트)", GITOPS, f"bash <(cat {PQ})", "pass"),
+]
+SUB_CASES += N4_CASES
+# WHY: 5차(2026-11-24 security 4차 D1~D5): uv 옵션 값 건너뛰기, 줄 바꿈 낱말, 파이프라인의 $·글롭, 앞단 상한(4,000자 · 구분자 36 · git 72, 제한 시간 10초, 6차에서 12 · 24 를 넓힘).
+N5_CASES = [
+    ("coder uv run --python python3 전파", CODER, f"uv run --python python3 {PQ} enqueue x", "pq"),
+    ("coder uv run -p python 전파", CODER, f"uv run -p python {PQ}", "pq"),
+    ("coder uv run --with python 전파", CODER, f"uv run --with python {PQ}", "pq"),
+    ("coder uv run 모르는 옵션", CODER, f"uv run --frobnicate python x.py {PQ}", "pq"),
+    ("coder 주석 속 따옴표가 줄을 삼킴", CODER, f"cat x # '\nbash {PQ}\n# '", "pq"),
+    ("coder rg $X", CODER, f"X=--pre=bash; rg $X pat {PQ}", "pq"),
+    ("coder sort $X", CODER, f"X=--compress-program=bash; sort $X {PQ}", "pq"),
+    ("coder cat $X", CODER, f"cat {PQ} $X", "pq"),
+    ("coder grep ${P}", CODER, "grep ${P} " + PQ, "pq"),
+    ("coder 큰따옴표 속 $(오탐 감수)", CODER, f'grep "foo$" {PQ}', "pq"),
+    ("coder 따옴표 밖 글롭", CODER, f"grep a {PQ} *.md", "pq"),
+    ("coder 줄 이음으로 쪼갠 이름", CODER, "bash scripts/propagate-\\\nqueue.sh", "pq"),
+    ("coder 통과 uv run --with pytest python -m pytest", CODER, f"uv run --no-project --with pytest python -m pytest scripts/tests/test_propagate.py {PQ}", "pass"),
+    ("coder 통과 작은따옴표 정규식 ^…)", CODER, f"grep -n '^enqueue)' {PQ}", "pass"),
+    ("coder 통과 작은따옴표 정규식 [e]", CODER, f"grep '[e]nqueue' {PQ}", "pass"),
+    ("coder 통과 작은따옴표 정규식 $", CODER, f"grep 'foo$' {PQ}", "pass"),
+    ("coder 통과 [[ ]]", CODER, f"[[ -f {PQ} ]] && echo ok", "pass"),
+    ("coder 통과 { ; }", CODER, f"{{ cat {PQ}; }}", "pass"),
+    ("coder 통과 2>&1 | head", CODER, f"git log -- {PQ} 2>&1 | head -5", "pass"),
+    ("coder 상한 안 git log; x36", CODER, "git log;" * 36, "pass"),
+    ("coder 상한 안 git 낱말 72개", CODER, "echo" + " git" * 72, "pass"),
+    ("coder 상한 넘음 git log; x37", CODER, "git log;" * 37, "sub"),
+    ("coder 상한 넘음 git status|sh x37", CODER, "git status" + "|sh" * 37, "sub"),
+    ("coder 상한 넘음 git restore; x37", CODER, "git restore scripts/zz;" * 37, "sub"),
+    ("coder 상한 넘음 git 낱말 73개", CODER, "echo" + " git" * 73, "sub"),
+    ("coder 상한 넘음 4,001자", CODER, "git log " + "a" * 3993, "sub"),
+    ("coder 상한 넘음 줄 이음으로 쪼갠 git", CODER, "echo " + "abcdefghi " * 400 + "; g\\\nit commit -m x", "sub"),
+    ("main git log; x37", MAIN, "git log;" * 37, "pass"),
+    ("main uv run --python python3 전파", MAIN, f"uv run --python python3 {PQ} enqueue x", "pass"),
+    ("gitops git log; x37", GITOPS, "git log;" * 37, "pass"),
+]
+SUB_CASES += N5_CASES
+# WHY: 6차(2026-11-24 security 5차 N1): 치환 · 페이로드를 겹쳐 분석이 불어나는 꼴은 서브 에이전트 analyze() 200회 상한, 셸 -c 페이로드는 구분자 2개로 셈.
+N6_CASES = [
+    ("coder 닫히지 않은 bash <( x6(분석 상한 안)", CODER, "git status; " + "bash <( " * 6, "pass"),
+    ("coder 닫히지 않은 bash <( x7(분석 상한 넘음)", CODER, "git status; " + "bash <( " * 7, "sub"),
+    ("coder 닫히지 않은 bash <( x60", CODER, "git status; " + "bash <( " * 60, "sub"),
+    ("coder 닫히지 않은 bash >( x120", CODER, "git status; " + "bash >( " * 120, "sub"),
+    ("coder 닫힌 bash <(x) x30", CODER, "git status; " + "bash <(x) " * 30, "pass"),
+    ("coder 셸 -c 페이로드 x18(구분자 36)", CODER, "bash -c 'git status' " * 18, "pass"),
+    ("coder 셸 -c 페이로드 x19(구분자 38)", CODER, "bash -c 'git status' " * 19, "sub"),
+    ("main 닫히지 않은 bash <( x60(HEAD 와 같음)", MAIN, "git status; " + "bash <( " * 60, "pass"),
+    ("main 셸 -c 페이로드 x19", MAIN, "bash -c 'git status' " * 19, "pass"),
+    ("gitops 셸 -c 페이로드 x19", GITOPS, "bash -c 'git status' " * 19, "pass"),
+]
+SUB_CASES += N6_CASES
+for name, who, cmd, want in SUB_CASES:
+    r = reason_as(cmd, who)
+    ok = {"sub": SUBMSG in r and STRICT not in r and "'# APPROVED'로 재실행" not in r, "pq": r == PQMSG,
+          "deny": r != "", "pass": r == ""}[want]
+    fail += 0 if ok else 1
+    print(f"{'OK ' if ok else 'FAIL'} N1 {name}: {r[:60] or '통과'} (기대 {want})")
+for name, cmd, _ in CASES[:40]:
+    r0 = reason(cmd)
+    ok = reason_as(cmd, GITOPS) == r0 and (SUBMSG in reason_as(cmd, CODER) or reason_as(cmd, CODER) == r0)
+    fail += 0 if ok else 1
+    print(f"{'OK ' if ok else 'FAIL'} N1 기존 판정 유지 {name}")
+
+print(f"\n{'ALL PASS' if fail == 0 else f'FAIL {fail}'} ({len(CASES)} cases + N1 {len(SUB_CASES)})")
 sys.exit(1 if fail else 0)

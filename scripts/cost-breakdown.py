@@ -1,29 +1,8 @@
-#!/usr/bin/env python3
 """
 cost-breakdown.py — Claude Code 트랜스크립트에서 모델별·에이전트별 토큰/비용 분해.
 
 /cost 스킬의 엔진. 파싱은 read-only. --snapshot/--reset만 detail ledger 파일을 쓴다.
-
-회계 모델 (2026-07-18 실측 + Codex 교차검증 — 산출물에 이식):
-  - 총액(권위) = coralline cost-ledger의 total_cost_usd 합 = **statusline 표시값과 일치**.
-    Claude Code가 산정한 세션별 누적 청구액이라 clear/compact에 안전(세션 파일 보존·
-    compact는 같은 세션 유지). /cost는 이 값을 grand total로 앵커한다.
-  - 모델·에이전트별 분해 = 토큰 기반. 메인 = assistant message.usage를 model별,
-    subagent = Task toolUseResult.{agentType,resolvedModel,usage}. 둘은 disjoint.
-  - ★ dedup: 트랜스크립트가 같은 messageId usage를 3~5회 반복 기록 → **messageId별
-    최대-usage 레코드**만 채택(agentId도 동일). messageId/agentId는 API 전역 유일이라
-    전역 dedup이 정답 — resume/fork로 같은 id가 여러 세션 파일에 복제돼도 1회만 계산
-    (session별 키는 그 복사본을 double-count). max 비교는 ephemeral 캐시 토큰 포함.
-  - 고속 모드(usage.speed=='fast')는 Opus 요금 2~3배 → '<model> (fast)'로 분리.
-  - codex-rescue(agentType 'codex:*')는 OpenAI 외부 → 토큰만, $ 미환산.
-  - cache write는 usage.cache_creation의 5m/1h 분리 시 각 요율, 없으면 5m. read=90% 할인.
-
-  ★ detail ledger(compaction 대비, ~/.cache/claude-cost/detail/<session>.json):
-    per-id 저장 {msgs:{messageId:{model,usage,proj}}, tasks:{agentId:{...}}}.
-    PreCompact·SessionEnd(clear) 훅이 --snapshot으로 compaction 직전 각 id의 usage를
-    ledger에 병합하되 **더 완전한(usage 합이 큰) 레코드로 교체**(partial→complete 방어,
-    Codex BUG1). /cost는 messageId/agentId별(전역)로 ledger∪라이브를 max-usage로 합쳐 분해 복원 →
-    compact돼도 coverage 유지(도입 전 소실분은 복구 불가). 총액은 coralline라 항상 정확.
+detail ledger: ~/.cache/claude-cost/detail/<session>.json
 
 요금표: ~/.claude/config/model-pricing.json (공식 https://platform.claude.com/docs/ko/about-claude/pricing).
 
@@ -33,8 +12,14 @@ cost-breakdown.py — Claude Code 트랜스크립트에서 모델별·에이전�
   python3 scripts/cost-breakdown.py --session <id> | --json
   python3 scripts/cost-breakdown.py --snapshot # 훅 전용: stdin(hook JSON) 세션 detail 누적
   python3 scripts/cost-breakdown.py --reset [--yes]  # 누적 ledger(coralline+detail) 삭제
+REF: knowledge/harness/code-history/scripts__cost-breakdown.py.md
 """
-import json, glob, os, sys, argparse, collections
+import argparse
+import collections
+import glob
+import json
+import os
+import sys
 
 JSON_SCHEMA_VERSION = 3
 FAST_ELIGIBLE = {"claude-opus-5-5", "claude-opus-4-8", "claude-opus-4-7"}
@@ -42,8 +27,8 @@ HOME = os.path.expanduser("~")
 PROJ_GLOB = os.path.join(HOME, ".claude", "projects", "*", "*.jsonl")
 PRICING_PATH = os.path.join(HOME, ".claude", "config", "model-pricing.json")
 CACHE = os.environ.get("XDG_CACHE_HOME", os.path.join(HOME, ".cache"))
-LEDGER_DIR = os.path.join(CACHE, "coralline", "cost-ledger")     # statusline 총액(권위)
-DETAIL_DIR = os.path.join(CACHE, "claude-cost", "detail")        # 모델·에이전트 detail(per-id)
+LEDGER_DIR = os.path.join(CACHE, "coralline", "cost-ledger")
+DETAIL_DIR = os.path.join(CACHE, "claude-cost", "detail")
 UNKNOWN_MODEL = "(unknown-model)"
 
 def load_pricing():
@@ -75,7 +60,6 @@ def has_usage(u):
            or isinstance(u.get("cache_creation"), dict)
 
 def usage_total(u):
-    """max-usage 비교용 — ephemeral 5m/1h 캐시쓰기 포함(BUG2)."""
     if not isinstance(u, dict):
         return 0
     t = ((u.get("input_tokens", 0) or 0) + (u.get("output_tokens", 0) or 0)
@@ -96,25 +80,21 @@ def total_tokens(acc):
 
 def sid_of(f):
     b = os.path.basename(f)
-    return b[:-6] if b.endswith(".jsonl") else b
-
-# ---------- 트랜스크립트 파싱 → messageId/agentId별(전역) max-usage 레코드 ----------
+    return b.removesuffix(".jsonl")
 
 def parse(files):
-    """returns: msgs {messageId:{model,usage,proj}}, tasks {agentId:{at,rm,usage,proj}},
-       noid_main[list], noid_task[list], session_ids, stats. id는 전역 유일 → 전역 키."""
     msgs = {}; tasks = {}; noid_main = []; noid_task = []
     session_ids = set(); dup_msg = 0; dup_task = 0
     for f in files:
         proj = os.path.basename(os.path.dirname(f)); fsid = sid_of(f)
         try:
-            fh = open(f)
+            fh = open(f)  # noqa: SIM115
         except OSError:
             continue
         for line in fh:
             try:
                 o = json.loads(line)
-            except Exception:
+            except Exception:  # noqa: BLE001, S112
                 continue
             sid = o.get("sessionId") or o.get("session_id") or fsid
             session_ids.add(sid)
@@ -153,7 +133,6 @@ def parse(files):
     return msgs, tasks, noid_main, noid_task, session_ids, {"dup_msg": dup_msg, "dup_task": dup_task}
 
 def aggregate(msgs, tasks, noid_main, noid_task):
-    """messageId/agentId별(전역) 레코드 → model_main / model_agent / external / proj."""
     model_main = collections.defaultdict(zero)
     model_agent = collections.defaultdict(lambda: collections.defaultdict(zero))
     external = collections.defaultdict(zero)
@@ -167,8 +146,6 @@ def aggregate(msgs, tasks, noid_main, noid_task):
             add_usage(model_agent[rec["rm"]][rec["at"]], rec["usage"]); add_usage(proj_tokens[rec["proj"]], rec["usage"])
     return model_main, model_agent, external, proj_tokens
 
-# ---------- coralline 총액(권위, = statusline) ----------
-
 def coralline_session_total(session_ids):
     if not os.path.isdir(LEDGER_DIR):
         return None
@@ -177,8 +154,9 @@ def coralline_session_total(session_ids):
         p = os.path.join(LEDGER_DIR, sid)
         if os.path.isfile(p):
             try:
-                tot += float(open(p).read().strip().split()[0]); found = True
-            except Exception:
+                with open(p) as fh:
+                    tot += float(fh.read().strip().split()[0]); found = True
+            except Exception:  # noqa: BLE001, S110
                 pass
     return tot if found else None
 
@@ -190,20 +168,16 @@ def coralline_grand_total():
         p = os.path.join(LEDGER_DIR, name)
         if os.path.isfile(p):
             try:
-                tot += float(open(p).read().strip().split()[0]); found = True
-            except Exception:
+                with open(p) as fh:
+                    tot += float(fh.read().strip().split()[0]); found = True
+            except Exception:  # noqa: BLE001, S110
                 pass
     return tot if found else None
-
-# ---------- per-id detail ledger I/O ----------
 
 def ledger_path(session_id):
     return os.path.join(DETAIL_DIR, session_id + ".json")
 
 def load_ledger(session_id):
-    """타입 안전 로드. root가 dict 아니거나(손상/구포맷) 읽기 실패 시 빈 구조 반환하되,
-       손상(non-dict root)은 '_corrupt' 표시 → 쓰기 경로(snapshot)가 조용히 덮어쓰지 않고
-       기존 파일을 .corrupt로 보존하게 함(Codex :210 — blanket except 조용한 소실 방지)."""
     fresh = {"session_id": session_id, "msgs": {}, "tasks": {}}
     p = ledger_path(session_id)
     try:
@@ -211,18 +185,16 @@ def load_ledger(session_id):
             d = json.load(f)
     except FileNotFoundError:
         return fresh
-    except Exception:
+    except Exception:  # noqa: BLE001
         d = None
     if not isinstance(d, dict):
-        fresh["_corrupt"] = True   # 손상 파일 존재 → snapshot이 백업 후 새로 시작
+        fresh["_corrupt"] = True
         return fresh
     if not isinstance(d.get("msgs"), dict): d["msgs"] = {}
     if not isinstance(d.get("tasks"), dict): d["tasks"] = {}
     return d
 
 def ledger_records(session_ids):
-    """ledger들을 messageId/agentId별 레코드로 로드(전역 키) → 라이브와 동일 형식.
-       여러 세션 ledger에 같은 id(resume/fork 복사본)가 있으면 max-usage로 하나만 유지."""
     msgs = {}; tasks = {}
     for sid in session_ids:
         d = load_ledger(sid)
@@ -230,15 +202,12 @@ def ledger_records(session_ids):
     return msgs, tasks
 
 def merge_maxusage(base, add):
-    """add를 base에 id별 max-usage로 병합(더 완전한 usage 레코드가 이김)."""
     for k, rec in add.items():
         if k not in base or usage_total(rec["usage"]) > usage_total(base[k]["usage"]):
             base[k] = rec
 
-# ---------- 표시 ----------
-
 def bar(frac, width=10):
-    filled = max(0, min(width, int(round(frac * width))))
+    filled = max(0, min(width, round(frac * width)))
     return "█" * filled + "░" * (width - filled)
 
 def _dwidth(s):
@@ -246,7 +215,6 @@ def _dwidth(s):
     return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in str(s))
 
 def pad(s, w):
-    """CJK 더블폭 고려 좌측 정렬 패딩 — 바 차트 열 정렬용."""
     s = str(s)
     return s + " " * max(0, w - _dwidth(s))
 
@@ -282,7 +250,6 @@ def render(args, note):
         session_ids.add(args.session)
     used_ledger = any(os.path.isfile(ledger_path(s)) for s in session_ids)
     led_msgs, led_tasks = ledger_records(session_ids)
-    # ledger를 base로, 라이브를 max-usage 병합 (union, 중복/미완본 방지)
     merge_maxusage(led_msgs, live_msgs); merge_maxusage(led_tasks, live_tasks)
     model_main, model_agent, external, proj_tokens = aggregate(led_msgs, led_tasks, noid_main, noid_task)
     rows, computed, fb = build_rows(model_main, model_agent, models, fallback)
@@ -314,11 +281,10 @@ def render(args, note):
     print(f"\n💰 모델·에이전트별 비용 분해 — {scope}")
     print(f"   (트랜스크립트 {len(files)}개 / 세션 {len(session_ids)}개 / 요금표 {load_meta()})")
     if note: print(f"   ⚠️ {note}")
-    if used_ledger: print(f"   (detail ledger 병합 — compaction 이전 detail 포함)")
+    if used_ledger: print("   (detail ledger 병합 — compaction 이전 detail 포함)")
     if stats["dup_msg"] or stats["dup_task"]:
         print(f"   (중복 제거: assistant {stats['dup_msg']} · task {stats['dup_task']})")
     print()
-    # ── 모델별: 짧은 바 + 같은 줄 인라인 에이전트 분해 (컴팩트 시각화, session·all 공통) ──
     for model, mc, macc, mcost, agents in rows:
         frac = mc / computed if computed else 0
         flag = "⚠️ " if model in fb else ""
@@ -340,7 +306,7 @@ def render(args, note):
     print(f"  합계 ${computed:.2f}{ext}")
     if fb:
         print(f"  ⚠️  요금표 미등재(fallback): {', '.join(sorted(short(m) for m in fb))}")
-    for u in unverified:   # 요금표 항목의 _unverified* 키 → 미확인 경고
+    for u in unverified:
         print(f"  ⚠️  {short(u['model'])}: {u['key']} 미확인")
     if args.all and proj_tokens:
         print("\n  📁 프로젝트별 (원시 토큰 합, ledger+라이브):")
@@ -358,29 +324,27 @@ def render(args, note):
             print(f"     토큰 기반 분해 합계 ${computed:.2f} = coverage {cov:.0f}%"
                   f"{'  — detail ledger로 보존됨' if used_ledger else '  (미귀속=compaction 이전 등)'}")
         else:
-            # 중립 표기 — 원인 단정 금지(Codex): --all일 때 미ledger 과거 세션이 유력 원인
+            # NEVER: 불일치 원인을 단정해 표기하지 않는다(원인 후보만 보인다).
             print(f"     토큰 기반 분해 합계 ${computed:.2f} (총액과 {cov-100:.0f}%p 불일치).")
             cause = "coralline가 아직 ledger화하지 않은 과거 세션 포함(유력)" if args.all else \
                     "중복·요금drift·race 등 재조정 필요"
             print(f"     원인 후보: {cause}. statusline 값은 렌더된 세션만 누적.")
     else:
         print(f"  ℹ️  coralline ledger 없음 — 토큰 기반 추정 ${computed:.2f}만 표시(총액 앵커 불가)")
-    print(f"  ℹ️  $는 API 정가 환산(구독 실지불·할인 미반영). cache write 5m/1h 분리 있으면 각 요율.")
+    print("  ℹ️  $는 API 정가 환산(구독 실지불·할인 미반영). cache write 5m/1h 분리 있으면 각 요율.")
     print()
 
 def load_meta():
     try:
         return f"{json.load(open(PRICING_PATH)).get('_verified','?')} 기준"
-    except Exception:
+    except Exception:  # noqa: BLE001
         return "?"
-
-# ---------- 훅 모드: 스냅샷 / 리셋 ----------
 
 def read_hook_stdin():
     try:
         raw = sys.stdin.read()
         return json.loads(raw) if raw.strip() else {}
-    except Exception:
+    except Exception:  # noqa: BLE001
         return {}
 
 def find_transcript(session_id, transcript_path):
@@ -393,8 +357,6 @@ def find_transcript(session_id, transcript_path):
     return None
 
 def snapshot_mode():
-    """훅(PreCompact/SessionEnd) 전용: 세션 트랜스크립트의 각 id usage를 ledger에 병합
-       (더 완전한 레코드로 교체 — partial→complete 방어). noid는 재실행 중복이라 미저장."""
     h = read_hook_stdin()
     session_id = h.get("session_id") or h.get("sessionId")
     tfile = find_transcript(session_id, h.get("transcript_path") or h.get("transcriptPath"))
@@ -402,11 +364,11 @@ def snapshot_mode():
         return
     d = load_ledger(session_id)
     if d.pop("_corrupt", False):
-        # 손상 파일을 조용히 덮어쓰지 않고 보존 후 새로 시작
+        # NEVER: 손상 파일을 조용히 덮어쓰지 않는다(.corrupt 로 보존 후 새로 시작).
         try:
             os.replace(ledger_path(session_id), ledger_path(session_id) + ".corrupt")
             sys.stderr.write(f"[cost-snapshot] {session_id[:8]} 손상 ledger → .corrupt 보존, 새로 시작\n")
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
     msgs, tasks, _, _, _, _ = parse([tfile])
     new_m = 0; new_t = 0
@@ -420,7 +382,7 @@ def snapshot_mode():
             d["tasks"][tid] = rec; new_t += 1
     d["session_id"] = session_id
     os.makedirs(DETAIL_DIR, exist_ok=True)
-    tmp = ledger_path(session_id) + f".tmp.{os.getpid()}"   # 고유 temp(BUG3 — 동시 스냅샷 .tmp 충돌 방지)
+    tmp = ledger_path(session_id) + f".tmp.{os.getpid()}"   # NEVER: 고정 이름 .tmp 를 쓰지 않는다(동시 스냅샷이 충돌한다)
     with open(tmp, "w") as f:
         json.dump(d, f, ensure_ascii=False); f.flush(); os.fsync(f.fileno())
     os.replace(tmp, ledger_path(session_id))
@@ -444,8 +406,6 @@ def reset_mode(assume_yes):
         except FileNotFoundError:
             print(f"없음(무시): {t}")
     print("✅ 과거 세션 누적 제거. 현 세션 값은 HUD가 계속 누적(완전 0 아님 — /clear 새 세션 직후 리셋이 가장 깨끗).")
-
-# ---------- 스코프 파일 선택 ----------
 
 def pick_scope_files(args):
     files = sorted(glob.glob(PROJ_GLOB))

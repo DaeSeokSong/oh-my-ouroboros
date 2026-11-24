@@ -1,21 +1,16 @@
 # 에이전트 시스템 (라우팅 규칙)
 
 > **로드 시점**: 항상 (모든 대화에 적용)
-> **핵심 원칙**: 라우팅 테이블 위에서 아래로 순서대로 매칭, 첫 일치 적용
 
 ## main(메인 세션) = 오케스트레이터 (역할 정의)
 
-main은 직접 실행자가 아니라 **오케스트레이터**다. 핵심 루프: **분해(decompose) → 라우팅(route) → 통합(integrate) → 검증(verify) → 보고**. 실행(코드·검색·문서·git)은 sub-agent에 위임하고(`rules/model-assignment.md`), main은 판단·계획·통합·보고를 담당한다. 스킬로 접힌 일(그림)을 main 이 해도 주 역할은 이 루프이고 구현·검색·문서 초안·검증은 위임한다(2026-11-10 사용자 지시).
+main은 직접 실행자가 아니라 **오케스트레이터**다. 핵심 루프: **분해(decompose) → 라우팅(route) → 통합(integrate) → 검증(verify) → 보고**. 실행(코드·검색·문서·git)은 sub-agent에 위임하고(`rules/model-assignment.md`), main은 판단·계획·통합·보고를 담당한다. 스킬로 접힌 일(그림)을 main 이 해도 주 역할은 이 루프이고 구현·검색·문서 초안·검증은 위임한다(사용자 지시).
 
 > **검증(verify)의 기준 — 액면 수용 금지**: subagent 보고 중 후속 행동을 바꾸는 핵심 주장(결함 지적·수치·"존재하지 않음" 단정)은 main이 **원문(파일:라인) 대조 후** 채택한다. 지적이 옳아 보여도 원 설계 의도를 먼저 확인 — 교정 자체가 과잉 교정일 수 있다.
 
 ### ★프롬프트 1회 = 사용자 보고 1회 (MANDATORY)
 
-대화는 **`사용자 프롬프트 → (내부 작업 전부) → 최종 보고 1회`**만 반복한다. subagent·teammate 알림마다 중간 보고·예고·건건 통과 알림 **금지** — 알림은 **main을 깨우는 신호이지 사용자 전달 내용이 아니다**. **예외 (이때만 중간 발화)**: 1) 사용자 결정 필요 — 질문 2) 비가역·외부 영향 행동 직전 승인 3) 명시적 중간 경과 요구(`/loop` 등) 4) 15분 넘는 장기 작업 — 생존 신호 **한 줄**만 5) 작업성 요청의 착수 전 3줄 요약(CLAUDE.md 원칙 3.5) 6) 계획 확정 대기(CLAUDE.md 원칙 3). 근거·경위: `rules-lazy/notification-turn-reduction.md` § 프롬프트 1회.
-
-#### 알림 턴 물리적 감축 (MANDATORY)
-
-감축 4항(동기 실행 기본·해산은 TaskStop·알림-전용 턴 최단 1줄·spawn 표준 문구) 정본: `rules-lazy/notification-turn-reduction.md` § 알림 턴 물리적 감축.
+대화는 **`사용자 프롬프트 → (내부 작업 전부) → 최종 보고 1회`**만 반복한다. subagent·teammate 알림마다 중간 보고·예고·건건 통과 알림 **금지** — 알림은 **main을 깨우는 신호이지 사용자 전달 내용이 아니다**. **예외 (이때만 중간 발화)**: 1) 사용자 결정 필요 — 질문 2) 비가역·외부 영향 행동 직전 승인 3) 명시적 중간 경과 요구(`/loop` 등) 4) 15분 넘는 장기 작업 — 생존 신호 **한 줄**만 5) 작업성 요청의 착수 전 3줄 요약(CLAUDE.md 원칙 3.5) 6) 계획 확정 대기(CLAUDE.md 원칙 3). 근거·경위: `rules-lazy/notification-turn-reduction.md` § 프롬프트 1회. 알림 턴 감축 4항(동기 실행 기본·해산은 TaskStop·알림-전용 턴 최단 1줄·spawn 표준 문구)은 같은 파일 § 알림 턴 물리적 감축.
 
 ### 오케스트레이션 전 2-렌즈 점검 (복합·모호 작업 한정)
 
@@ -27,12 +22,12 @@ sub-agent spawn 전 R(심문)·L(검증) 2-렌즈 통과 후 분해·라우팅 �
 |----------|------|------|-----------|---------|
 | **searcher** | 인터넷 검색 전문 — 논문·기술문서·라이브러리 수집. main 이 소집하고 다른 에이전트는 `NEEDS_SEARCH` 로 요청 | sonnet | Tavily MCP, WebSearch, WebFetch | Agent (subagent) |
 | **scout** | 코드베이스 정찰 + 프로젝트 전체 구조 분석(deepinit mode) — coder·qa의 조수 | haiku | Glob, Grep, Read, Bash(탐색성) | Agent (subagent) |
-| **planner** | 아키텍처·실험 설계, 워크플로우 | opus | Read, Glob, Grep (검색→searcher 위임) | Agent (subagent) |
+| **planner** | 아키텍처·실험 설계, 워크플로우 | opus | Read, Glob, Grep | Agent (subagent) |
 | **coder** | 코드 작성·리뷰·수정 + 조건부 리팩토링(code-simplifier, 실험 외) | sonnet | Read, Write, Edit, Bash | Agent (subagent) |
 | **qa** | 검증·테스트·호출부 분석 + 인과관계 버그 트레이싱(tracer mode) + Ralph Wiggum 루프 | sonnet | Read, Grep, Glob, Bash, Edit(FAIL 수정·paper-read qa-report.md 한정) | Agent (subagent) |
 | **reviewer** | 한 함수씩 파고드는 DFS 코드 리뷰 — 설계 의도와 코드의 어긋남. 상세 `agents/reviewer.md` | opus | Read, Grep, Glob, Bash | Agent (subagent) |
 | **security** | 보안 취약점 검토 — 4관점(주입·인증·시크릿·공급망), 상세 `agents/security.md` | sonnet | Read, Grep, Glob, Bash | Agent (subagent) |
-| **researcher** | 논문 작성·실험 분석·설계 비판적 평가 | opus | Read, Write, Edit (검색→searcher 위임) | 단독=subagent / 토론=teammate |
+| **researcher** | 논문 작성·실험 분석·설계 비판적 평가 | opus | Read, Write, Edit | 단독=subagent / 토론=teammate |
 | **docs** | Confluence·Jira 문서 초안 | sonnet | Read, Write, Edit | Agent (subagent) |
 | **gitops** | git 전문 — 커밋·브랜치·diff·log | sonnet | Bash(git), Read | Agent (subagent) |
 | **citation-verifier** | 논문 인용 신뢰도 검증 — 철회/정정 감지 + 원문 수치 대조 (scite 대체) | sonnet | WebFetch, WebSearch, scientific-papers/arxiv-latex/tavily MCP | Agent (subagent) |
@@ -48,7 +43,7 @@ sub-agent spawn 전 R(심문)·L(검증) 2-렌즈 통과 후 분해·라우팅 �
 > ⚠️ **금지**: TeamCreate로 팀 생성 후 `Agent(subagent_type=..., team_name 없이)` 호출
 > → teammate가 아닌 독립 subagent 생성 → SendMessage 불가 → 교류 단절
 
-> **새 세션에 일 맡기기 금지 (사용자 지시)**: 세션은 일을 맡기려고 새 Claude 세션을 띄우지 않는다(`claude --bg` · `-p` · `run`, Agent `isolation: "remote"`, RemoteTrigger, Notion spawn-session, 빈 세션에 SendMessage 로 일 주기). 작업은 이 세션 안의 Agent(subagent) · TeamCreate(teammate) 로 한다. 이미 떠 있는 피어 세션에 SendMessage 로 연락하는 것은 종전대로다. 예외는 `agent-routing-mcp.md` § 새 세션 금지 실측·예외 범위에 열거된 것뿐이며 2026-11-12 현재 열린 예외는 없다(띄우기 전에 그 절과 대조).
+> **새 세션에 일 맡기기 금지 (사용자 지시)**: 세션은 일을 맡기려고 새 Claude 세션을 띄우지 않는다(`claude --bg` · `-p` · `run`, Agent `isolation: "remote"`, RemoteTrigger, Notion spawn-session, 빈 세션에 SendMessage 로 일 주기). 작업은 이 세션 안의 Agent(subagent) · TeamCreate(teammate) 로 한다. 이미 떠 있는 피어 세션에 SendMessage 로 연락하는 것은 종전대로다. 예외는 `agent-routing-mcp.md` § 새 세션 금지 실측·예외 범위에 열거된 것뿐이다(띄우기 전에 그 절과 대조).
 
 > **SendMessage 전 ListAgents 확인 (MANDATORY)**: teammate·subagent·타 세션으로 **main 세션 밖과 소통**할 때(SendMessage 호출 직전) `ListAgents`로 정확한 주소(name)를 확인한다 — 상세·경계: `rules-lazy/agent-routing-mcp.md` § SendMessage 전 ListAgents 확인.
 
@@ -56,17 +51,13 @@ sub-agent spawn 전 R(심문)·L(검증) 2-렌즈 통과 후 분해·라우팅 �
 
 > **"소집"의 실행 주체**: "searcher 소집" 류는 **main에 소집 요청**(BLOCKED/NEEDS_CONTEXT 반환)을 뜻하며, 직접 spawn은 teammate·main만 가능.
 
-## Spawn prompt 4요소 강제 (MANDATORY — Anthropic 공식)
+## Spawn prompt 5요소 강제 (MANDATORY)
 
-모든 subagent/teammate spawn prompt에 objective·output_format·tools/sources·task_boundary 4요소를 반드시 명시한다 — 표·근거·추가 지침: `rules-lazy/agent-routing-mcp.md` § Spawn prompt 4요소 강제
+모든 subagent/teammate spawn prompt에 objective·output_format·tools/sources·task_boundary·사용자 지시 원문(인용·경로, 조회 전용 면제) 5요소를 명시한다. 상세: `rules-lazy/agent-routing-mcp.md` § Spawn prompt 5요소 강제(spawn 직전 로드: mcpServers 부착 · Mem0 쓰기 · 반환 형식 · 스킬 공유 H1b)
 
 ## Teammate 중복 생성 방지
 
 TeamCreate 호출 전 기존 활성 팀·동일 목적 여부 확인 필수 — 체크리스트: `rules-lazy/agent-routing-mcp.md` § Teammate 중복 생성 방지
-
-## MCP 부착 정책 + spawn 가드레일 (lazy)
-
-> **상세**: `~/.claude/rules-lazy/agent-routing-mcp.md` (에이전트 spawn 직전 로드: mcpServers 부착·Mem0 쓰기 정책·반환 형식·전용 스킬 공유 조건 H1b)
 
 ## 라우팅 테이블 (MANDATORY)
 
@@ -104,7 +95,7 @@ TeamCreate 호출 전 기존 활성 팀·동일 목적 여부 확인 필수 — 
 
 > 위 표가 **단일 출처**다(첫 매칭). git push/pull은 항상 사용자 직접(승인 표시로도 통과하지 않음).
 >
-> **표 적용 전 탈출**: 사실 질문·단답·의견 요청은 위임 판단·라우팅 표를 적용하기 전에 main이 직접 답한다(10행. 의견 요청은 CLAUDE.md «/solve 자동 적용» 대상). `Agent` 소집은 이 표의 에이전트 이름만 쓰고 `general-purpose` 같은 표 밖 타입은 쓰지 않는다. 예외는 `/graphify` 추출 subagent 의 `general-purpose`(업스트림 스킬 원문) 하나뿐이다. 표 밖 타입 소집은 훅 `scripts/agent-type-gate.py` 가 막는다(graphify 예외 통과 조건·플러그인 에이전트 허용 범위·실측·경위: `agent-routing-mcp.md` § 라우팅 표 행 각주).
+> **표 적용 전 탈출**: 사실 질문·단답·의견 요청은 위임 판단·라우팅 표를 적용하기 전에 main이 직접 답한다(10행. 의견 요청은 CLAUDE.md «/solve 자동 적용» 대상). `Agent` 소집은 이 표의 에이전트 이름만 쓰고 `general-purpose` 같은 표 밖 타입은 쓰지 않는다. 예외는 `/graphify` 추출 subagent 의 `general-purpose` 하나뿐이다. 표 밖 타입 소집은 훅 `scripts/agent-type-gate.py` 가 막는다(graphify 예외 통과 조건·플러그인 에이전트 허용 범위·실측·경위: `agent-routing-mcp.md` § 라우팅 표 행 각주).
 
 ## 토론(discuss) 방식 — teammate 소집
 

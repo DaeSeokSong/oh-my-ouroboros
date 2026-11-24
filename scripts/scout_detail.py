@@ -1,11 +1,9 @@
 """Extract the paths scout actually touched from a subagent transcript into a detail document.
 
-Why (agent consolidation step 2): the path list comes from the TOOL CALL INPUTS recorded in the transcript, not from
-scout's own words. File contents are never copied. Since Claude Code 2.1.321 has no Grep/Glob tool, scout searches with
-Bash grep/find, so the inputs alone list only the files it opened with Read. Decision S2R (2026-11-10): ALSO keep the
-`path:line:` positions found in Bash tool RESULTS. Tool results can carry hidden instructions, so the only thing taken
+The path list comes from the TOOL CALL INPUTS recorded in the transcript, not from
+scout's own words. File contents are never copied. The `path:line:` positions found in Bash tool RESULTS are also kept.
+Tool results can carry hidden instructions, so the only thing taken
 from a result is a short token of a fixed shape (see LOCATION_RE); every other word of a result is dropped, never copied.
-main only keeps the counts and the file paths. Frame follows searcher_detail.py (step 1).
 Usage: scout_detail.py --transcript <agent-<id>.jsonl> --out <dir> [--max-paths 500] [--max-result-paths 300]
 Path rule = fold-bench/judge/score_tasks.extract_tool_paths: Read.file_path, NotebookRead.notebook_path, Grep.path,
 Glob.path (non-empty strings only); the json path is the raw string with only [\\x00-\\x1f\\x7f] removed (no normalizing).
@@ -16,6 +14,7 @@ Contract: stdout is ONE JSON line with counts and the two output file paths, nev
 transcript. Exit: 0 ok (even with 0 paths) / 2 transcript missing or no line parsed as JSON / 3 output write failed
 (temp files removed). Both files are mode 0600, written via temp file + os.replace (a symlink at the target is replaced,
 never followed). The md file is sanitized like searcher_detail (paths are model-chosen strings, so untrusted).
+REF: knowledge/harness/code-history/scripts__scout_detail.py.md
 """
 import argparse
 import contextlib
@@ -32,7 +31,7 @@ KNOWN_OTHER = ("Write", "Edit", "WebFetch", "WebSearch", "SubagentHandback", "Ag
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 BANNER = "<!-- MODEL-CHOSEN PATHS: scout 가 도구 호출에 넣은 경로 목록입니다. 파일 내용은 담지 않습니다. «검색 결과에서 뽑은 위치» 절은 도구 결과에서 온 값이라 신뢰할 수 없습니다. -->"
 END_MARK = "<!-- END -->"
-# Keep this string equal to score_tasks.LOCATION_PATTERN (the frozen reference); both must give the same result.
+# NEVER: change this string apart from fold-bench/judge/score_tasks.py LOCATION_PATTERN (the frozen reference); both must give the same result.
 LOCATION_RE = re.compile(r"(?:\./)?([A-Za-z0-9_./][A-Za-z0-9_./+-]{0,254}):([0-9]{1,7}):")
 LETTER = re.compile(r"[A-Za-z]")
 RESULT_CHARS = 200000
@@ -40,21 +39,18 @@ MAX_LINES_PER_PATH = 50
 
 
 def dropped(c):
-    """Return True for characters removed from untrusted text: Cc/Cf/Co/Cs, variation selectors, tag characters."""
     o = ord(c)
     return (unicodedata.category(c) in ("Cc", "Cf", "Co", "Cs") or 0xFE00 <= o <= 0xFE0F
             or 0xE0000 <= o <= 0xE007F or 0xE0100 <= o <= 0xE01EF)
 
 
 def clean(text):
-    """Collapse whitespace first, then drop invisible characters, re-collapse, strip, neutralize backticks and comment markers."""
     text = "".join(c for c in re.sub(r"\s+", " ", text) if not dropped(c))
     text = re.sub(" {2,}", " ", text).strip().replace("`", "\N{MODIFIER LETTER PRIME}")
     return text.replace("<!--", "<!- -").replace("-->", "- ->")
 
 
 def read_tool_calls(path):
-    """Return ([(tool name, input dict)] from assistant tool_use blocks in order, bad line count, parsed line count, Bash tool_use ids)."""
     calls, bad, ok, bash_ids = [], 0, 0, set()
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -82,7 +78,6 @@ def read_tool_calls(path):
 
 
 def read_bash_results(path, bash_ids):
-    """Return the text of every user tool_result block whose tool_use_id is a Bash id (string or list-of-text content only)."""
     texts = []
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -108,7 +103,6 @@ def read_bash_results(path, bash_ids):
 
 
 def collect_locations(texts, max_paths):
-    """Return ({path: sorted unique line numbers capped at 50}, {path: lines were cut}, path limit hit) from `path:line:` line starts."""
     found, truncated = {}, False
     for text in texts:
         for line in text[:RESULT_CHARS].split("\n"):
@@ -116,7 +110,6 @@ def collect_locations(texts, max_paths):
             if not m:
                 continue
             p, n = m.group(1), int(m.group(2))
-            # a piece of the path (one leading "/" of an absolute path ignored) must not be empty, "." or ".."
             if n == 0 or not LETTER.search(p) or not ("/" in p or "." in p) \
                     or any(s in ("", ".", "..") for s in p.removeprefix("/").split("/")):
                 continue
@@ -131,7 +124,6 @@ def collect_locations(texts, max_paths):
 
 
 def write_files(items):
-    """Write [(path, text)] via temp files in the same folder, then os.replace each; remove temps on any failure."""
     tmps = []
     try:
         for path, text in items:
@@ -150,7 +142,6 @@ def write_files(items):
 
 
 def main():
-    """Run the CLI and return the process exit code."""
     ap = argparse.ArgumentParser(description="Extract scout scan paths from a subagent transcript.")
     ap.add_argument("--transcript", required=True)
     ap.add_argument("--out", required=True)

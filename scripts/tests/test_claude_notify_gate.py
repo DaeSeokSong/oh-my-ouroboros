@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
-"""claude-notify.sh 최종 판별 게이트 회귀 테스트 (2026-09-26 신설).
+"""claude-notify.sh 최종 판별 게이트 회귀 테스트.
 
 정본: ~/.claude/intent/2026-09-26-ntfy-final-only.md
 드라이런(CLAUDE_NOTIFY_DRYRUN=1)으로 실제 발송 없이 판정만 검사한다.
+REF: knowledge/harness/code-history/scripts__tests__test_claude_notify_gate.py.md
 """
 
 import json
@@ -14,7 +14,6 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "claude-notify.sh"
 
-# 실제 env-config를 읽지 않도록 격리된 HOME (env-config 없는 빈 임시 디렉터리).
 _ISO_HOME_TMP = tempfile.TemporaryDirectory()
 ISO_HOME = Path(_ISO_HOME_TMP.name)
 
@@ -26,7 +25,6 @@ def check(name, ok, detail=""):
 
 
 def write_transcript(path, texts):
-    """assistant 메시지를 순서대로 남긴다 — 마지막 원소가 «마지막 assistant 메시지»."""
     lines = []
     for t in texts:
         lines.append(json.dumps({"type": "user", "message": {"role": "user", "content": "go"}}))
@@ -53,11 +51,10 @@ def run_notify(job_dir, payload, args=None, home=ISO_HOME, extra_env=None):
     cmd = ["bash", str(SCRIPT)] + (args or ["TestProj", "기본 요약"])
     stdin_text = json.dumps(payload, ensure_ascii=False) if payload is not None else ""
     return subprocess.run(cmd, capture_output=True, text=True, env=env,
-                          input=stdin_text, cwd=str(SCRIPT.parent))
+                          input=stdin_text, cwd=str(SCRIPT.parent), check=False)
 
 
 def write_transcript_raw(path, assistant_contents):
-    """content 값을 그대로 넣는다(문자열·도구호출 배열 등) — 마지막 원소가 마지막 assistant 메시지."""
     lines = []
     for content in assistant_contents:
         lines.append(json.dumps({"type": "user", "message": {"role": "user", "content": "go"}}))
@@ -67,7 +64,6 @@ def write_transcript_raw(path, assistant_contents):
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-# ── ① 잡+Stop+마지막 블록에 result: … → NOTIFY default white_check_mark ──
 def test_case1_result():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -79,7 +75,6 @@ def test_case1_result():
               r.stdout)
 
 
-# ── ② 잡+Stop+표지 없음(중간 한 줄) → SKIP ──
 def test_case2_no_marker():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -89,7 +84,6 @@ def test_case2_no_marker():
         check("case2: SKIP", r.stdout.strip() == "SKIP", r.stdout)
 
 
-# ── ③ 잡+Stop+needs input: … → NOTIFY high question ──
 def test_case3_needs_input():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -99,7 +93,6 @@ def test_case3_needs_input():
               r.stdout.strip() == "NOTIFY\thigh\tquestion\tneeds input: GPU 배정을 알려주세요", r.stdout)
 
 
-# ── ④ 잡+Stop+failed: … → NOTIFY x ──
 def test_case4_failed():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -109,11 +102,10 @@ def test_case4_failed():
               r.stdout.strip() == "NOTIFY\tdefault\tx\tfailed: 검증 3건 불일치", r.stdout)
 
 
-# ── ⑤ 잡+Notification(permission_prompt) → NOTIFY(게이트 미적용) ──
 def test_case5_notification_event():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
-        write_transcript(tp, ["작업 진행 중입니다"])  # 표지 없어도 게이트 미적용이라 무관
+        write_transcript(tp, ["작업 진행 중입니다"])
         r = run_notify(tmp, {"hook_event_name": "Notification",
                              "notification_type": "permission_prompt",
                              "transcript_path": str(tp)})
@@ -121,7 +113,6 @@ def test_case5_notification_event():
               r.stdout.strip() == "NOTIFY\tdefault\twhite_check_mark\t기본 요약", r.stdout)
 
 
-# ── ⑥ 잡 아님(CLAUDE_JOB_DIR 비움)+Stop+표지 없음 → NOTIFY(현행) ──
 def test_case6_not_job():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -131,7 +122,6 @@ def test_case6_not_job():
               r.stdout.strip() == "NOTIFY\tdefault\twhite_check_mark\t기본 요약", r.stdout)
 
 
-# ── ⑦ 잡+Stop+transcript 경로 깨짐 → NOTIFY(fail-open) ──
 def test_case7_broken_transcript():
     with tempfile.TemporaryDirectory() as tmp:
         r = run_notify(tmp, {"hook_event_name": "Stop", "transcript_path": "/nope/x.jsonl"})
@@ -139,7 +129,6 @@ def test_case7_broken_transcript():
               r.stdout.strip() == "NOTIFY\tdefault\twhite_check_mark\t기본 요약", r.stdout)
 
 
-# ── 추가 A) 250자 한글 표지 줄 → 200자 절단, 깨진 바이트 없음 ──
 def test_truncation_utf8():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -155,7 +144,6 @@ def test_truncation_utf8():
             check("truncate: 접두 result 보존", msg.startswith("result: "), msg[:20])
 
 
-# ── 추가 B) 표지 줄이 마지막 메시지가 아닌 앞 메시지에만 있으면 SKIP ──
 def test_marker_in_earlier_message_only():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -164,7 +152,6 @@ def test_marker_in_earlier_message_only():
         check("earlier-only marker: SKIP", r.stdout.strip() == "SKIP", r.stdout)
 
 
-# ── 추가 ①) 마지막 assistant가 도구 호출만(텍스트 블록 없음) → SKIP ──
 def test_add1_tool_only_skip():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -173,7 +160,6 @@ def test_add1_tool_only_skip():
         check("add1: SKIP (도구 호출만)", r.stdout.strip() == "SKIP", r.stdout)
 
 
-# ── 추가 ②) content가 배열이 아닌 문자열 → 그 문자열을 본문으로 ──
 def test_add2_string_content():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -183,7 +169,6 @@ def test_add2_string_content():
               r.stdout.strip() == "NOTIFY\tdefault\twhite_check_mark\tresult: 완료", r.stdout)
 
 
-# ── 추가 ③) 대문자 RESULT:만 있음(소문자 표지 아님) → SKIP ──
 def test_add3_uppercase_only_skip():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -192,7 +177,6 @@ def test_add3_uppercase_only_skip():
         check("add3: SKIP (대문자 RESULT: 는 표지 아님)", r.stdout.strip() == "SKIP", r.stdout)
 
 
-# ── 추가 ④) result: 뒤에 failed: → 우선순위상 failed: 채택 ──
 def test_add4_priority_failed_over_result():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -202,7 +186,6 @@ def test_add4_priority_failed_over_result():
               r.stdout.strip() == "NOTIFY\tdefault\tx\tfailed: 나머지 3건 불일치", r.stdout)
 
 
-# ── 추가 ⑤) 행두 공백 있는 needs input: → NOTIFY high question ──
 def test_add5_leading_space_needs_input():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -212,7 +195,6 @@ def test_add5_leading_space_needs_input():
               r.stdout.strip() == "NOTIFY\thigh\tquestion\tneeds input: 확인", r.stdout)
 
 
-# ── 추가 ⑥) 코드펜스 안 result: x만 있음 → SKIP ──
 def test_add6_fenced_skip():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -221,7 +203,6 @@ def test_add6_fenced_skip():
         check("add6: SKIP (펜스 안 표지 제외)", r.stdout.strip() == "SKIP", r.stdout)
 
 
-# ── 추가 ⑦) 인용줄(> result: ...)만 있음 → SKIP ──
 def test_add7_quoted_skip():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -230,11 +211,10 @@ def test_add7_quoted_skip():
         check("add7: SKIP (인용줄 표지 제외)", r.stdout.strip() == "SKIP", r.stdout)
 
 
-# ── 추가 ⑧) 표지 줄에 시크릿 토큰 → <masked>로 치환, 원문 미노출 ──
 def test_add8_secret_masking():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
-        # 가짜 비밀값은 실행 시 이어 붙여 만든다(파일 원문에 «이름=sk-…» 꼴이 있으면 전송 사전검사가 막는다)
+        # NEVER: 가짜 비밀값을 파일 원문에 «이름=sk-…» 꼴로 두지 않는다. 실행 시 이어 붙여 만든다(그 꼴이 있으면 전송 사전검사가 막는다)
         ft = "sk-" + "abcdefghijklmnop"
         write_transcript(tp, ["result: 완료 tok" + "en=" + ft])
         r = run_notify(tmp, {"hook_event_name": "Stop", "transcript_path": str(tp)})
@@ -243,7 +223,6 @@ def test_add8_secret_masking():
         check("add8: 원문 토큰 미노출", ft not in out, out)
 
 
-# ── 추가 ⑨) CLAUDE_NOTIFY_SKIP=1 → 필터 우선, stdout 빈 값·rc 0 ──
 def test_add9_notify_skip_env():
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
@@ -254,7 +233,6 @@ def test_add9_notify_skip_env():
         check("add9: stdout 빈 값", r.stdout == "", repr(r.stdout))
 
 
-# ── 추가 ⑩) hook_event_name 없음(빈 JSON) → 기본 NOTIFY ──
 def test_add10_missing_hook_event():
     with tempfile.TemporaryDirectory() as tmp:
         r = run_notify(tmp, {})
@@ -263,10 +241,9 @@ def test_add10_missing_hook_event():
 
 
 def test_add11_masking_all_patterns():
-    # qa 재검증 P2: 마스킹 5패턴 중 sk- 만 테스트됐다 → 나머지 4패턴도 잠근다
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
-        # 가짜 토큰은 실행 시 이어 붙인다 — 파일 원문에 패턴이 있으면 커밋 훅의 시크릿 탐지가 막는다
+        # NEVER: 가짜 토큰의 패턴을 파일 원문에 두지 않는다. 실행 시 이어 붙인다(원문에 있으면 커밋 훅의 시크릿 탐지가 막는다)
         p1 = "AK" + "IA" + "ABCDEFGHIJKLMNOP"
         p2 = "gh" + "p_" + "abcdefghijklmnopqrstuvwxyz"
         p3 = "Bea" + "rer " + "abcdefghijklmnopqrstuv"
@@ -281,7 +258,6 @@ def test_add11_masking_all_patterns():
 
 
 def test_add12_same_kind_last_line():
-    # qa 재검증 P2: 동종 표지가 여럿이면 마지막 줄을 쓴다
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
         write_transcript(tp, ["result: 첫째\n본문\nresult: 둘째"])
@@ -291,16 +267,14 @@ def test_add12_same_kind_last_line():
 
 
 def test_add13_slow_jq_fail_open():
-    # qa 재검증 P1: 추출 timeout 4 가 실제로 fail-open 을 만드는지 — PATH 앞에 6초 자는 가짜 jq 를 둔다
     import time
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
         write_transcript(tp, ["result: 느린 jq"])
         fake = os.path.join(tmp, "bin")
         os.makedirs(fake)
-        real_jq = subprocess.run(["bash", "-c", "command -v jq"], capture_output=True, text=True).stdout.strip()
+        real_jq = subprocess.run(["bash", "-c", "command -v jq"], capture_output=True, text=True, check=False).stdout.strip()
         with open(os.path.join(fake, "jq"), "w") as f:
-            # 첫 두 호출(hook_event_name·transcript_path 파싱)은 통과시키고 -s(추출)만 느리게 한다
             f.write("#!/bin/bash\nfor a in \"$@\"; do [ \"$a\" = \"-rs\" ] && sleep 6; done\nexec " + real_jq + " \"$@\"\n")
         os.chmod(os.path.join(fake, "jq"), 0o755)
         t0 = time.time()
@@ -313,7 +287,6 @@ def test_add13_slow_jq_fail_open():
 
 
 def test_add14_open_stdin_pipe():
-    # qa 재검증 P1: 열린 빈 파이프에서 timeout 2 가 cat 을 끊는지
     import time
     with tempfile.TemporaryDirectory() as tmp:
         env = dict(os.environ, CLAUDE_NOTIFY_DRYRUN="1", CLAUDE_JOB_DIR=tmp, HOME=str(ISO_HOME))
@@ -322,7 +295,7 @@ def test_add14_open_stdin_pipe():
         p = subprocess.Popen(["bash", str(SCRIPT), "TestProj", "기본 요약"], stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
         try:
-            out, _ = p.communicate(timeout=5)  # stdin 을 쓰지 않고 열어 둔 채 기다린다
+            out, _ = p.communicate(timeout=5)
             dt = time.time() - t0
             check("add14: 열린 빈 stdin → 2초 timeout 뒤 기본 NOTIFY",
                   out.strip() == "NOTIFY\tdefault\twhite_check_mark\t기본 요약" and dt < 5.0, f"{out!r} dt={dt:.1f}s")
@@ -336,7 +309,6 @@ def stop_with_field(tp, text):
 
 
 def test_lam1_race_transcript_unflushed():
-    # 2026-10-16: 마지막 text 줄이 transcript 에 아직 없어도(마지막 assistant 줄이 thinking/tool_use) 필드로 NOTIFY
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
         write_transcript_raw(tp, [[{"type": "thinking", "thinking": "정리 중"},
@@ -347,7 +319,6 @@ def test_lam1_race_transcript_unflushed():
 
 
 def test_lam2_field_wins_over_transcript():
-    # 필드가 있으면 표지 없음 → transcript 꼬리에 표지가 있어도 SKIP
     with tempfile.TemporaryDirectory() as tmp:
         tp = Path(tmp) / "t.jsonl"
         write_transcript(tp, ["result: transcript 쪽 표지"])
@@ -399,7 +370,6 @@ for fn in (test_case1_result, test_case2_no_marker, test_case3_needs_input, test
     fn()
 
 
-# 설계 ③ B1~B24: 실제 HOME·네트워크를 쓰지 않고 가짜 curl로 예산과 큐를 검사한다.
 USAGE_SCRIPT = SCRIPT.parent / "harness-usage-check.sh"
 TEST_DAY = "20260926"
 
@@ -421,13 +391,12 @@ def make_fake_curl(root):
         '    *) shift ;;\n'
         '  esac\n'
         'done\n'
-        # 본문·제목은 표준입력 설정(-K -)의 줄에서 꺼낸다(인자에는 없다)
         'data=$(printf "%s\\n" "$cfg" | sed -n \'s/^data-raw = "\\(.*\\)"$/\\1/p\' | sed \'s/\\\\\\(.\\)/\\1/g\')\n'
         'title=$(printf "%s\\n" "$cfg" | sed -n \'s/^header = "Title: \\(.*\\)"$/\\1/p\' | sed \'s/\\\\\\(.\\)/\\1/g\')\n'
         'printf "x\\n" >> "$FAKE_CURL_CALLS"\n'
         'printf "%s" "$data" > "$FAKE_CURL_LAST_D"\n'
         'printf "%s" "$title" > "$FAKE_CURL_LAST_TITLE"\n'
-        'printf "%s" "$FAKE_CURL_BODY" > "$out"\n'  # ${VAR:-{}} 는 첫 } 에서 확장이 끝나 JSON 이 깨진다(main 실측)
+        'printf "%s" "$FAKE_CURL_BODY" > "$out"\n'  # NEVER: ${VAR:-{}} 꼴로 쓰지 않는다. 첫 } 에서 확장이 끝나 JSON 이 깨진다(main 실측)
         'printf "%s %s" "${FAKE_CURL_HTTP:-200}" "${FAKE_CURL_TIME:-0.001}"\n',
         encoding="utf-8",
     )
@@ -470,7 +439,7 @@ def real_run(env, payload=None, args=None, stdin_text=None):
     return subprocess.run(
         ["bash", str(SCRIPT)] + (args or ["TestProj", "작업 완료"]),
         input=stdin_text,
-        capture_output=True, text=True, env=env, cwd=str(SCRIPT.parent),
+        capture_output=True, text=True, env=env, cwd=str(SCRIPT.parent), check=False,
     )
 
 
@@ -624,7 +593,7 @@ def test_b9():
 def test_b10():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        tpc = "hidden-" + "topic-xyz"  # 이름·값에 secret 을 쓰면 전송 사전검사가 자격증명으로 본다
+        tpc = "hidden-" + "topic-xyz"  # NEVER: 이름·값에 secret 을 쓰지 않는다. 전송 사전검사가 자격증명으로 본다
         env = real_env(root, job=root, extra={"USER_NTFY_TOPIC": tpc})
         set_count(root, 160)
         real_run(env, final_payload(root))
@@ -657,7 +626,7 @@ def test_b12():
                                   stderr=subprocess.PIPE, text=True, env=env, cwd=str(SCRIPT.parent))
             gate = threading.Barrier(3)
 
-            def feed(process):
+            def feed(process, gate=gate, payload=payload):
                 gate.wait()
                 process.stdin.write(payload)
                 process.stdin.close()
@@ -705,10 +674,10 @@ def test_b15():
         env = real_env(root)
         (usage(root) / f"ntfy-{TEST_DAY}.halt").touch()
         present = subprocess.run(["bash", str(USAGE_SCRIPT)], capture_output=True,
-                                 text=True, env=env, cwd=str(SCRIPT.parent))
+                                 text=True, env=env, cwd=str(SCRIPT.parent), check=False)
         (usage(root) / f"ntfy-{TEST_DAY}.halt").unlink()
         absent = subprocess.run(["bash", str(USAGE_SCRIPT)], capture_output=True,
-                                text=True, env=env, cwd=str(SCRIPT.parent))
+                                text=True, env=env, cwd=str(SCRIPT.parent), check=False)
         check("B15", "NTFY_QUOTA:" in present.stdout
               and "NTFY_QUOTA:" not in absent.stdout)
 
@@ -780,15 +749,14 @@ def test_b20():
         (usage(root) / f"ntfy-{TEST_DAY}.halt").touch()
         (usage(root) / "ntfy-budget.lock").mkdir()
         real_run(env, final_payload(root))
-        # 잠금 실패분은 큐 파일이 아니라 .spill 에 쌓인다(2026-10-01 감사 D4: 큐 전체 교체에 덮이지 않게)
+        # WHY: 잠금 실패분은 큐 파일이 아니라 .spill 에 쌓인다(2026-10-01 감사 D4: 큐 전체 교체에 덮이지 않게)
         spill = usage(root) / "ntfy-queue.tsv.spill"
         spilled = spill.read_text(encoding="utf-8").splitlines() if spill.exists() else []
         check("B20", calls(root) == 0 and queue_rows(root) == [] and len(spilled) == 1
               and "result: 끝" in spilled[0])
-        # 잠금이 풀린 뒤 다음 호출이 .spill 을 큐에 합친다(덮이지 않고 보존)
         (usage(root) / "ntfy-budget.lock").rmdir()
         (usage(root) / f"ntfy-{TEST_DAY}.halt").unlink()
-        set_count(root, 200)  # 예산 소진: 배송되지 않고 큐에 남아 병합 결과를 볼 수 있다
+        set_count(root, 200)
         add_queue(root, kind="permission", msg="권한 대기", ts="2026-09-25T00:00:00Z", session="p")
         real_run(env, args=["Claude", "아무거나"], stdin_text="")
         merged = queue_rows(root)
@@ -817,12 +785,10 @@ def test_b22():
         set_count(root, 0)
         add_queue(root, kind="final", msg="result: 재실패", tries=1)
         real_run(env)
-        # 2026-10-01 감사 D5: 재시도 가능한 5xx 는 훅 경로도 tries 를 올리지 않아 줄이 남는다(수정 전: retry_drop)
         rows = queue_rows(root)
         check("B22", calls(root) == 1 and count(root) == 0 and len(rows) >= 1
               and any("result: 재실패" in row and row.split("\t")[7] == "1" for row in rows)
               and not any(row.endswith("\tretry_drop") for row in log_rows(root)))
-        # 이미 tries 2 이상으로 쌓인 옛 줄은 여전히 버린다
         add_queue(root, kind="final", msg="result: 옛줄", ts="2026-09-24T00:00:00Z", tries=2)
         real_run(env, args=["Claude", "아무거나"], stdin_text="")
         check("B22 옛줄", any(row.endswith("\tretry_drop") for row in log_rows(root))
@@ -866,5 +832,6 @@ for name, ok, detail in results:
     fail += 0 if ok else 1
 
 import sys
+
 print(f"\n{'ALL PASS' if fail == 0 else f'FAIL {fail}'} ({len(results)} cases)")
 sys.exit(1 if fail else 0)

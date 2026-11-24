@@ -41,18 +41,23 @@
 
 > **띄우는 도구 (2026-10-27 사용자 지시)**: 모델 · effort · 전송 범위는 결정 팝업(`mcp__decision-popup__ask`) 한 번에 띄운다. 한 모델이면 항목 셋이고 한 사이클에서 Grok 과 Codex 를 함께 쓰면 모델마다 모델 · effort 항목을 따로 두어 항목 다섯이다(아래 Q2). 선택지 `label` 에 모델 ID·effort 문자열을 그대로 적는다(훅이 label 만 읽는다, 아래 «결정 팝업 답도 인정한다»). AskUserQuestion 은 팝업 도구가 없는 세션에서만 쓰고, 텍스트 선택지는 사용자가 그 회차에 모바일·안 보임이라 말할 때만이다(정본 `answer-detail.md` § 문제·선택지 보고 형식 «띄우는 도구»). 이 절의 «AskUserQuestion» 표기는 그 대체 경로를 뜻한다.
 
-**Q1 모델** (2026-09-30 갱신, 아래 표의 CLI 버전·모델 목록 확인일 2026-10-17, 기준 Codex CLI 0.159.2 — 가격은 1M 토큰 입력/출력):
+**Q1 모델** (2026-11-19 갱신, 아래 표의 CLI 버전·모델 목록 확인일 2026-11-19, 기준 Codex CLI 0.165.0 — 가격은 1M 토큰 입력/출력, 컨텍스트는 API 값이고 Codex 기본 창은 따로 적는다):
 
 | 선택지 | 값 | 성격 |
 |--------|-----|------|
-| Sol 6.1 | `gpt-6.1-sol` | 2026-09-29 발표. $2/$10(캐시 입력 $0.10), 컨텍스트 1,050,000·출력 128,000. effort low·medium·high·xhigh·max(none·minimal 미지원). Codex CLI 0.159.1 번들 목록부터 기본 모델 — **CLI 0.159.1 미만에서는 거부될 수 있다**(공식 최소 버전 명시 없음, 0.159.2 이상 권장) |
+| Astra 6.2 | `gpt-6.2-astra` | 2026-11-17 발표, 가장 어려운 작업용 최상위. $8/$40(캐시 입력 $0.40, 입력이 272K 를 넘으면 할증). 컨텍스트와 effort 단계는 공식 문서에서 확인하지 못함(API 는 effort none 을 거부). 이 서버 CLI 0.165.0 에서의 동작은 사용자 확인 대기(11-16 모델 캐시에 없음, 공식 최소 버전 명시 없음, 변경 기록에는 6.2 항목 바로 아래 CLI 0.169.1 항목이 있음) |
+| Sol 6.2 | `gpt-6.2-sol` | 2026-11-17 발표, 일상 작업용. $2/$10(캐시 입력 $0.10), 컨텍스트 1,050,000·출력 128,000. effort 단계는 공식 문서에서 확인하지 못함(API 는 none 을 거부). 이 서버 CLI 동작은 Astra 6.2 와 같이 사용자 확인 대기 |
+| Sol 6.1 | `gpt-6.1-sol` | 2026-09-29 발표. $2/$10(캐시 입력 $0.10), 컨텍스트 1,050,000·출력 128,000(Codex 기본 창 500,000). effort low·medium·high·xhigh·max, Codex 모델 캐시에는 ultra 도 있다(none·minimal 미지원). Codex CLI 0.159.1 번들 목록부터 기본 모델 — **CLI 0.159.1 미만에서는 거부될 수 있다**(공식 최소 버전 명시 없음, 0.159.2 이상 권장) |
+| Terra 6.1 | `gpt-6.1-terra` | 가성비($1/$5, 캐시 입력 $0.05), 컨텍스트 1,050,000·출력 128,000(Codex 기본 창 500,000). effort none·low·medium(기본)·high·xhigh·max(API), Codex 모델 캐시에는 ultra 도 있다 — 일상 rescue·2차 진단 |
+| Astra 6 | `gpt-6-astra` | 이전 최상위($10/$50, 캐시 입력 $1.00), 컨텍스트 1,050,000·출력 128,000(Codex 기본 창 272,000). effort low·medium·high·xhigh·max(API), Codex 모델 캐시에는 ultra 도 있다 |
 | Sol 6 | `gpt-6-sol` | 2026-09-22 무렵 공개, 가격 동일(캐시 입력 $0.20). CLI 0.153.4 에서 400, 0.156.1 에서 동작(메모리 `codex-new-model-needs-cli-update`) |
+| Luna 6 | `gpt-6-luna` | 고속·저가($0.10/$0.50, 캐시 입력 $0.01), 컨텍스트 1,050,000·출력 128,000(Codex 기본 창 272,000). effort none·low·medium(기본)·high·xhigh·max — 단순 확인·빠른 왕복 |
 | Sol 5.6 | `gpt-5.6-sol` | 이전 세대 플래그십($5/$30) — 교차검증·난제·최종 판정 |
 | Terra 5.6 | `gpt-5.6-terra` | 이전 세대 가성비($2.5/$15) — 일상 rescue·2차 진단 |
 | Luna 5.6 | `gpt-5.6-luna` | 이전 세대 고속·저가($1/$6) — 단순 확인·빠른 왕복 |
 | 그 밖 | `gpt-5.5` 등 | Other로 직접 입력 (spark = `gpt-5.3-codex-spark`) |
 
-갱신 규약: `codex --version`·공식 모델 목록과 다르면 이 표를 먼저 갱신한다. 기준일 2026-09-30(GPT-6.1 Sol 발표 반영, 출처 openai.com/index/introducing-gpt-6-1-sol · github.com/openai/codex 릴리스). 새 모델을 표에 넣은 뒤에는 1) CLI 가 그 모델을 받는 버전인지 2) 플러그인 broker 가 CLI 업그레이드 뒤에 다시 떴는지(§2.1 의 2번)를 확인한다. 로컬 `~/.codex/models_cache.json` 의 `client_version` 이 설치된 CLI 보다 낮으면 옛 broker 가 목록을 받아 온 것이다(09-30 실측: 설치 0.156.1, 캐시 0.144.1, broker 08-25 기동).
+갱신 규약: `codex --version`·공식 모델 목록과 다르면 이 표를 먼저 갱신한다. 기준일 2026-11-19(GPT-6.2 Astra · Sol 발표 반영, 출처 openai.com/index/introducing-gpt-6-2-astra-sol · developers.openai.com/api/docs/models · developers.openai.com/codex/changelog, Codex 기본 창과 ultra 는 이 서버 `~/.codex/models_cache.json` 11-16 판). 새 모델을 표에 넣은 뒤에는 1) CLI 가 그 모델을 받는 버전인지 2) 플러그인 broker 가 CLI 업그레이드 뒤에 다시 떴는지(§2.1 의 2번)를 확인한다. 로컬 `~/.codex/models_cache.json` 의 `client_version` 이 설치된 CLI 보다 낮으면 옛 broker 가 목록을 받아 온 것이다(09-30 실측: 설치 0.156.1, 캐시 0.144.1, broker 08-25 기동).
 
 **Grok 모델 (Grok 호출 시 Q1 보기, 2026-10-01 갱신)**: `grok-4.7`(기본)·`grok-4.6`. Grok 4.7 = 모델 ID `grok-4.7`, 2026-09 하순 공개, effort low·medium·high·xhigh, CLI 1.0.13 이상 필요(미만은 서버가 HTTP 426 으로 거부, 업데이트는 사용자 `grok update`).
 

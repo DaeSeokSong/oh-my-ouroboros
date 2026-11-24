@@ -1,6 +1,6 @@
 """Extract searcher sources (URL + short excerpt) from a subagent transcript into a detail document.
 
-Why (agent consolidation step 1, user decision S1 = 1, 2026-11-07): searcher has no Write tool, so the detail file
+searcher has no Write tool, so the detail file
 is not the model's words but the TOOL RESULTS recorded in the transcript. Excerpts are therefore letter-for-letter
 what was actually read, and main only keeps a summary plus this file's path.
 Usage: searcher_detail.py --transcript <agent-<id>.jsonl> --out <dir> [--max-excerpt 300] [--max-sources 30]
@@ -13,6 +13,7 @@ HTML comment markers broken so the banner/end marker cannot be forged, one `> ` 
 Local file reads (no `url:` head line) never get an excerpt, and neither does any read whose path looks like a
 credential location; so secrets that the name list misses are still not copied. Mode 0600, written via temp file +
 rename so a symlink at the target is replaced, never followed.
+REF: knowledge/harness/code-history/scripts__searcher_detail.py.md
 """
 import argparse
 import contextlib
@@ -42,41 +43,35 @@ END_MARK = "<!-- END UNTRUSTED -->"
 
 
 def dropped(c):
-    """Return True for characters removed from untrusted text: Cc/Cf/Co/Cs, variation selectors, tag characters."""
     o = ord(c)
     return (unicodedata.category(c) in ("Cc", "Cf", "Co", "Cs") or 0xFE00 <= o <= 0xFE0F
             or 0xE0000 <= o <= 0xE007F or 0xE0100 <= o <= 0xE01EF)
 
 
 def clean(text):
-    """Collapse whitespace first, then drop invisible characters, re-collapse, strip, neutralize backticks."""
     text = "".join(c for c in re.sub(r"\s+", " ", text) if not dropped(c))
     text = re.sub(" {2,}", " ", text).strip().replace("`", "\N{MODIFIER LETTER PRIME}")
     return text.replace("<!--", "<!- -").replace("-->", "- ->")
 
 
 def tool_label(name):
-    """Return name if it is a known tool name, else "other" (keeps model-chosen strings out of stdout and the file)."""
     ok = isinstance(name, str) and TOOL_NAME.fullmatch(name) and (
         name in KNOWN_TOOLS or (name.startswith("mcp__") and any(k in name for k in MCP_KEYS)))
     return name if ok else "other"
 
 
 def is_secret_path(path):
-    """Return True if the path has a credential directory component or a secret-looking file name."""
     parts = path.replace("\\", "/").lower().split("/")
     return not SECRET_DIRS.isdisjoint(parts) or any(fnmatch.fnmatchcase(parts[-1], p) for p in SECRET_NAMES)
 
 
 def result_text(content):
-    """Return a tool_result content (string or block list) as plain text, ignoring non-text blocks, capped at 64K chars."""
     if isinstance(content, list):
         content = "\n".join(b["text"] for b in content if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str))
     return content[:MAX_RESULT] if isinstance(content, str) else ""
 
 
 def read_transcript(path):
-    """Return (tool_use id -> (name, input), tool_use id -> (text, is_error), bad line count, parsed line count)."""
     uses, results, bad, ok = {}, {}, 0, 0
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -104,7 +99,6 @@ def read_transcript(path):
 
 
 def trim_url(u):
-    """Strip trailing punctuation and closing parentheses that outnumber opening ones (keeps Foo_(bar) whole)."""
     end, opens, closes = len(u), u.count("("), u.count(")")
     while end:
         ch = u[end - 1]
@@ -117,7 +111,6 @@ def trim_url(u):
 
 
 def find_urls(text):
-    """Return up to 10 distinct http(s) URLs found in text, in order of appearance, without scanning past the tenth."""
     found = {}
     for m in URL.finditer(text):
         found[trim_url(m.group())] = None
@@ -127,7 +120,6 @@ def find_urls(text):
 
 
 def extract(name, inp, text):
-    """Return (source parts, excerpt source text) for one tool call, or None if the tool does not yield a source."""
     if name == "WebFetch":
         return ([str(inp["url"])], text) if inp.get("url") else None
     if name == "WebSearch":
@@ -151,7 +143,6 @@ def extract(name, inp, text):
 
 
 def main():
-    """Run the CLI and return the process exit code."""
     ap = argparse.ArgumentParser(description="Extract searcher sources from a subagent transcript.")
     ap.add_argument("--transcript", required=True)
     ap.add_argument("--out", required=True)

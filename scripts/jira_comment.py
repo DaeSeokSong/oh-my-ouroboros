@@ -2,19 +2,15 @@
 # ruff: noqa: EXE001
 """Jira 댓글 공용 게시 스크립트 (REST v3, 표준 라이브러리만).
 
-■ 왜 이 스크립트인가 (판단 근거 이식 — 2026-10-01 실사고)
-한 이슈의 댓글이 compact 뒤 **옛 스킬 사본만 보고** 쓰여 형식이 어긋났고, 사용자의
-미리보기 승인 없이 게시됐다. 형식 규칙은 스킬을 불러야만 보이고, «REST 스크립트로 쓴다»는
-규칙은 있는데 공용 스크립트가 없어 세션마다 즉석 코드를 짰기 때문이다. 그래서
-  (1) 댓글을 쓰는 순간(preview) 형식 규칙 절을 **그때 스킬 파일에서 읽어** 화면에 찍고,
-  (2) 사용자가 본 미리보기와 **같은 본문**만 게시되게 한다(본문 해시 스탬프).
-★스탬프는 «사람이 승인했다»는 증거가 아니다. «이 본문으로 preview 를 돌렸다»는 보장일 뿐이며,
+preview 는 형식 규칙 절을 그때 스킬 파일(skills/commit/SKILL.md)에서 읽어 화면에 찍고, 사용자가 본 미리보기와
+같은 본문만 게시되게 한다(본문 해시 스탬프).
+NEVER: 스탬프를 «사람이 승인했다»는 증거로 쓰지 않는다. «이 본문으로 preview 를 돌렸다»는 보장일 뿐이며,
   승인은 여전히 사용자에게 미리보기를 보이고 받아야 한다.
 
 ■ 안전 규약
-  ⓐ 자격증명은 `~/.atlassian_token`(1줄=이메일 / 2줄=토큰)만. 명령줄·출력·예외·파일에 쓰지 않는다.
-  ⓑ 수정은 notifyUsers=false, 수정 전 현재 ADF 를 백업한다.
-  ⓒ 이미지(media)가 든 댓글의 글자는 --patches 로만 고친다(텍스트 노드만 치환, media id 집합 불변).
+  1) 자격증명은 `~/.atlassian_token`(1줄=이메일 / 2줄=토큰)만. 명령줄·출력·예외·파일에 쓰지 않는다.
+  2) 수정은 notifyUsers=false, 수정 전 현재 ADF 를 백업한다.
+  3) 이미지(media)가 든 댓글의 글자는 --patches 로만 고친다(텍스트 노드만 치환, media id 집합 불변).
      새 그림은 --figures 로만 넣는다(글자 블록·인라인 카드 불변, 그림만 추가). 이 경로만 이슈 첨부를 새로 올린다(외부 쓰기).
      그림 파일은 «그림 목록 JSON 이 있는 폴더 안»만 허용한다(절대 경로·..·밖을 가리키는 링크 거부; 민감 영상 PNG 유출 방지).
      올리는 첨부 이름은 <원래이름>-<sha256 앞 12자>.png 로 내용에 묶고(재사용도 그 이름+크기가 같을 때만), media alt 는 원래 이름이다.
@@ -23,27 +19,19 @@
      파일당 50MiB·합계 100MiB·한 번에 10개까지, 빈 파일 불가, 확장자와 머리 형식이 맞아야 한다.
      그림·첨부 목록 JSON 은 .scratch 아래 폴더에 둔다(폴더 안 제한이 민감 자료 폴더에 둔 목록으로 무력화되는 것을 막는다). 올라갈 이름은 <이름>-<sha256 앞 12자>.<확장자>,
      올린 뒤 첨부 목록을 다시 읽어 «이름+크기» 가 있는지 대조한다(rc 4). 첨부를 지우거나 바꾸는 기능은 없다.
-     글 파일은 미리보기에 첫 줄(120자)·줄 수·열 수(json 은 키 이름)를 보이고 환자 식별 낱말이 있으면 경고한다(막지는 않음):
-     환자 식별 열이 든 표를 승인 전에 알아보게 하려는 것이다.
-  ⓓ 치환 앵커는 텍스트 노드에서 정확히 1회 일치할 때만 적용한다.
-  ⓔ 게시 뒤 재조회해 텍스트 블록 문자열·인라인 카드 수·media id 를 기계 대조한다.
-  ⓕ 첨부 내용 주소의 303 Location 은 서명된 미디어 주소다. 리다이렉트를 따라가지 않고(인증 머리글이 다른 호스트로 나가지
+     글 파일은 미리보기에 첫 줄(120자)·줄 수·열 수(json 은 키 이름)를 보이고 환자 식별 낱말이 있으면 경고한다(막지는 않음).
+  4) 치환 앵커는 텍스트 노드에서 정확히 1회 일치할 때만 적용한다.
+  5) 게시 뒤 재조회해 텍스트 블록 문자열·인라인 카드 수·media id 를 기계 대조한다.
+  6) 첨부 내용 주소의 303 Location 은 서명된 미디어 주소다. 리다이렉트를 따라가지 않고(인증 머리글이 다른 호스트로 나가지
      않게) UUID 만 꺼내며, Location 문자열은 출력·기록·예외 문구에 넣지 않는다.
 
-■ 그림 넣기의 스탬프는 왜 «그림 계획»에 묶는가 (2026-10-13 판단 근거)
-미리보기는 Jira 에 아무것도 올리지 않으므로 최종 ADF 의 미디어 UUID 를 모른다(UUID 는 첨부를 올려야 생긴다).
-그래서 본문 스탬프처럼 «게시할 최종 ADF» 에 묶을 수 없다. 대신 «승인된 파일 내용(sha256·크기·가로세로·이름) + 붙을 자리
-(anchor) + 그때의 댓글 상태(current_sha)» 에 묶는다. 미리보기 뒤 파일이 바뀌거나 댓글이 바뀌면 스탬프가 맞지 않아 rc 3 으로 멈춘다.
-업로드 전에 스탬프를 소모(claim)해 동시 실행의 중복 업로드를 막고, 반영 여부가 불명인 실패는 스탬프를 소모한 채 끝낸다
-(다시 preview 하면 이미 올라간 첨부는 «기존 첨부 재사용» 으로 표시된다).
-
-■ 표 (2026-11-06 사용자 지시, intent/2026-11-06-jira-comment-tables.md)
+■ 표
 머리 줄 `| a | b |` 바로 다음 줄이 `|---|---|`(콜론 허용·정렬은 무시)이면 표다. 이어지는 `|` 줄이 본문 행이고 셀 안 `\\|` 는 글자 `|` 다.
 머리 행은 tableHeader, 나머지는 tableCell(각 칸=문단 1개, 글은 기존 인라인 처리). 본문 행의 열 수가 머리와 다르면 표로 바꾸지 않고
 종전처럼 글 문단으로 두며 preview 가 경고한다. 게시 뒤 되읽기는 표 개수·표마다 행 수·행마다 셀 수를 먼저 대조한다.
 
-■ 표 행 추가 (2026-11-06, intent/2026-11-06-jira-comment-table-row-append.md)
-그림이 든 댓글은 --patches 로만 고칠 수 있는데 글자 치환은 표 행을 만들지 못한다. 그래서 치환 파일에 표 행 추가 항목
+■ 표 행 추가
+치환 파일에 표 행 추가 항목
 `{"table_anchor": "<표 첫 행 첫 칸 글>", "append_rows": [["칸1", "칸2"], ...]}` 을 글자 치환 항목과 섞어 둘 수 있다(한 항목에 두 종류 키 불가).
 표는 첫 행 첫 칸 글자(앞뒤 공백 무시)가 table_anchor 와 정확히 같은 것 하나로 찾고(0개·2개 이상 rc 2), 병합 칸(colspan·rowspan > 1)이 든 표와
 첫 행 칸 수와 다른 행은 rc 2 다. 행은 맨 아래에만 붙고 칸은 tableCell + 문단(기존 인라인 처리)이다. 보내기 전에 «붙인 행 말고는 구조·글자가
@@ -52,33 +40,34 @@
 ■ 종료 코드  0 성공 · 2 입력·형식 절·앵커 오류 · 3 스탬프 없음 · 4 게시 후 대조 실패 · 5 HTTP 오류
 
 사용:
-  # ① 댓글 구조 보기 (읽기만)
+  # 1) 댓글 구조 보기 (읽기만)
   python3 ~/.claude/scripts/jira_comment.py get --issue ABC-972 --comment-id 10001 --save adf.json
-  # ② 미리보기 (형식 규칙 출력 + 스탬프 생성). 치환은 --patches 치환.json
+  # 2) 미리보기 (형식 규칙 출력 + 스탬프 생성). 치환은 --patches 치환.json
   python3 ~/.claude/scripts/jira_comment.py preview --issue ABC-972 --body-file 본문.md
-  # ③ 새 댓글 게시 (사용자 승인 뒤, 같은 본문 파일로)
+  # 3) 새 댓글 게시 (사용자 승인 뒤, 같은 본문 파일로)
   python3 ~/.claude/scripts/jira_comment.py post --issue ABC-972 --body-file 본문.md
-  # ④ 기존 댓글 수정 (preview 때 --comment-id 도 같이 줘야 스탬프가 맞는다)
+  # 4) 기존 댓글 수정 (preview 때 --comment-id 도 같이 줘야 스탬프가 맞는다)
   python3 ~/.claude/scripts/jira_comment.py update --issue ABC-972 --comment-id 10001 --patches 치환.json
-  # ⑤ 기존 댓글에 새 그림(PNG) 넣기. 그림.json = [{"anchor": "문단 첫머리 글귀", "file": "fig1.png"}, ...] (1~20개,
+  # 5) 기존 댓글에 새 그림(PNG) 넣기. 그림.json = [{"anchor": "문단 첫머리 글귀", "file": "fig1.png"}, ...] (1~20개,
   #    file 은 그림.json 이 있는 폴더 안의 상대 경로만). preview 는 읽기만 하고, update 가 첨부를 올리고(같은 내용 이름·크기가 있으면 재사용)
   #    anchor 문단 바로 뒤에 mediaSingle 을 넣는다. preview 때 --comment-id 도 같이 줘야 한다.
   python3 ~/.claude/scripts/jira_comment.py preview --issue ABC-972 --comment-id 10001 --figures 그림.json
   python3 ~/.claude/scripts/jira_comment.py update --issue ABC-972 --comment-id 10001 --figures 그림.json
-  # ⑥ 이슈에 일반 파일 첨부. 목록.json = [{"file": "a.csv"}, ...] (1~10개, 목록 폴더 안 상대 경로만). preview 는 첨부 목록 조회만
+  # 6) 이슈에 일반 파일 첨부. 목록.json = [{"file": "a.csv"}, ...] (1~10개, 목록 폴더 안 상대 경로만). preview 는 첨부 목록 조회만
   #    하고 스탬프를 만들며, attach 는 사용자 승인 뒤 같은 목록으로 올린다(같은 이름·크기가 있으면 재사용). --comment-id 불가.
   python3 ~/.claude/scripts/jira_comment.py preview --issue ABC-988 --attach 목록.json
   python3 ~/.claude/scripts/jira_comment.py attach --issue ABC-988 --attach 목록.json
-  # ⑦ 그림 교체 + 글자 치환: preview/update --patches 치환.json --figures 그림.json (그림 항목에 "replace": true).
+  # 7) 그림 교체 + 글자 치환: preview/update --patches 치환.json --figures 그림.json (그림 항목에 "replace": true).
   #    치환을 먼저 적용하고 자리 문단은 «치환 뒤 글» 로 찾는다(바뀐 문장을 자리로 삼을 수 있어야 하므로). replace 항목은 자리 문단
   #    바로 뒤 mediaSingle 을 통째로 새 그림으로 바꾼다(없으면 rc 2). 보내기 전 검사: 글자·인라인 카드는 치환 목록이 바꾼 것 말고 불변,
   #    그림 id = 기존 − 교체된 옛 id + 새 UUID. 스탬프는 항목별 replace 와 치환 목록 내용에 묶인다. 옛 첨부는 지우지 않는다.
   python3 ~/.claude/scripts/jira_comment.py preview --issue ABC-988 --comment-id 32209 --patches 치환.json --figures 그림.json
   python3 ~/.claude/scripts/jira_comment.py update --issue ABC-988 --comment-id 32209 --patches 치환.json --figures 그림.json
-  # ⑧ 내 미완료 이슈 목록 (읽기 전용, 스탬프 무관). --max 기본 10, 1~30 으로 자른다. 오류는 rc 2 (--json 이면 stdout 에 {"error": ...})
+  # 8) 내 미완료 이슈 목록 (읽기 전용, 스탬프 무관). --max 기본 10, 1~30 으로 자른다. 오류는 rc 2 (--json 이면 stdout 에 {"error": ...})
   python3 ~/.claude/scripts/jira_comment.py mine [--json] [--max N]
   # 표 행 추가: 치환.json 에 [{"table_anchor": "판", "append_rows": [["원본 판1", "0.91", "0.88"]]}] 항목을 둔다(그림이 든 댓글도 가능).
   python3 ~/.claude/scripts/jira_comment.py preview --issue ABC-1004 --comment-id 32329 --patches 치환.json
+REF: knowledge/harness/code-history/scripts__jira_comment.py.md
 """
 
 import argparse
@@ -118,8 +107,7 @@ SCRATCH_DIR = ".scratch"
 PREVIEW_SCAN, PREVIEW_CHARS, PREVIEW_KEYS = 64 * 1024, 120, 10
 PHI_WORDS = ("name", "birth", "dob", "mrn", "ssn", "patient", "phone", "address", "email",
              "이름", "성명", "생년", "주민", "환자", "전화", "주소", "등록번호")
-# Jira 첨부 API 가 요구하는 XSRF 검사 해제 머리글이다(자격증명이 아닌 공개 고정값). «이름: "값"» 모양으로 쓰면
-# 커밋 검사의 비밀값 무늬에 오탐되므로 이름과 값을 따로 둔다(2026-10-13 실측).
+# NEVER: 이름과 값을 한 덩어리로 합쳐 쓰지 않는다(커밋 검사의 비밀값 무늬에 오탐된다, 2026-10-13 실측). 자격증명이 아닌 공개 고정값이다.
 XSRF_HEADER, XSRF_VALUE = "X-Atlassian-Token", "no-check"
 XSRF_OPT_OUT = {XSRF_HEADER: XSRF_VALUE}
 ISSUE_RE = re.compile(r"[A-Z][A-Z0-9]+-[0-9]+")
@@ -141,7 +129,7 @@ PROCEDURE = (
 )
 LIST_RE = re.compile(r"^(\s*)(\d+\.|[*-])\s+(\S.*)$")
 FENCE_RE = re.compile(r"^(\s*)```")
-TABLE_SEP_CELL_RE = re.compile(r":?-+:?")   # GFM 구분 줄의 한 칸(정렬 콜론은 허용하되 무시한다)
+TABLE_SEP_CELL_RE = re.compile(r":?-+:?")
 INLINE_RE = re.compile(
     r"`(?P<code>[^`]+)`|\*\*(?P<bold>.+?)\*\*"
     r"|\[(?P<ltext>[^\]]+)\]\((?P<lurl>https?://[^)\s]+)\)|(?P<url>https?://[^\s<>)\]]+)"
@@ -149,15 +137,12 @@ INLINE_RE = re.compile(
 
 
 class Fail(Exception):
-    """Carries an exit code and a user-facing message."""
-
     def __init__(self, rc, msg):
         super().__init__(msg)
         self.rc, self.msg = rc, msg
 
 
 def site():
-    """Return the validated Jira site base URL (https, *.atlassian.net only)."""
     url = os.environ.get("JIRA_SITE", "https://your-company-prod.atlassian.net").rstrip("/")
     p = urllib.parse.urlparse(url)
     if p.scheme != "https" or not (p.hostname or "").endswith(".atlassian.net") or p.path or p.query or p.fragment:
@@ -166,7 +151,6 @@ def site():
 
 
 def read_credentials():
-    """Read (email, token) from ~/.atlassian_token (warns once if the file is group/other accessible)."""
     global _cred_warned
     path = os.path.expanduser("~/.atlassian_token")
     try:
@@ -187,20 +171,16 @@ def read_credentials():
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Refuse redirects so the Authorization header can never reach another host."""
-
+    # NEVER: follow a redirect (the Authorization header must never reach another host).
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        """Never build a follow-up request."""
         return
 
 
 def _open(req, timeout=30):
-    """Open a request without following redirects."""
     return urllib.request.build_opener(NoRedirect).open(req, timeout=timeout)
 
 
 def http(method, url, body=None):
-    """Send one request and return (status, parsed json); status 0 means connection failure."""
     email, token = read_credentials()
     headers = {"Authorization": "Basic " + base64.b64encode(f"{email}:{token}".encode()).decode(),
                "Accept": "application/json"}
@@ -215,7 +195,7 @@ def http(method, url, body=None):
                 status, raw = r.status, r.read(MAX_READ + 1)
         except urllib.error.HTTPError as e:
             status, raw = e.code, e.read(MAX_READ + 1)
-    except Exception as e:   # noqa: BLE001 — timeouts, IncompleteRead etc. all mean "no usable response"
+    except Exception as e:   # noqa: BLE001
         return 0, {"_raw": f"연결 실패: {type(e).__name__}"}
     if len(raw) > MAX_READ:
         return 0, {"_raw": "응답이 5MB 를 넘습니다"}
@@ -227,7 +207,6 @@ def http(method, url, body=None):
 
 
 def http_raw(method, url, data=None, headers=None, timeout=30):
-    """Send one raw-bytes request via _open; return (status, lowercase headers, parsed body); status 0 means connection failure."""
     email, token = read_credentials()
     hd = {"Authorization": "Basic " + base64.b64encode(f"{email}:{token}".encode()).decode(),
           "Accept": "application/json", **(headers or {})}
@@ -236,9 +215,9 @@ def http_raw(method, url, data=None, headers=None, timeout=30):
         try:
             with _open(req, timeout) as r:
                 status, hdrs, raw = r.status, r.headers, r.read(MAX_READ + 1)
-        except urllib.error.HTTPError as e:   # 리다이렉트 거부(NoRedirect)도 여기로 온다: 상태와 머리글만 읽는다
+        except urllib.error.HTTPError as e:
             status, hdrs, raw = e.code, e.headers, e.read(MAX_READ + 1)
-    except Exception as e:   # noqa: BLE001 — timeouts, IncompleteRead etc. all mean "no usable response"
+    except Exception as e:   # noqa: BLE001
         return 0, {}, {"_raw": f"연결 실패: {type(e).__name__}"}
     if len(raw) > MAX_READ:
         return 0, {}, {"_raw": "응답이 5MB 를 넘습니다"}
@@ -251,12 +230,10 @@ def http_raw(method, url, data=None, headers=None, timeout=30):
 
 
 def http_fail(status, data):
-    """Build the rc-5 failure for an HTTP error (status + first 300 chars of the body)."""
     return Fail(5, f"HTTP {status}: {json.dumps(data, ensure_ascii=False)[:300]}")
 
 
 def inline(text, marks=()):
-    """Convert inline markdown (bold, code, links, bare URLs) to ADF inline nodes."""
     nodes, pos = [], 0
 
     def txt(s, extra=(), base=marks):
@@ -286,7 +263,6 @@ def inline(text, marks=()):
 
 
 def table_cells(line):
-    """Split one GFM table row into cell strings (outer pipes dropped, `\\|` kept as a literal pipe)."""
     s = line.strip().removeprefix("|")
     if s.endswith("|") and not s.endswith("\\|"):
         s = s[:-1]
@@ -294,11 +270,6 @@ def table_cells(line):
 
 
 def parse_table(lines, i):
-    """Parse the GFM table whose header line is lines[i]; return (rows, next index, warning or None).
-
-    rows is None when lines[i] starts no table (header line must be followed by a `|---|---|` line with the same column count)
-    or when a body row's column count differs from the header (then the warning says why; the caller keeps the old paragraph handling).
-    """
     if i + 1 >= len(lines) or not lines[i].strip().startswith("|") or not lines[i + 1].strip().startswith("|"):
         return None, i, None
     head, sep = table_cells(lines[i]), table_cells(lines[i + 1])
@@ -315,21 +286,18 @@ def parse_table(lines, i):
 
 
 def table_row(cells, header=False):
-    """Build an ADF tableRow (tableHeader cells when header, else tableCell; each cell holds one paragraph of inline nodes)."""
     return {"type": "tableRow", "content": [
         {"type": "tableHeader" if header else "tableCell", "content": [{"type": "paragraph", "content": inline(c)}]}
         for c in cells]}
 
 
 def table_node(rows):
-    """Build an ADF table (first row = tableHeader cells, the rest tableCell)."""
     return {"type": "table", "attrs": {"isNumberColumnEnabled": False, "layout": "default"}, "content": [
         table_row(row, r == 0) for r, row in enumerate(rows)]}
 
 
 def md_to_adf(md, warns=None):
-    """Convert the supported markdown subset to an ADF doc (conversion warnings, if any, are appended to the warns list)."""
-    content, stack = [], []   # stack entries: (indent, kind, list node)
+    content, stack = [], []
     lines, i = md.splitlines(), 0
 
     while i < len(lines):
@@ -388,7 +356,6 @@ def md_to_adf(md, warns=None):
 
 
 def inline_text(nodes):
-    """Render ADF inline nodes as markdown-like text."""
     parts = []
     for n in nodes:
         t = n["type"]
@@ -411,7 +378,6 @@ def inline_text(nodes):
 
 
 def render_blocks(nodes, depth, out):
-    """Append indented-bullet text lines for ADF block nodes to out."""
     for n in nodes:
         t, pad = n["type"], "  " * depth
         if t in ("bulletList", "orderedList"):
@@ -449,14 +415,12 @@ def render_blocks(nodes, depth, out):
 
 
 def adf_to_text(adf):
-    """Render an ADF doc as the indented-bullet preview text."""
     out = []
     render_blocks(adf.get("content", []), 0, out)
     return "\n".join(out)
 
 
 def fingerprint(adf):
-    """Return (text blocks, inline card count, sorted media ids) for before/after comparison."""
     blocks, cards, media = [], 0, []
 
     def walk(n):
@@ -477,7 +441,6 @@ def fingerprint(adf):
 
 
 def table_shapes(adf):
-    """Return the cell count of every row for each table in document order (e.g. [[3, 3, 3]])."""
     shapes = []
 
     def walk(n):
@@ -491,7 +454,6 @@ def table_shapes(adf):
 
 
 def unsupported(adf):
-    """List node and mark types in the ADF that the markdown subset cannot express."""
     found = set()
 
     def walk(n):
@@ -506,7 +468,6 @@ def unsupported(adf):
 
 
 def merge_text(items):
-    """Merge adjacent text nodes that carry identical marks."""
     out = []
     for n in items:
         if out and n.get("type") == "text" and out[-1].get("type") == "text" and n.get("marks") == out[-1].get("marks"):
@@ -517,13 +478,12 @@ def merge_text(items):
 
 
 def diff(sent, got, path="doc"):
-    """Return the first path where got differs from sent (extra attributes on got are ignored), else None."""
     if isinstance(sent, dict):
         if not isinstance(got, dict):
             return path
         for k, v in sent.items():
             if k not in got:
-                if v == []:   # 서버가 빈 칸(빈 문단)의 content 를 생략해 돌려주는 것은 같은 뜻이다
+                if v == []:
                     continue
                 return f"{path}.{k}"
             d = diff(v, got[k], f"{path}.{k}")
@@ -546,12 +506,10 @@ def diff(sent, got, path="doc"):
 
 
 def esc(s):
-    """Escape control and other non-printable characters so they cannot reach the terminal raw."""
     return "".join(c if c.isprintable() else c.encode("unicode_escape").decode() for c in s)
 
 
 def text_nodes(node):
-    """Yield every ADF text node in document order."""
     if node.get("type") == "text":
         yield node
     for c in node.get("content", []):
@@ -559,7 +517,6 @@ def text_nodes(node):
 
 
 def valid_patch(p):
-    """Return True for a text patch {anchor, new} or a row patch {table_anchor, append_rows} (not both kinds of keys)."""
     if not isinstance(p, dict):
         return False
     if "table_anchor" in p or "append_rows" in p:
@@ -571,7 +528,6 @@ def valid_patch(p):
 
 
 def load_patches(path):
-    """Load and validate the patch file: a list of text patches {anchor, new} and/or row patches {table_anchor, append_rows}."""
     try:
         with open(path, encoding="utf-8") as f:
             patches = json.load(f)
@@ -585,7 +541,6 @@ def load_patches(path):
 
 
 def table_nodes(node):
-    """Yield every ADF table node in document order."""
     if node.get("type") == "table":
         yield node
     for c in node.get("content", []):
@@ -593,7 +548,6 @@ def table_nodes(node):
 
 
 def skeleton(adf):
-    """Return a copy of the ADF with every text node's text blanked (structure and marks only)."""
     out = copy.deepcopy(adf)
     for n in text_nodes(out):
         n["text"] = ""
@@ -601,12 +555,6 @@ def skeleton(adf):
 
 
 def check_rows_only_added(cur, new, patches):
-    """Raise rc 2 unless new = cur + the text patches + exactly the requested appended rows (no-op without row patches).
-
-    Appended rows are the extra trailing rows of each table (positional: patches never add or remove tables). Cutting them
-    off must leave cur's structure unchanged, with at most one changed text block per text patch, and the cut rows must equal
-    the requested rows as a multiset (so a wrong table, a stray edit or a moved row cannot slip through).
-    """
     row_patches = [p for p in patches if "append_rows" in p]
     if not row_patches:
         return
@@ -628,11 +576,6 @@ def check_rows_only_added(cur, new, patches):
 
 
 def apply_patches(adf, patches):
-    """Apply patches in file order; return (new adf, [(before, after)]).
-
-    Text patch: the anchor must match exactly once in a text node. Row patch: append rows to the one table whose first
-    row's first cell text equals table_anchor (no merged cells, every row as wide as the table's first row).
-    """
     adf, changes = copy.deepcopy(adf), []
     for p in patches:
         if "append_rows" in p:
@@ -642,7 +585,6 @@ def apply_patches(adf, patches):
             if len(tables) != 1:
                 raise Fail(2, f"표 머리 첫 칸 «{esc(anchor)[:40]}»과 일치하는 표가 {len(tables)}개입니다(정확히 1개여야 합니다)")
             table = tables[0]
-            # 정수 1(또는 키 없음)이 아닌 colspan·rowspan 은 null·문자열 포함 병합 칸으로 보고 거부한다(칸 수 계산이 어긋나지 않게)
             if any((c.get("attrs") or {}).get(k, 1) != 1
                    for r in table["content"] for c in r.get("content", []) for k in ("colspan", "rowspan")):
                 raise Fail(2, f"병합 칸(colspan·rowspan)이 든 표에는 행을 붙이지 않습니다: «{esc(anchor)[:40]}»")
@@ -668,7 +610,6 @@ def apply_patches(adf, patches):
 
 
 def read_body(path):
-    """Read the markdown body file."""
     try:
         return Path(path).read_text(encoding="utf-8")
     except (OSError, ValueError):
@@ -676,7 +617,6 @@ def read_body(path):
 
 
 def load_rules():
-    """Read the comment-format section (title up to the next ##/### heading) from the skill file at call time."""
     try:
         lines = SKILL_PATH.read_text(encoding="utf-8").splitlines()
     except (OSError, ValueError):
@@ -691,7 +631,6 @@ def load_rules():
 
 
 def format_warnings(adf):
-    """Return non-blocking format warnings for the ADF."""
     warns, top = [], adf.get("content", [])
     if not any(text for text in fingerprint(adf)[0]) and not fingerprint(adf)[1]:
         warns.append("본문이 비었습니다.")
@@ -711,28 +650,23 @@ def format_warnings(adf):
 
 
 def stamp_dir():
-    """Return the stamp directory path."""
     return os.path.expanduser("~/.claude/_audit/jira-preview")
 
 
 def canonical(adf):
-    """Return the normalized JSON string of an ADF doc."""
     return json.dumps(adf, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
 def stamp_hash(issue, comment_id, adf):
-    """Return the sha256 binding site, issue key, comment id (or 'new'), and the ADF to publish."""
-    # 사이트도 묶는다: 미리보기 뒤 JIRA_SITE 를 바꿔 다른 사이트의 동명 이슈에 게시하는 길을 막는다(2026-10-01 감사).
+    # WHY: 사이트도 묶는다: 미리보기 뒤 JIRA_SITE 를 바꿔 다른 사이트의 동명 이슈에 게시하는 길을 막는다(2026-10-01 감사).
     return hashlib.sha256(f"{site()}\n{issue}\n{comment_id or 'new'}\n{canonical(adf)}".encode()).hexdigest()
 
 
 def current_sha(cur):
-    """Return the sha256 of a comment's current ADF."""
     return hashlib.sha256(canonical(cur).encode("utf-8")).hexdigest()
 
 
 def write_private(path, text):
-    """Write a 0600 file without following symlinks."""
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -743,7 +677,6 @@ def write_private(path, text):
 
 
 def ensure_stamp_dir():
-    """Create the 0700 stamp directory and return its path."""
     d = stamp_dir()
     try:
         os.makedirs(d, mode=0o700, exist_ok=True)
@@ -754,7 +687,6 @@ def ensure_stamp_dir():
 
 
 def prune_old():
-    """Delete stamps older than 7 days and backups older than 30 days."""
     d, now = stamp_dir(), time.time()
     try:
         names = os.listdir(d)
@@ -763,7 +695,7 @@ def prune_old():
     for n in names:
         p = os.path.join(d, n)
         try:
-            # `.json.claimed` 는 게시 도중 프로세스가 죽어 남은 스탬프 잔여 파일이다(2026-10-01 P6 검수: 종전엔 영원히 쌓였다).
+            # WHY: `.json.claimed` 는 게시 도중 프로세스가 죽어 남은 스탬프 잔여 파일이다(2026-10-01 P6 검수: 종전엔 영원히 쌓였다).
             if n.endswith((".json", ".json.claimed")) and now - os.lstat(p).st_mtime > (BACKUP_KEEP if n.startswith("backup-") else STAMP_KEEP):
                 os.remove(p)
         except OSError:
@@ -771,14 +703,12 @@ def prune_old():
 
 
 def write_stamp(h, issue, comment_id, source, cur_sha=None):
-    """Record that a preview was run for this exact body (and, for edits, this exact current comment)."""
     rec = {"issue": issue, "comment_id": comment_id, "time": datetime.now().isoformat(), "source": str(source),
            "current_sha": cur_sha}
     write_private(os.path.join(ensure_stamp_dir(), f"{h}.json"), json.dumps(rec, ensure_ascii=False))
 
 
 def check_stamp(h, cur_sha=None):
-    """Raise rc 3 unless a valid stamp (readable, not future, under 6 hours, same current comment) exists."""
     path = os.path.join(stamp_dir(), f"{h}.json")
     try:
         with open(path, encoding="utf-8") as f:
@@ -794,7 +724,6 @@ def check_stamp(h, cur_sha=None):
 
 
 def claim_stamp(h):
-    """Atomically take the stamp (rename) so only one concurrent post/update can proceed; rc3 for the loser."""
     p = os.path.join(stamp_dir(), f"{h}.json")
     try:
         os.rename(p, f"{p}.claimed")
@@ -804,7 +733,6 @@ def claim_stamp(h):
 
 
 def drop_stamp(h, restore=False):
-    """Consume the claimed stamp (or, for a definite non-applied failure, give it back)."""
     p = os.path.join(stamp_dir(), f"{h}.json")
     try:
         if restore:
@@ -816,7 +744,6 @@ def drop_stamp(h, restore=False):
 
 
 def fetch_comment(issue, comment_id):
-    """GET one comment and return the response json."""
     status, data = http("GET", f"{site()}/rest/api/3/issue/{issue}/comment/{comment_id}")
     if status != 200:
         raise http_fail(status, data)
@@ -826,7 +753,6 @@ def fetch_comment(issue, comment_id):
 
 
 def send_claimed(h, method, url, body):
-    """Claim the stamp, then send; an exception before any response (e.g. missing credentials) gives the stamp back."""
     claim_stamp(h)
     try:
         return http(method, url, body)
@@ -836,7 +762,6 @@ def send_claimed(h, method, url, body):
 
 
 def check_write(status, data, ok, h):
-    """Return the written comment id, or raise rc 5 (dropping the stamp when the outcome is unknown)."""
     valid = isinstance(data, dict) and data.get("id") not in (None, "")
     if status in ok and valid:
         drop_stamp(h)
@@ -844,15 +769,14 @@ def check_write(status, data, ok, h):
     if status == 0 or status in ok:
         drop_stamp(h)
         raise Fail(5, f"응답을 확인하지 못했습니다. {UNKNOWN_PUBLISH}")
-    if status >= 500 or status in (408, 429):   # 반영 여부 불명(408 요청 시간 초과·429 제한은 서버가 처리한 뒤에도 올 수 있다): 스탬프를 소모해 재실행의 중복 게시를 막는다
+    if status >= 500 or status in (408, 429):   # WHY: 반영 여부 불명(408 요청 시간 초과·429 제한은 서버가 처리한 뒤에도 올 수 있다): 스탬프를 소모해 재실행의 중복 게시를 막는다
         drop_stamp(h)
         raise Fail(5, f"HTTP {status}: 반영 여부 확인 필요. {UNKNOWN_PUBLISH}")
-    drop_stamp(h, restore=True)   # 4xx 등 미반영이 확정된 실패만 스탬프를 되돌린다
+    drop_stamp(h, restore=True)   # NEVER: 미반영이 확정되지 않은 실패에서 스탬프를 되돌리지 않는다(4xx 등만 되돌린다)
     raise http_fail(status, data)
 
 
 def verify(issue, comment_id, sent):
-    """Re-fetch the comment and structurally compare it with the ADF that was sent (rc 4 on mismatch)."""
     prefix = f"게시는 완료됐습니다(댓글 id {comment_id}). 그러나 "
     status, data = http("GET", f"{site()}/rest/api/3/issue/{issue}/comment/{comment_id}")
     if status != 200 or not isinstance(data, dict) or not isinstance(data.get("body"), dict):
@@ -867,12 +791,10 @@ def verify(issue, comment_id, sent):
 
 
 def report_done(issue, comment_id):
-    """Print the comment id and its focus URL."""
     print(f"댓글 id: {comment_id}\n{site()}/browse/{issue}?focusedCommentId={comment_id}")
 
 
 def multipart_file(name, data, ctype="image/png"):
-    """Build a one-file multipart/form-data body (field 'file', default image/png); return (content type, body)."""
     boundary = secrets.token_hex(16)
     head = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\n'
             f"Content-Type: {ctype}\r\n\r\n").encode("ascii")
@@ -880,11 +802,9 @@ def multipart_file(name, data, ctype="image/png"):
 
 
 def resolve_in_folder(list_path, rel, label):
-    """Return rel resolved inside the list file's folder (rc 2 for absolute paths, .. or links pointing outside)."""
-    # 파일은 «목록 폴더 안»만 허용한다: 이 서버에는 민감 영상·표 파일이 있고 사용자는 미리보기만 보고 승인한다.
-    # 절대 경로·`..`·중간 폴더 심볼릭 링크로 밖을 가리키면 거부한다(마지막 구성요소 링크는 읽기 쪽 O_NOFOLLOW 가 막는다).
+    # NEVER: 목록 폴더 밖(절대 경로·`..`·중간 폴더 심볼릭 링크)을 가리키는 파일을 받지 않는다(이 서버에는 민감 영상·표 파일이 있고 사용자는 미리보기만 보고 승인한다).
     base = os.path.realpath(os.path.dirname(os.path.abspath(list_path)))
-    # 폴더 안 제한은 목록 파일을 민감 자료 폴더에 두면 무력하다: 목록은 .scratch 아래 임시 폴더에만 둔다(2026-10-14 검수).
+    # WHY: 폴더 안 제한은 목록 파일을 민감 자료 폴더에 두면 무력하다: 목록은 .scratch 아래 임시 폴더에만 둔다(2026-10-14 검수).
     if SCRATCH_DIR not in Path(base).parts:
         raise Fail(2, "목록 파일은 .scratch 아래 임시 폴더에 두십시오(민감 자료 폴더에서 바로 올리지 않게).")
     try:
@@ -897,7 +817,6 @@ def resolve_in_folder(list_path, rel, label):
 
 
 def load_figures(path):
-    """Load and validate the [{anchor, file[, replace]}] figure list; return [(anchor, file path, replace)] (relative files resolve beside the list)."""
     try:
         with open(path, encoding="utf-8") as f:
             items = json.load(f)
@@ -911,7 +830,6 @@ def load_figures(path):
 
 
 def read_png(path):
-    """Read one PNG without following a symlink; return (bytes, width, height) or raise rc 2."""
     name = os.path.basename(path)
     shown = esc(name)[:60]
     if not FIG_NAME_RE.fullmatch(name) or not name.lower().endswith(".png"):
@@ -937,12 +855,10 @@ def read_png(path):
 
 
 def para_text(p):
-    """Return the concatenated text of a paragraph's text nodes."""
     return "".join(n.get("text", "") for n in text_nodes(p))
 
 
 def anchor_paragraphs(adf, anchor):
-    """Return [(parent content list, paragraph, parent type)] for every paragraph whose text starts with anchor."""
     hits = []
 
     def walk(n):
@@ -959,12 +875,10 @@ def anchor_paragraphs(adf, anchor):
 
 
 def index_of(kids, node):
-    """Return the position of node (by identity) in kids."""
     return next(k for k, x in enumerate(kids) if x is node)
 
 
 def figure_plan(cur, path):
-    """Validate the figure list against the current comment ADF; return one plan dict per figure (file bytes included)."""
     plan, names, paras = [], set(), set()
     for anchor, fpath, replace in load_figures(path):
         hits = anchor_paragraphs(cur, anchor)
@@ -972,7 +886,7 @@ def figure_plan(cur, path):
         if len(hits) != 1:
             raise Fail(2, f"자리 글귀로 시작하는 문단이 {len(hits)}개입니다(정확히 1개여야 합니다): {shown!r}")
         kids, para, parent = hits[0]
-        if parent not in ("doc", "listItem"):   # 실측으로 확인된 자리만 허용: 400 거절 뒤 첨부만 남는 일을 줄인다
+        if parent not in ("doc", "listItem"):
             raise Fail(2, f"이 자리에는 그림을 넣을 수 없습니다(최상위 문단 또는 글머리 안 문단만): {shown!r}")
         if id(para) in paras:
             raise Fail(2, f"두 항목이 같은 문단을 가리킵니다: {shown!r}")
@@ -998,7 +912,7 @@ def figure_plan(cur, path):
             raise Fail(2, f"그림 파일 이름이 겹칩니다: {esc(name)[:60]}")
         names.add(name)
         sha = hashlib.sha256(data).hexdigest()
-        # 올리는 이름을 내용에 묶는다: 다시 뽑은 그림의 크기가 우연히 같아도 옛 첨부를 재사용하지 않는다.
+        # NEVER: 올리는 이름에서 내용 해시를 빼지 않는다(다시 뽑은 그림의 크기가 우연히 같아도 옛 첨부를 재사용하지 않게).
         upload = f"{name[:-4]}-{sha[:12]}.png"
         if not FIG_NAME_RE.fullmatch(upload):
             raise Fail(2, f"올라갈 첨부 이름이 규칙(영문·숫자·._- 100자 이내)을 넘습니다: {esc(upload)[:60]}")
@@ -1009,9 +923,8 @@ def figure_plan(cur, path):
 
 
 def figures_stamp_hash(issue, comment_id, plan, patches=None):
-    """Return the sha256 binding site, issue, comment id, the figure plan (with replace flags) and the patch list if any."""
     keys = ("anchor", "name", "size", "sha256", "width", "height")
-    # replace·patches 키는 있을 때만 넣어, 추가만 하는 옛 경로의 해시 입력은 그대로 둔다.
+    # NEVER: replace·patches 키가 없을 때는 넣지 않는다(추가만 하는 옛 경로의 해시 입력이 바뀐다).
     rec = {"kind": "figures", "site": site(), "issue": issue, "comment_id": comment_id,
            "figures": [{**{k: e[k] for k in keys}, **({"replace": True} if e["replace"] else {})} for e in plan]}
     if patches:
@@ -1021,7 +934,6 @@ def figures_stamp_hash(issue, comment_id, plan, patches=None):
 
 
 def fetch_attachments(issue):
-    """Return {(filename, size): newest attachment id} for the issue's current attachments."""
     status, data = http("GET", f"{site()}/rest/api/3/issue/{issue}?fields=attachment")
     if status != 200:
         raise http_fail(status, data)
@@ -1038,12 +950,11 @@ def fetch_attachments(issue):
 
 
 def check_upload(status, data, h, name):
-    """Return the new attachment id, or raise rc 5 (consuming the stamp when the upload outcome is unknown)."""
     first = data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else {}
     aid = str(first.get("id", ""))
     if status in (200, 201) and ID_RE.fullmatch(aid):
         return aid
-    if status in (0, 200, 201) or status >= 500 or status in (408, 429):   # check_write 와 같은 뜻: 서버가 받았을 수 있다
+    if status in (0, 200, 201) or status >= 500 or status in (408, 429):
         drop_stamp(h)
         raise Fail(5, f"첨부 반영 여부 불명(HTTP {status}, {esc(name)[:60]}). preview 를 다시 돌리면 "
                       "이미 올라간 첨부는 재사용으로 표시됩니다.")
@@ -1052,7 +963,6 @@ def check_upload(status, data, h, name):
 
 
 def resolve_media(issue, e, have, h):
-    """Return (attachment id, media UUID) for one figure, uploading it unless an identical attachment exists."""
     att = have.get((e["upload"], e["size"]))
     if att is None:
         ctype, body = multipart_file(e["upload"], e["data"])
@@ -1060,7 +970,7 @@ def resolve_media(issue, e, have, h):
                                    {"Content-Type": ctype, **XSRF_OPT_OUT}, 300)
         att = check_upload(status, data, h, e["upload"])
     status, hdrs, _ = http_raw("GET", f"{site()}/rest/api/3/attachment/content/{att}")
-    # 303 Location 은 서명된 미디어 주소다: UUID 만 꺼내고 문자열은 출력·기록·예외 문구에 넣지 않는다.
+    # NEVER: 303 Location 문자열을 출력·기록·예외 문구에 넣지 않는다(서명된 미디어 주소다, UUID 만 꺼낸다).
     m = MEDIA_UUID_RE.search(str(hdrs.get("location", ""))) if status in (302, 303) else None
     if not m:
         raise Fail(5, f"미디어 UUID 를 얻지 못했습니다(HTTP {status}). 댓글은 고치지 않았습니다.")
@@ -1068,7 +978,6 @@ def resolve_media(issue, e, have, h):
 
 
 def insert_figures(cur, plan, uuids):
-    """Return a copy of the ADF with a mediaSingle inserted after each planned anchor paragraph (replace entries swap the next block)."""
     new = copy.deepcopy(cur)
     for e, u in zip(plan, uuids):
         hits = anchor_paragraphs(new, e["anchor"])
@@ -1084,14 +993,13 @@ def insert_figures(cur, plan, uuids):
                 if isinstance(old, dict) and old.get("type") == "mediaSingle" else []
             if len(slots) != 1:
                 raise Fail(2, f"바꿀 그림을 다시 찾지 못했습니다: {esc(e['anchor'])[:40]!r}")
-            old["content"][slots[0]] = media   # 그림만 바꾼다: 블록의 layout·width 와 캡션 같은 다른 자식은 그대로 둔다
+            old["content"][slots[0]] = media
         else:
             kids.insert(pos, {"type": "mediaSingle", "attrs": {"layout": "center"}, "content": [media]})
     return new
 
 
 def captions(adf):
-    """Return the text of every caption node in document order (fingerprint does not cover caption text)."""
     out = []
 
     def walk(n):
@@ -1105,7 +1013,6 @@ def captions(adf):
 
 
 def check_figure_result(cur, new, uuids, base=None, old_ids=()):
-    """Raise rc 2 unless text blocks and card count match base (default cur) and media ids are exactly (cur - replaced old) + new UUIDs."""
     before, after, kept = fingerprint(base or cur), fingerprint(new), list(fingerprint(cur)[2])
     if after[0] != before[0] or after[1] != before[1] or captions(new) != captions(base or cur):
         raise Fail(2, "그림을 넣으면 글자 블록·캡션 또는 인라인 카드 수가 달라집니다. 보내지 않습니다.")
@@ -1120,7 +1027,6 @@ def check_figure_result(cur, new, uuids, base=None, old_ids=()):
 
 
 def patched_base(a, cur):
-    """Return (loaded patches or None, base ADF with the patches applied or cur, [(before, after)] or None)."""
     if a.patches is None:
         return None, cur, None
     patches = load_patches(a.patches)
@@ -1130,12 +1036,11 @@ def patched_base(a, cur):
 
 
 def preview_figures(a):
-    """Print the figure plan (read-only; with --patches also the text changes) and write the plan stamp."""
     rules = load_rules()
     prune_old()
     cur = fetch_comment(a.issue, a.comment_id)["body"]
     patches, base, changes = patched_base(a, cur)
-    plan = figure_plan(base, a.figures)   # 자리 문단은 치환 뒤 글로 찾는다
+    plan = figure_plan(base, a.figures)
     have = fetch_attachments(a.issue)
     n_rep = sum(e["replace"] for e in plan)
     what = f"글자 치환 {len(changes)}곳과 그림 {len(plan)}개 반영" if patches else f"그림 {len(plan)}개 넣기"
@@ -1169,26 +1074,25 @@ def preview_figures(a):
 
 
 def update_figures(a):
-    """Apply any patches, upload (or reuse) the planned figures, insert or swap them in the comment, edit it and verify."""
     cur = fetch_comment(a.issue, a.comment_id)["body"]
     patches, base, _ = patched_base(a, cur)
     plan = figure_plan(base, a.figures)
     h = figures_stamp_hash(a.issue, a.comment_id, plan, patches)
     check_stamp(h, current_sha(cur))
     have = fetch_attachments(a.issue)
-    claim_stamp(h)   # 업로드 전에 소모해 동시 실행 둘이 함께 올리지 못하게 한다
+    claim_stamp(h)
     try:
         refs = [resolve_media(a.issue, e, have, h) for e in plan]
         uuids = [u for _, u in refs]
         new = insert_figures(base, plan, uuids)
         check_figure_result(cur, new, uuids, base, [m for e in plan for m in e["old_ids"]])
-        if current_sha(fetch_comment(a.issue, a.comment_id)["body"]) != current_sha(cur):   # 업로드가 길어지는 동안 남이 고친 댓글을 덮어쓰지 않는다
+        if current_sha(fetch_comment(a.issue, a.comment_id)["body"]) != current_sha(cur):   # NEVER: 업로드가 길어지는 동안 남이 고친 댓글을 덮어쓰지 않는다
             raise Fail(3, "업로드하는 동안 댓글이 바뀌었습니다. preview 를 다시 돌리고 사용자 승인을 받으십시오.")
         backup = os.path.join(ensure_stamp_dir(),
                               f"backup-{a.issue}-{a.comment_id}-{datetime.now():%Y%m%d-%H%M%S-%f}.adf.json")
         write_private(backup, json.dumps(cur, ensure_ascii=False))
     except BaseException:
-        drop_stamp(h, restore=True)   # 반영 여부 불명으로 이미 소모됐다면 아무 일도 하지 않는다(파일이 없다)
+        drop_stamp(h, restore=True)
         raise
     print(f"백업: {backup}")
     try:
@@ -1206,8 +1110,7 @@ def update_figures(a):
 
 
 def preview_lines(ext, data, obj):
-    """Return the preview lines for a text attachment (first line / json shape, csv·tsv counts, PHI-looking column warning)."""
-    # 승인 전에 보이는 이유: 목록 파일에 환자 식별 열이 있으면 머리글에서 알아볼 수 있다. 반대로 환자 값이 세션 기록에
+    # WHY: 승인 전에 보이는 이유: 목록 파일에 환자 식별 열이 있으면 머리글에서 알아볼 수 있다. 반대로 환자 값이 세션 기록에
     # 찍히지 않도록 앞 64KiB 의 첫 비어 있지 않은 줄 120자만 보이고 내용 전체는 줄 단위로 쪼개지 않는다(2026-10-14 검수).
     head = data[:PREVIEW_SCAN].decode("utf-8", "ignore").lstrip("﻿")
     line = next((x for x in head.splitlines() if x.strip()), "")
@@ -1223,7 +1126,7 @@ def preview_lines(ext, data, obj):
         sep = {"csv": ",", "tsv": "\t"}.get(ext)
         names = [c[:40] for c in line.split(sep)] if sep else [line[:40]]
         if sep:
-            lines = data.count(b"\n") + (data[-1:] != b"\n")   # 줄바꿈 개수 세기(마지막 줄에 줄바꿈이 없으면 +1)
+            lines = data.count(b"\n") + (data[-1:] != b"\n")
             show.append(f"줄 {lines:,}개 · 첫 줄 열 {len(names)}개")
     hits = [esc(n) for n in names if any(w in n.lower() for w in PHI_WORDS)]
     if hits:
@@ -1232,7 +1135,6 @@ def preview_lines(ext, data, obj):
 
 
 def read_attach(path):
-    """Read and sanity-check one attachment file without following a symlink; return its plan entry (bytes included) or raise rc 2."""
     name = os.path.basename(path)
     shown = esc(name)[:60]
     stem, dot, ext = name.rpartition(".")
@@ -1251,7 +1153,7 @@ def read_attach(path):
         raise Fail(2, f"빈 파일은 첨부할 수 없습니다: {shown}")
     if len(data) > MAX_ATTACH_BYTES:
         raise Fail(2, f"첨부 파일이 {MAX_ATTACH_BYTES // 1024 // 1024}MiB 를 넘습니다: {shown}")
-    # 확장자만 믿지 않는다: 이름을 바꿔 단 다른 종류의 파일이 올라가지 않게 가벼운 머리 확인만 한다.
+    # NEVER: 확장자만 믿지 않는다(이름을 바꿔 단 다른 종류의 파일이 올라가지 않게 가벼운 머리 확인만 한다).
     magic = {"png": (PNG_MAGIC, "PNG"), "jpg": (b"\xff\xd8\xff", "JPEG"), "jpeg": (b"\xff\xd8\xff", "JPEG"), "pdf": (b"%PDF-", "PDF")}
     show = []
     if ext in magic:
@@ -1267,7 +1169,7 @@ def read_attach(path):
             raise Fail(2, f"글 파일이 아니거나 UTF-8·JSON 형식이 어긋납니다: {shown}") from None
         show = preview_lines(ext, data, obj)
     sha = hashlib.sha256(data).hexdigest()
-    upload = f"{stem}-{sha[:12]}.{ext}"   # 올리는 이름을 내용에 묶는다: 같은 이름·크기의 다른 내용을 재사용하지 않는다
+    upload = f"{stem}-{sha[:12]}.{ext}"
     if not FIG_NAME_RE.fullmatch(upload):
         raise Fail(2, f"올라갈 첨부 이름이 규칙(영문·숫자·._- 100자 이내)을 넘습니다: {esc(upload)[:60]}")
     return {"name": name, "upload": upload, "size": len(data), "sha256": sha, "ctype": ATTACH_TYPES[ext],
@@ -1275,7 +1177,6 @@ def read_attach(path):
 
 
 def attach_plan(path):
-    """Load the [{file}] attach list and return one read_attach plan entry per file."""
     try:
         with open(path, encoding="utf-8") as f:
             items = json.load(f)
@@ -1287,26 +1188,23 @@ def attach_plan(path):
     plan, names, total = [], set(), 0
     for x in items:
         e = read_attach(resolve_in_folder(path, x["file"], "첨부"))
-        # 대소문자 무시: 올라갈 이름의 확장자는 소문자라 x.csv 와 x.CSV 가 같은 이름으로 두 번 올라가지 않게 원래 이름도 함께 본다.
         if e["name"].lower() in names:
             raise Fail(2, f"첨부 파일 이름이 겹칩니다(대소문자 무시): {esc(e['name'])[:60]}")
         names.add(e["name"].lower())
         total += e["size"]
-        if total > MAX_ATTACH_TOTAL:   # 파일을 전부 메모리에 올리므로 합계도 막는다
+        if total > MAX_ATTACH_TOTAL:
             raise Fail(2, f"첨부 파일 합계가 {MAX_ATTACH_TOTAL // 1024 // 1024}MiB 를 넘습니다.")
         plan.append(e)
     return plan
 
 
 def attach_stamp_hash(issue, plan):
-    """Return the sha256 binding site, issue and the attach plan (kind keeps it apart from body and figure stamps)."""
     keys = ("name", "upload", "size", "sha256")
     rec = {"kind": "attach", "site": site(), "issue": issue, "files": [{k: e[k] for k in keys} for e in plan]}
     return hashlib.sha256(canonical(rec).encode("utf-8")).hexdigest()
 
 
 def preview_attach(a):
-    """Print the attach plan (read-only) and write the plan stamp."""
     rules = load_rules()
     prune_old()
     plan = attach_plan(a.attach)
@@ -1328,12 +1226,11 @@ def preview_attach(a):
 
 
 def cmd_attach(a):
-    """Upload (or reuse) the planned files as issue attachments if a matching stamp exists, then read the list back."""
     plan = attach_plan(a.attach)
     h = attach_stamp_hash(a.issue, plan)
     check_stamp(h)
     have = fetch_attachments(a.issue)
-    claim_stamp(h)   # 업로드 전에 소모해 동시 실행 둘이 함께 올리지 못하게 한다
+    claim_stamp(h)
     refs = []
     try:
         for e in plan:
@@ -1346,7 +1243,7 @@ def cmd_attach(a):
                                        {"Content-Type": ctype, **XSRF_OPT_OUT}, 300)
             refs.append((check_upload(status, data, h, e["upload"]), e, "새로"))
     except BaseException:
-        drop_stamp(h, restore=True)   # 반영 여부 불명으로 이미 소모됐다면 아무 일도 하지 않는다(파일이 없다)
+        drop_stamp(h, restore=True)
         raise
     drop_stamp(h)
     after = fetch_attachments(a.issue)
@@ -1360,7 +1257,6 @@ def cmd_attach(a):
 
 
 def cmd_get(a):
-    """Print the comment's node-tree summary (and save raw ADF with --save)."""
     data = fetch_comment(a.issue, a.comment_id)
     body = data.get("body", {})
     print(f"작성: {data.get('created')}  수정: {data.get('updated')}")
@@ -1383,7 +1279,6 @@ def cmd_get(a):
 
 
 def cmd_mine(a):
-    """List my unfinished issues (read-only); on failure print one-line error (stdout JSON with --json) and return 2."""
     try:
         base = site()
         status, data = http("POST", f"{base}/rest/api/3/search/jql", {
@@ -1398,7 +1293,7 @@ def cmd_mine(a):
                     for i in data["issues"]]
         except (KeyError, TypeError, AttributeError):
             raise Fail(2, "Jira 응답 형식 오류") from None
-    except Exception as e:   # noqa: BLE001 — Fail 포함. 예기치 못한 예외는 형식 이름만(트레이스백·토큰 노출 없음)
+    except Exception as e:   # noqa: BLE001
         name = type(e).__name__
         msg = e.msg if isinstance(e, Fail) else name
         if a.json:
@@ -1415,8 +1310,7 @@ def cmd_mine(a):
 
 
 def cmd_preview(a):
-    """Print format rules, the rendered preview and warnings, then write the stamp."""
-    given = lambda v: v is not None   # 빈 문자열 인자도 «준 것» 으로 본다(빈 경로는 읽기 단계에서 rc 2)
+    given = lambda v: v is not None
     if given(a.body_file) + (given(a.patches) or given(a.figures)) + given(a.attach) != 1:
         raise Fail(2, "--body-file, --attach, (--patches 와/또는 --figures) 중 하나만 주십시오.")
     if given(a.attach) and a.comment_id is not None:
@@ -1458,7 +1352,6 @@ def cmd_preview(a):
 
 
 def cmd_post(a):
-    """Publish a new comment if a matching preview stamp exists, then verify."""
     adf = md_to_adf(read_body(a.body_file))
     h = stamp_hash(a.issue, None, adf)
     check_stamp(h)
@@ -1470,7 +1363,6 @@ def cmd_post(a):
 
 
 def cmd_update(a):
-    """Edit an existing comment (notifications off, backup first) if a matching stamp exists."""
     if (a.body_file is not None) + (a.patches is not None or a.figures is not None) != 1:
         raise Fail(2, "--body-file 또는 (--patches 와/또는 --figures) 중 하나만 주십시오.")
     if a.figures is not None:
@@ -1499,7 +1391,6 @@ def cmd_update(a):
 
 
 def main(argv=None):
-    """Parse arguments and dispatch to the subcommand; return the exit code."""
     ap = argparse.ArgumentParser(description="Jira 댓글 미리보기·게시·수정 (사용법은 파일 머리 주석)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     g = sub.add_parser("get")
@@ -1541,7 +1432,7 @@ def main(argv=None):
     except Fail as e:
         print(e.msg, file=sys.stderr)
         return e.rc
-    except Exception as e:   # noqa: BLE001 — print only the type name (no traceback, no token exposure)
+    except Exception as e:   # noqa: BLE001
         print(f"예기치 못한 오류: {type(e).__name__}", file=sys.stderr)
         return 5
 

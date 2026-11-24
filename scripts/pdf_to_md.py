@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """pdf_to_md.py — 논문 PDF → Markdown 변환 (paper-read Step 0-L 2 · Step 2.5 · researcher-B 표 추출 공용)
 
 왜 파일인가 (2026-08-25 교차검증 5라운드): 종전엔 `python3 -c "... open(dst,'w') ..."` 인라인 코드였는데,
@@ -13,6 +12,7 @@ bash-write-check.sh 가 인라인 인터프리터의 파일 쓰기를 차단하�
 
 종료 코드: 0 성공 / 2 인자 오류 / 3 변환 실패(두 엔진 모두) / 4 DST 가 papers/ 하위가 아님
 """
+# REF: knowledge/harness/code-history/scripts__pdf_to_md.py.md
 import os
 import sys
 
@@ -23,22 +23,20 @@ def _die(msg, code):
 
 
 def _check_dst(dst):
-    # 산출물은 항상 {MEMORY_ROOT}/papers/ 하위 — 경로 탈출 차단 (paper-read § 경로·논문명 공통 안전 규칙 ②)
-    # 접두 검사 (6라운드 렌즈2: '/papers/' 서브스트링만 보면 MEMORY_ROOT 밖 동명 폴더도 통과). 호출부는
-    # PAPER_MEMORY_ROOT 환경변수로 {MEMORY_ROOT} 를 넘긴다. 없으면 거부(추측 허용 금지).
+    # REF: skills/paper-read/SKILL.md § 경로·논문명 공통 안전 규칙 2)
     root = os.environ.get("PAPER_MEMORY_ROOT", "")
     if not root:
         _die("PAPER_MEMORY_ROOT 환경변수({MEMORY_ROOT}) 필요 — DST 접두 검사에 사용", 4)
     root_real = os.path.realpath(root)
     real = os.path.realpath(dst)
     home = os.path.realpath(os.path.expanduser("~"))
-    # 외부 전송 교환 디렉터리·임시 디렉터리를 루트로 속이는 경로 거부 (6라운드 Grok: ~/grok-exchange/papers/ 로 쓰면 다음 grok 이 읽는다)
+    # WHY: ~/grok-exchange/papers/ 로 쓰면 다음 grok 이 읽는다
     banned_roots = (
         os.path.join(home, "grok-exchange"), "/tmp", "/var/tmp", "/dev/shm", "/run",
-        os.path.join(home, ".claude"),          # 하네스 루트 자체를 MEMORY_ROOT 로 속이는 경로 (7라운드 Grok)
+        os.path.join(home, ".claude"),
     )
     for banned in banned_roots:
-        b = os.path.realpath(banned) + "/"      # 접두는 디렉터리 경계까지 (`/tmp` 가 `/tmpfoo` 를 잡는 오탐 방지)
+        b = os.path.realpath(banned) + "/"      # NEVER: 접두를 디렉터리 경계 없이 대조하지 않는다(`/tmp` 가 `/tmpfoo` 를 잡는다)
         if (root_real + "/").startswith(b) or (real + "/").startswith(b):
             _die(f"DST/루트가 금지 디렉터리 아래: {real}", 4)
     if os.path.islink(dst) or not real.startswith(root_real + "/papers/"):
@@ -49,7 +47,7 @@ def _check_dst(dst):
 
 
 def convert_markitdown(src):
-    from markitdown import MarkItDown  # noqa: WPS433 — 선택 의존성
+    from markitdown import MarkItDown  # noqa: WPS433
     return MarkItDown().convert(src).text_content
 
 
@@ -91,7 +89,7 @@ def main(argv):
         return
     preview = len(argv) >= 3 and argv[2] == "--preview"
     head = 0
-    if len(argv) >= 3 and argv[2] == "--head":   # 서두 N자만 stdout (scout 판별용, 저장 없음 — 6라운드 렌즈1 순서 재배열)
+    if len(argv) >= 3 and argv[2] == "--head":
         try:
             head = int(argv[3]) if len(argv) > 3 else 3000
         except ValueError:
@@ -107,7 +105,7 @@ def main(argv):
             engine = name
             if text and text.strip():
                 break
-        except Exception as e:  # 다음 엔진으로
+        except Exception as e:  # noqa: BLE001
             print(f"pdf_to_md: {name} 실패 — {e}", file=sys.stderr)
     if not text or not text.strip():
         _die("두 엔진 모두 텍스트를 얻지 못함 (스캔 PDF? pdf-inspector detect 로 확인)", 3)
@@ -117,7 +115,7 @@ def main(argv):
         return
     real = _check_dst(dst)
     try:
-        os.makedirs(os.path.dirname(real), exist_ok=True)   # papers/ 접두 검사를 통과한 경로 안에서만 부모 생성
+        os.makedirs(os.path.dirname(real), exist_ok=True)   # NEVER: papers/ 접두 검사(_check_dst)를 통과하지 않은 경로에 부모를 만들지 않는다
         with open(real, "w", encoding="utf-8") as f:
             f.write(text)
     except OSError as e:

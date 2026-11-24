@@ -1,4 +1,4 @@
-"""harness-bench.sh 회귀 시험 (2026-10-01 감사 P6 신설).
+"""harness-bench.sh 회귀 시험.
 
 대상: 근거 경로 비교(심볼릭 링크 HOME/.claude 의 실경로 비교) · 지표 값 중복 거부 ·
       근거 실경로의 공백 거부 · 요약의 백슬래시 보존 · 도움말 범위.
@@ -7,6 +7,7 @@
       (실제 서버의 ~/.claude → workspace/.claude 구조 재현). 실제 _bench 는 건드리지 않는다.
 
 실행: python3 ~/.claude/scripts/tests/test_harness_bench.py → 실패 0 이면 exit 0
+REF: knowledge/harness/code-history/scripts__tests__test_harness_bench.py.md
 """
 
 import os
@@ -76,7 +77,6 @@ def test_duplicate_metric_rejected():
         check("bench: 같은 지표 두 값은 기록 거부", r.returncode == 3 and "지표마다 값 하나만" in r.stderr,
               f"{r.returncode} {r.stderr[:200]}")
 
-        # 손으로 쓴 벤치 파일: gate 도 중복 지표를 값 없음으로 취급해 inconclusive(2)
         d = Path(home / ".claude/_bench")
         d.mkdir(exist_ok=True)
         cyc = "- 사이클 {n} (2026-10-01T00:00:0{n}+09:00): attempts=1 attempts=2 interventions=0 qa_fail=0 evidence=x evidence_sha=y\n"
@@ -113,7 +113,6 @@ def test_help_range():
         check("bench: 도움말에 gate·report·list 포함", all(k in out for k in ("gate", "report", "list")), out)
 
 
-# 2026-10-17 G2: bench-last 마커는 측정을 만드는 init|before|after 에서만 찍힌다(gate·report·list·help 는 안 찍는다)
 def test_marker_only_on_measuring_actions():
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp)
@@ -140,7 +139,6 @@ def test_marker_only_on_measuring_actions():
         check("bench: 성공한 before 는 마커 mtime 을 갱신", r.returncode == 0 and int(marker.stat().st_mtime) > old, f"{r.returncode} {r.stderr[:100]}")
 
 
-# 2026-10-17 Codex 3차: 저장 명령이 실패해도 뒤의 echo 가 종료 코드를 0 으로 만들어 실패한 init·before 가 마커를 갱신하던 문제
 def test_write_failure_is_failure():
     if os.geteuid() == 0:
         check("bench: 쓰기 실패 주입 시험은 root 에서 건너뜀(읽기 전용 폴더에도 쓰기 가능)", True, "")

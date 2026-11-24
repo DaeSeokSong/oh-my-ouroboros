@@ -1,6 +1,7 @@
 """confluence_review_gate.py 와 그 연결부(골격 스탬프 · skeleton-gate.sh) 회귀 시험. 네트워크 없음, 값은 전부 가짜.
 
 실행: python3 -m unittest scripts/tests/test_confluence_review_gate.py
+REF: knowledge/harness/code-history/scripts__tests__test_confluence_review_gate.py.md
 """
 import json
 import shutil
@@ -26,7 +27,6 @@ DIRTY = CLEAN + "<p>password = FAKE-TEST-pw01 와 api_token = FAKE-TEST-0001 을
 
 
 def run_cli(tmp: Path, publish: str, reviewed: str | None) -> subprocess.CompletedProcess:
-    """Write the bodies to files and run the gate command line."""
     pub = tmp / "publish.storage.html"
     pub.write_text(publish, encoding="utf-8")
     args = [sys.executable, str(GATE), str(pub)]
@@ -38,7 +38,6 @@ def run_cli(tmp: Path, publish: str, reviewed: str | None) -> subprocess.Complet
 
 
 def is_deny(stdout: str) -> bool:
-    """True when stdout is a PreToolUse deny JSON."""
     try:
         return json.loads(stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
     except (ValueError, KeyError, TypeError):
@@ -46,24 +45,19 @@ def is_deny(stdout: str) -> bool:
 
 
 class ReviewGateCli(unittest.TestCase):
-    """Command line: F8-like, F9-like and clean bodies."""
 
     def setUp(self):
-        """Make a scratch folder."""
         self.tmp = Path(tempfile.mkdtemp(prefix="review-gate-"))
 
     def tearDown(self):
-        """Remove the scratch folder."""
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_hash_differs_denied(self):
-        """F8 shape: the published body differs from the reviewed one."""
         r = run_cli(self.tmp, EDITED, CLEAN)
         self.assertEqual(r.returncode, 1)
         self.assertTrue(is_deny(r.stdout))
 
     def test_credentials_denied_without_echoing_values(self):
-        """F9 shape: fake credential and patient id, values never printed."""
         r = run_cli(self.tmp, DIRTY, DIRTY)
         self.assertEqual(r.returncode, 1)
         self.assertTrue(is_deny(r.stdout))
@@ -71,17 +65,14 @@ class ReviewGateCli(unittest.TestCase):
         self.assertNotIn("FAKE-PID", r.stdout)
 
     def test_clean_same_body_passes(self):
-        """Clean body published as reviewed; trailing newline differences are ignored like the stamp."""
         r = run_cli(self.tmp, CLEAN + "\n\n", CLEAN)
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertIn(rg.stamp_hash(CLEAN.encode()), r.stdout)
 
 
 class ScanShapes(unittest.TestCase):
-    """Generic shapes hit, ordinary prose does not."""
 
     def test_hits(self):
-        """Each generic shape is found, including quoted, tag-wrapped, prefixed names and label and value in separate cells."""
         for text in ("api_key: FAKEFAKE1234", "ghp_" + "a" * 24, "MRN 12345678", "patient_id=AB-1234", "900101-1234567",
                      'password = "FAKEpw12345"', "password: 'FAKEpw12345'", "api_key = <code>FAKEKEY12345</code>",
                      "db_password=FAKEpw9876", "MY_API_KEY = FAKEKEY12345", "github_token: FAKEtok123456",
@@ -93,7 +84,6 @@ class ScanShapes(unittest.TestCase):
                 self.assertTrue(rg.scan(text), text)
 
     def test_prose_passes(self):
-        """Column names and policy prose without credential-shaped values are not hits."""
         for text in ("환자번호 열은 비식별화합니다.", "password 정책을 바꿨습니다.", "patient ID column", "token = 512", "2026-11-10",
                      "db_token = 512", "password: 필수", "password = abc", "api_key: <code>설정값</code>",
                      "<tr><td>password</td><td>정책 참고</td></tr>", "<tr><th>등록번호</th><td>열 이름</td></tr>",
@@ -102,27 +92,22 @@ class ScanShapes(unittest.TestCase):
                 self.assertEqual(rg.scan(text), [], text)
 
     def test_line_number_of_first_token_on_a_line(self):
-        """A token at the start of line 2 is reported on line 2, not line 1."""
         self.assertEqual(rg.scan("첫 줄\nsk-" + "a" * 24), ["토큰 꼴 (2행)"])
 
     def test_long_whitespace_is_fast(self):
-        """A long whitespace run after a label does not blow up."""
         t0 = time.time()
         rg.scan("환자번호" + " " * 50000 + "열" + "\npassword" + " " * 50000 + "= x")
         self.assertLess(time.time() - t0, 2.0)
 
     def test_missing_file_is_usage_error(self):
-        """A missing file exits 2 with one stderr line and no traceback."""
         r = subprocess.run([sys.executable, str(GATE), "/nonexistent/x.storage.html"], capture_output=True, text=True, check=False)
         self.assertEqual(r.returncode, 2)
         self.assertNotIn("Traceback", r.stderr)
 
 
 class SkeletonStampRefuses(unittest.TestCase):
-    """The review stamp is never written for a body with a credential shape."""
 
     def test_stamp_refused(self):
-        """stamp() exits 1 and writes nothing for a dirty body, writes one file for a clean body."""
         tmp = Path(tempfile.mkdtemp(prefix="review-stamp-"))
         try:
             with mock.patch.object(cs, "STAMP_DIR", str(tmp)):
@@ -137,10 +122,8 @@ class SkeletonStampRefuses(unittest.TestCase):
 
 
 class HookPath(unittest.TestCase):
-    """skeleton-gate.sh with a temporary HOME: approval and stamp present, the body decides."""
 
     def setUp(self):
-        """Temporary HOME with scripts linked, a fake session log and a working folder."""
         self.home = Path(tempfile.mkdtemp(prefix="review-hook-home-"))
         (self.home / ".claude").mkdir()
         (self.home / ".claude/scripts").symlink_to(SCRIPTS)
@@ -151,18 +134,19 @@ class HookPath(unittest.TestCase):
         self.env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(self.home)}
 
     def tearDown(self):
-        """Remove the temporary HOME."""
         shutil.rmtree(self.home, ignore_errors=True)
 
     def call(self, body: str, page: str, stamp_body: str | None = None, stamp_ahead: float = 0, title: str | None = None) -> str:
-        """Stamp stamp_body (default: body), record a publish approval for the page, run the hook and return stdout."""
         stamp_dir = self.home / ".claude/_audit/skeleton-pass"
         stamp_dir.mkdir(parents=True, exist_ok=True)
-        now = datetime.now(timezone.utc)  # noqa: UP017 — 시스템 python3(3.10) 호환
+        # WHY: UP017 을 끈다. 시스템 python3(3.10) 호환
+        now = datetime.now(timezone.utc)  # noqa: UP017
         stamped = (body if stamp_body is None else stamp_body).encode()
         (stamp_dir / f"{rg.stamp_hash(stamped)}.json").write_text(
             json.dumps({"format": "t/t", "time": (now + timedelta(seconds=stamp_ahead)).isoformat()}))
         q = f"아래 게시를 승인하시겠습니까?\n게시 승인 요청 · page={page} · 알림=notify · 버전 설명=«검토 관문 시험»"
+        if title is not None:   # WHY: 2026-11-22 개정 3: 훅이 title 을 승인 줄의 «새 제목» 과 대조하므로, 제목을 싣는 호출은 승인 줄에도 제목이 있어야 검토 관문까지 간다
+            q += f" · 새 제목=«{title}»"
         qs = [{"question": q, "header": "승인", "options": [{"label": "게시 승인", "description": "d"}, {"label": "취소", "description": "d"}]}]
         ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
         tid = f"toolu_review_{page}"
@@ -179,29 +163,24 @@ class HookPath(unittest.TestCase):
         return subprocess.run(["bash", str(HOOK)], input=payload, capture_output=True, text=True, env=self.env, check=False).stdout
 
     def test_dirty_body_denied_even_with_stamp(self):
-        """A stamped and approved body with a credential shape is still denied by the hook."""
         out = self.call(DIRTY, "991001")
         self.assertTrue(is_deny(out))
         self.assertIn("검토 관문", out)
 
     def test_clean_body_passes(self):
-        """A stamped and approved clean body passes."""
         self.assertFalse(is_deny(self.call(CLEAN, "991002")))
 
     def test_f8_edited_after_review_denied(self):
-        """F8 on the live path: only the reviewed body has a stamp, publishing the edited body is denied."""
         out = self.call(EDITED, "991003", stamp_body=CLEAN)
         self.assertTrue(is_deny(out))
         self.assertIn("스탬프", out)
 
     def test_title_with_credential_denied_even_without_body(self):
-        """The title field is scanned too, also when the body is empty."""
         out = self.call("", "991004", title="접속 password = FAKEpw12345")
         self.assertTrue(is_deny(out))
         self.assertIn("1행", out)
 
     def test_future_stamp_invalid(self):
-        """A stamp dated in the future does not count."""
         self.assertTrue(is_deny(self.call(CLEAN, "991005", stamp_ahead=3600)))
 
 

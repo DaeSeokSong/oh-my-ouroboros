@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# ci-gate-post-commit.sh — 커밋 ↔ 학습 후보 연결 (2026-10-17 G2·결정 A1, 사용자 답 «A 1)»)
-#
-# ■ 왜 필요한가
-#   30일간 후보가 «채택» 된 것은 전부 커밋으로 직행했고 대장(`_evolve/candidates.tsv`)과의 연결은 0이었다. 연결 없이는 후보 루프가
-#   닫히지 않는다(검수 researcher). 연결 수단은 커밋 메시지의 선택 트레일러 `Candidate: <id>` 다.
+# ci-gate-post-commit.sh — 커밋 ↔ 학습 후보 연결 (2026-10-17 G2·결정 A1)
+#   커밋 메시지의 선택 트레일러 `Candidate: <id>` 로 대장(`_evolve/candidates.tsv`)과 커밋을 잇는다.
 #   · 트레일러는 사용자가 «커밋해» 지시에 id 를 적었을 때만 main 이 넣는다(skills/commit/SKILL.md). 모델이 스스로 끼워 넣지 않는다.
 #   · `Candidate: none` 은 «이 커밋은 후보와 무관» 이라는 명시 표시이며 아무 일도 하지 않는다.
 #
@@ -31,6 +28,7 @@
 # ■ 실패는 커밋을 막지 않는다 (사용자 답 A1): 훅은 항상 exit 0, 사유는 stderr 경고 한 줄. post-commit 은 어차피 커밋을 되돌릴 수 없다.
 # ■ 설치: .git/hooks/post-commit → 이 파일 (scripts/setup-harness.sh 4-c2 가 심볼릭 링크를 만든다)
 # ■ 회귀 테스트: python3 ~/.claude/scripts/tests/test_ci_gate_commit_msg.py (트레일러·post-commit 연결 포함)
+# REF: knowledge/harness/code-history/scripts__ci-gate-post-commit.sh.md
 set -uo pipefail
 export LC_ALL=C
 
@@ -40,13 +38,13 @@ SELF_DIR="$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")"
 
 RETRY_F="$HOME/.claude/_usage/candidates-attach-retry.tsv"
 RETRY_LOCK="$HOME/.claude/_usage/candidates-attach-retry.lock"
-queue_retry() {  # $1=id $2=해시 — 잠금 실패로 연결이 사라지지 않게 재시도 큐에 한 줄(같은 id 는 한 줄, 해시는 최신 커밋으로 교체). 큐 잠금(flock -w 2)을 못 잡으면 1, flock 이 없으면 2, 잠금은 잡았으나 쓰기(교체 awk·mv·append)가 실패하면 3
-    command -v flock >/dev/null 2>&1 || return 2   # 무잠금으로 쓰면 소비자와 경합하므로 성공(0)으로 가장하지 않는다
+queue_retry() {
+    command -v flock >/dev/null 2>&1 || return 2   # NEVER: 무잠금으로 쓰면 소비자와 경합하므로 성공(0)으로 가장하지 않는다
     mkdir -p "$HOME/.claude/_usage" 2>/dev/null
     (
         flock -w 2 8 || exit 1
         if ID="$1" awk -F'\t' '$1==ENVIRON["ID"] {f=1} END {exit f?0:1}' "$RETRY_F" 2>/dev/null; then
-            # 같은 id 가 이미 있으면 해시를 새 값으로 교체한다(amend 로 해시가 바뀐 뒤 다시 실패하면 옛 해시만 남던 문제)
+            # NEVER: 같은 id 의 옛 해시를 남기지 않는다. amend 로 해시가 바뀐 뒤 다시 실패하면 옛 해시만 남았다.
             ID="$1" NEWH="$2" awk -F'\t' -v OFS='\t' '$1==ENVIRON["ID"] { $2 = ENVIRON["NEWH"] } {print}' "$RETRY_F" > "$RETRY_F.tmp.$$" 2>/dev/null || { rm -f "$RETRY_F.tmp.$$"; exit 3; }
             mv "$RETRY_F.tmp.$$" "$RETRY_F" || { rm -f "$RETRY_F.tmp.$$"; exit 3; }
             exit 0
@@ -54,31 +52,29 @@ queue_retry() {  # $1=id $2=해시 — 잠금 실패로 연결이 사라지지 �
         printf '%s\t%s\n' "$1" "$2" >> "$RETRY_F" || exit 3
     ) 8>"$RETRY_LOCK"
 }
-queue_why() {  # queue_retry 반환값 → 경고 문구(1=큐 잠금 실패, 2=flock 없음, 3=큐 쓰기 실패)
+queue_why() {
     case "$1" in 2) echo '잠금 불가: flock 없음' ;; 3) echo '큐 쓰기 실패' ;; *) echo '큐 잠금 실패' ;; esac
 }
 
-validate() {  # $1=id, stdin=파일 목록 → 0 유효 / 1 무효(사유 stdout 한 줄)
+validate() {
     local id="$1" st files
     case "$id" in ''|*[!A-Za-z0-9._-]*) echo "id 형식이 올바르지 않음: '$id'"; return 1 ;; esac
     [ -f "$CAND" ] || { echo "후보 대장 없음 ($CAND)"; return 1; }
-    [ -r "$CAND" ] || { echo "대장 읽기 실패 ($CAND)"; return 2; }   # 읽을 수 없는 대장을 «대장에 id 없음» 으로 돌리지 않는다(2 = 일시 실패)
-    st=$(ID="$id" awk -F'\t' '$1!="id" && $1==ENVIRON["ID"] {print $5; exit}' "$CAND") || { echo "대장 읽기 실패 (awk 실패: $CAND)"; return 2; }   # 읽히는 대장에서 awk 가 실패해도 «id 없음» 이 아니라 일시 실패
+    [ -r "$CAND" ] || { echo "대장 읽기 실패 ($CAND)"; return 2; }   # NEVER: 읽을 수 없는 대장을 «대장에 id 없음» 으로 돌리지 않는다(2 = 일시 실패)
+    st=$(ID="$id" awk -F'\t' '$1!="id" && $1==ENVIRON["ID"] {print $5; exit}' "$CAND") || { echo "대장 읽기 실패 (awk 실패: $CAND)"; return 2; }   # NEVER: 읽히는 대장에서 awk 가 실패한 것을 «id 없음» 으로 돌리지 않는다(일시 실패)
     [ -n "$st" ] || { echo "대장에 id '$id' 없음"; return 1; }
     files=$(cat)
     case "$st" in
         pending|pending-bench|pending-approval) ;;
         accepted)
-            # 선승인 흐름: 이미 accepted. 해시는 post-commit 이 붙인다(attach-commit). 비고에 commit= 이 있으면 더 할 일이 없다.
-            # 앞 경계(`(^|[;[:space:]])`)를 둔다: `precommit=abc1234` 같은 글을 이미 연결된 것으로 오탐하지 않는다.
+            # NEVER: note_rx 의 앞 경계(`(^|[;[:space:]])`)를 빼지 않는다. `precommit=abc1234` 같은 글을 이미 연결된 것으로 오탐한다.
             local note_rx='(^|[;[:space:]])commit=[0-9a-f]{7,40}($|[;[:space:]])' cur_note
             cur_note=$(ID="$id" awk -F'\t' '$1!="id" && $1==ENVIRON["ID"] {print $7; exit}' "$CAND") || { echo "대장 읽기 실패 (awk 실패: $CAND)"; return 2; }
             if [[ "$cur_note" =~ $note_rx ]]; then echo "이미 accepted, 비고에 commit=<해시> 가 있어 유지됨"; return 0; fi
             printf '%s\n' "$files" | grep -E "$GOV_RX" >/dev/null || { echo "agents/·rules/·rules-lazy/·skills/·CLAUDE.md 변경이 없는 커밋이라 후보 반영으로 인정하지 않음"; return 1; }
             echo "이미 accepted, post-commit 이 해시를 붙임"; return 0 ;;
         expired)
-            # 만료가 반영 커밋 검증보다 먼저 끝난 경우(2026-10-17 Codex 6차): 반영 커밋이 채택의 증거이므로 agents/rules 계열 변경이 있으면 통과시킨다.
-            # 이어서 `set --machine accepted --note commit=<해시>` 가 expired→accepted 예외로 전이한다. rejected 는 계속 거부.
+            # WHY: 만료가 반영 커밋 검증보다 먼저 끝난 경우 반영 커밋이 채택의 증거이므로 agents/rules 계열 변경이 있으면 통과시킨다(2026-10-17 Codex 6차).
             printf '%s\n' "$files" | grep -E "$GOV_RX" >/dev/null || { echo "agents/·rules/·rules-lazy/·skills/·CLAUDE.md 변경이 없는 커밋이라 후보 반영으로 인정하지 않음"; return 1; }
             echo "이미 expired, 반영 커밋이므로 accepted 로 전이함"; return 0 ;;
         *) echo "id '$id' 의 상태가 '$st' (pending·pending-bench·pending-approval 만 연결 가능)"; return 1 ;;
@@ -91,8 +87,7 @@ if [ "${1:-}" = "--check" ]; then
     validate "${2:-}"; exit $?
 fi
 
-# ── 훅 모드 ──
-# 하네스 변경 전파 대기(intent/2026-10-21-harness-change-propagation-gate.md): 후보 연결보다 먼저, 후보가 없는 커밋도 빠짐없이 적는다.
+# WHY: 하네스 변경 전파 대기에는 후보 연결보다 먼저, 후보가 없는 커밋도 빠짐없이 적는다(intent/2026-10-21-harness-change-propagation-gate.md).
 # 실패해도 커밋·후보 연결을 막지 않는다(사유는 그 스크립트가 stderr 에 한 줄).
 bash "$(dirname "$(readlink -f "$0")")/propagate-queue.sh" enqueue || true
 
@@ -101,30 +96,26 @@ ID=$(printf '%s\n' "$MSG" | grep -v '^#' | grep -E '^Candidate:[[:space:]]*[^[:s
     | sed -E 's/^Candidate:[[:space:]]*//; s/[[:space:]]*$//')
 [ -n "$ID" ] && [ "$ID" != "none" ] || exit 0
 
-# 변경 파일 목록: -z(NUL 구분)로 받아 한글 같은 비ASCII 경로가 `"\355…"` 인용형으로 나와 GOV_RX 를 빠져나가지 못하게 한다(2026-10-17 외부 검토).
+# WHY: -z(NUL 구분)가 없으면 한글 같은 비ASCII 경로가 `"\355…"` 인용형으로 나와 GOV_RX 를 빠져나간다(2026-10-17 외부 검토).
 # 첫 커밋(부모 없음)에서도 읽도록 --root 를 쓰고, -m 으로 머지 커밋도 부모마다의 diff 를 합쳐 본다.
-FILES=$(git -c core.quotePath=false diff-tree --no-commit-id --name-only -r -z -m --root HEAD 2>/dev/null | tr '\0' '\n' | sort -u); FILES_RC=$?   # pipefail 이라 git 실패가 그대로 나온다
-SHORT=$(git rev-parse --short=7 HEAD 2>/dev/null); SHORT_RC=$?   # 하한 7: core.abbrev<7 이어도 commit=<16진 7자 이상> 정규식에 걸리게
-# 해시를 못 읽으면 Candidate 가 있어도 조용히 끝내지 않고 경고한다(diff-tree 실패와 같은 방식, 큐에는 넣지 않는다 — 넣을 해시가 없다).
+FILES=$(git -c core.quotePath=false diff-tree --no-commit-id --name-only -r -z -m --root HEAD 2>/dev/null | tr '\0' '\n' | sort -u); FILES_RC=$?
+SHORT=$(git rev-parse --short=7 HEAD 2>/dev/null); SHORT_RC=$?   # WHY: 하한 7: core.abbrev<7 이어도 commit=<16진 7자 이상> 정규식에 걸리게
 if [ "$SHORT_RC" -ne 0 ] || [ -z "$SHORT" ]; then
     echo "⚠ ci-gate-post-commit: 커밋 해시를 읽지 못함(rev-parse rc=$SHORT_RC) — 수동: bash scripts/candidates-append.sh set $ID accepted --note commit=<해시> --machine (이미 accepted 면 attach-commit $ID <해시>, 커밋은 유지됨)" >&2
     exit 0
 fi
-# 변경 파일 목록을 못 읽었으면(diff-tree 실패) «변경 없음» 으로 오인하지 않고 다른 경고를 낸 뒤 끝낸다. 큐에도 넣지 않는다 —
-# 큐 배수는 agents/rules 검증을 하지 않으므로 넣으면 미검증 채택이 된다.
+# NEVER: diff-tree 실패를 «변경 없음» 으로 보거나 큐에 넣지 않는다. 큐 배수는 agents/rules 검증을 하지 않으므로 넣으면 미검증 채택이 된다.
 if [ "$FILES_RC" -ne 0 ]; then
     echo "⚠ ci-gate-post-commit: 변경 파일 목록을 읽지 못함(diff-tree rc=$FILES_RC) — 수동: bash scripts/candidates-append.sh set $ID accepted --note commit=$SHORT --machine (이미 accepted 면 attach-commit $ID $SHORT, 커밋은 유지됨)" >&2
     exit 0
 fi
 
-# 이미 accepted 인 id: 상태는 건드리지 않는다. 승인이 커밋보다 먼저였다면 비고에 commit= 이 없으므로 반영 커밋일 때만 해시를 붙인다
-# (attach-commit 이 잠금 안에서 commit= 유무를 확인하므로 amend·rebase 로 post-commit 이 다시 돌아도 첫 해시가 유지된다).
 if [ -f "$CAND" ]; then
     CUR=$(ID="$ID" awk -F'\t' '$1!="id" && $1==ENVIRON["ID"] {print $5; exit}' "$CAND")
     if [ "$CUR" = "accepted" ]; then
         if printf '%s\n' "$FILES" | grep -E "$GOV_RX" >/dev/null; then
             bash "$SELF_DIR/candidates-append.sh" attach-commit "$ID" "$SHORT" >/dev/null; RC=$?
-            if [ "$RC" -eq 3 ] || [ "$RC" -eq 5 ]; then   # 3=잠금 실패, 5=대장 저장 실패: 둘 다 일시 실패라 재시도 큐로
+            if [ "$RC" -eq 3 ] || [ "$RC" -eq 5 ]; then
                 queue_retry "$ID" "$SHORT"; QRC=$?
                 if [ "$QRC" -eq 0 ]; then
                     echo "⚠ ci-gate-post-commit: 후보 $ID 에 commit=$SHORT 를 붙이지 못함($([ "$RC" -eq 5 ] && echo '대장 저장 실패' || echo '잠금 실패')) — 재시도 큐에 넣음, 다음 세션이 다시 시도" >&2
@@ -144,7 +135,7 @@ fi
 REASON=$(printf '%s\n' "$FILES" | validate "$ID"); VRC=$?
 if [ "$VRC" -eq 0 ]; then
     bash "$SELF_DIR/candidates-append.sh" set "$ID" accepted --note "commit=$SHORT" --machine >/dev/null; RC=$?
-    if [ "$RC" -eq 3 ] || [ "$RC" -eq 5 ]; then   # 3=잠금 실패, 5=대장 저장 실패: 둘 다 일시 실패라 재시도 큐로
+    if [ "$RC" -eq 3 ] || [ "$RC" -eq 5 ]; then
         queue_retry "$ID" "$SHORT"; QRC=$?
         if [ "$QRC" -eq 0 ]; then
             echo "⚠ ci-gate-post-commit: 후보 $ID 를 accepted 로 바꾸지 못함($([ "$RC" -eq 5 ] && echo '대장 저장 실패' || echo '잠금 실패')) — 재시도 큐에 넣음, 다음 세션이 다시 시도" >&2
@@ -155,8 +146,6 @@ if [ "$VRC" -eq 0 ]; then
         echo "⚠ ci-gate-post-commit: 후보 $ID 를 accepted 로 바꾸지 못함 — 커밋은 유지됨. 수동: bash scripts/candidates-append.sh set $ID accepted --note commit=$SHORT --machine" >&2
     fi
 elif [ "$VRC" -eq 2 ]; then
-    # 대장을 읽지 못해 id·상태를 모른다. 거버넌스 파일(agents/rules 계열) 변경은 이 훅이 이미 확인했으므로(큐 배수는 이 검증을 하지 않는다)
-    # 그 변경이 있을 때만 재시도 큐에 넣는다. 배수는 대장이 읽히면 상태에 맞게 set(또는 attach-commit)으로 전이한다. 변경이 없으면 경고만.
     if printf '%s\n' "$FILES" | grep -E "$GOV_RX" >/dev/null; then
         queue_retry "$ID" "$SHORT"; QRC=$?
         if [ "$QRC" -eq 0 ]; then

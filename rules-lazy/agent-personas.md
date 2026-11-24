@@ -2,7 +2,7 @@
 
 > **로드 시점**: discuss/workflow 진입 시 teammate spawn prompt 생성 단계 (lazy)
 > **목적**: 동일 에이전트가 페르소나에 따라 다른 관점·우선순위로 작동하도록 다양성 보장
-> **사용 방법**: spawn prompt 4요소 중 `objective` 섹션 직전에 `[PERSONA: <id>]` 헤더 + 페르소나 본문 자동 주입
+> **사용 방법**: spawn prompt 5요소 중 `objective` 섹션 직전에 `[PERSONA: <id>]` 헤더 + 페르소나 본문 자동 주입
 > **규모**(2026-11-10 CLAUDE.md 에서 이관): 12개 에이전트 가운데 페르소나 카탈로그 10종 × 3(citation-verifier 는 자체 5모드, reviewer 는 페르소나 없음) + 비판 모드 4종.
 
 ---
@@ -142,8 +142,9 @@ teammate spawn 시 prompt 서두에 아래 블록 추가:
 [CRITIQUE_MODE: standard]  ← 별도 차원 (협력/표준/비판/devil's-advocate)
 
 objective: <주제>
+user_request: <사용자 지시 원문 인용 또는 원문 파일 경로>
 output_format: <형식>
-tools: <허용 도구>
+tools/sources: <허용 도구>
 task_boundary: <금지 사항>
 ```
 

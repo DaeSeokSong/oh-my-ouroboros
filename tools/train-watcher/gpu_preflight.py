@@ -1,8 +1,4 @@
-#!/usr/bin/env python3
 """gpu_preflight.py — 학습 발사 전 GPU·CPU 여유 검사. launch-set.sh launch 가 부르고, 따로 불러도 된다.
-
-(2026-09-29 사용자 결정: 모든 학습에 적용. 결정1-2) 이미 판이 도는 GPU 는 60초 평균 사용률 70% 이하일 때만,
- 결정2-1) 새 판의 --vram-gb·--cpu-cores 를 필수로 받고 없으면 빈 GPU 에만, 결정3-1) 미달이면 거부.)
 
 사용: gpu_preflight.py --gpu 3[,4] [--vram-gb 30] [--cpu-cores 6] [--util-max 70] [--sample-sec 60]
                        [--cpu-reserve 8] [--vram-margin 0.1]
@@ -28,6 +24,7 @@
    "util": {"3": 40.0},        # 공유 GPU 의 사용률 평균(%). 없는 GPU 는 측정 실패로 취급
    "idle_cores": 90}           # 빈 논리 코어. 생략하면 매우 큰 값
   실제 GPU 는 학습 중이라 대기 목록 도구 시험에 쓸 수 없어 만든 장치다.
+REF: knowledge/harness/code-history/tools__train-watcher__gpu_preflight.py.md
 """
 from __future__ import annotations
 
@@ -42,7 +39,6 @@ REFUSE, ARGERR = 76, 64
 
 
 def decide(gpus: dict, targets: list[int], util_avg: dict, idle_cores: float | None, a) -> tuple[bool, list[str]]:
-    """순수 판정. gpus = {idx: {"name","total_gb","used_gb","procs"}}, util_avg = {idx: 평균%}."""
     ok, msgs = True, []
     for g in targets:
         info = gpus[g]
@@ -83,22 +79,22 @@ def decide(gpus: dict, targets: list[int], util_avg: dict, idle_cores: float | N
 
 
 class SmiError(RuntimeError):
-    """nvidia-smi 조회 실패(실행 불가·종료 코드≠0·시간 초과·값 읽기 실패) — 인자 오류(64)가 아니라 «판정 불능 → 거부(76)» 이다(D3)."""
+    pass
 
 
 def _smi(args: list[str]) -> list[list[str]]:
     try:
         r = subprocess.run(["nvidia-smi", *args, "--format=csv,noheader,nounits"], capture_output=True, text=True,
-                           timeout=30, env={"CUDA_DEVICE_ORDER": "PCI_BUS_ID", "PATH": "/usr/bin:/bin"})
+                           timeout=30, env={"CUDA_DEVICE_ORDER": "PCI_BUS_ID", "PATH": "/usr/bin:/bin"}, check=False)
     except (OSError, subprocess.SubprocessError) as e:
         raise SmiError(f"nvidia-smi 실행 실패 ({args[0]}): {type(e).__name__}: {e}")
-    if r.returncode != 0:   # 실패한 조회를 «빈 결과»로 읽으면 점유 프로세스 0개 = 빈 GPU 로 오판해 판이 도는 카드에 올린다
+    # NEVER: 실패한 조회를 «빈 결과»로 읽지 않는다. 점유 프로세스 0개 = 빈 GPU 로 오판해 판이 도는 카드에 올린다.
+    if r.returncode != 0:
         raise SmiError(f"nvidia-smi 가 종료 코드 {r.returncode} 로 실패 ({args[0]}): {r.stderr.strip()[:200]}")
     return [[x.strip() for x in line.split(",")] for line in r.stdout.strip().splitlines() if line.strip()]
 
 
 def _num(v: str, conv, what: str):
-    """nvidia-smi 값 변환. `[N/A]`·`[Not Supported]` 같은 값은 ValueError 가 아니라 조회 실패(SmiError)로 올린다."""
     try:
         return conv(v)
     except ValueError:
@@ -106,7 +102,6 @@ def _num(v: str, conv, what: str):
 
 
 def _fake() -> dict | None:
-    """시험 전용 가짜 상태(헤더 참조). 변수가 없으면 None."""
     path = os.environ.get("GPU_PREFLIGHT_FAKE")
     return json.load(open(path)) if path else None
 
@@ -131,23 +126,25 @@ def read_gpus() -> dict:
 
 
 def _cpu_times() -> tuple[int, int]:
-    f = open("/proc/stat").readline().split()[1:]
+    with open("/proc/stat") as fh:
+        f = fh.readline().split()[1:]
     v = list(map(int, f))
-    return sum(v), v[3] + v[4]                              # 전체, idle+iowait
+    return sum(v), v[3] + v[4]
 
 
 def sample(targets: list[int], sec: int, want_util: bool) -> tuple[dict, float]:
     fk = _fake()
     if fk is not None:
         return {g: float(fk["util"][str(g)]) for g in targets if str(g) in fk.get("util", {})}, fk.get("idle_cores", 1e9)
-    ncpu = sum(1 for line in open("/proc/stat") if line.startswith("cpu") and line[3].isdigit())
+    with open("/proc/stat") as fh:
+        ncpu = sum(1 for line in fh if line.startswith("cpu") and line[3].isdigit())
     t0, i0 = _cpu_times()
     utils = {g: [] for g in targets}
     end = time.time() + sec
     while time.time() < end:
         if want_util:
             for row in _smi(["--query-gpu=index,utilization.gpu"]):
-                if len(row) != 2:   # 2026-10-01 P6 검수: 행 길이 이상은 unpack ValueError 가 아니라 조회 실패(SmiError → 거부 76)
+                if len(row) != 2:   # WHY: 행 길이 이상은 unpack ValueError 가 아니라 조회 실패(SmiError → 거부 76)로 낸다(2026-10-01 P6 검수)
                     raise SmiError(f"nvidia-smi 출력 형식 이상: {row!r}")
                 idx, u = row
                 if _num(idx, int, "index") in utils:
@@ -179,13 +176,11 @@ def main(argv=None) -> int:
             print(f"[gpu-preflight] 거부: 없는 GPU 번호 {missing or a.gpu}", file=sys.stderr)
             return ARGERR
         shared = [g for g in targets if gpus[g]["procs"] > 0]
-        # 표본은 쓸 데가 있을 때만 잰다: CPU 판정이 필요하고, 공유 GPU 면 필수 인자까지 갖춘 경우(없으면 표본 없이 바로 거부).
         need_sample = a.cpu_cores is not None and (not shared or a.vram_gb is not None)
         util_avg, idle = ({}, None)
         if need_sample:
             print(f"[gpu-preflight] {a.sample_sec}초 표본 측정 중 (GPU {','.join(map(str, targets))}, CPU)", file=sys.stderr)
             util_avg, idle = sample(targets, a.sample_sec, want_util=bool(shared))
-            # 표본 구간(기본 60초) 동안 다른 판이 올라올 수 있다 — 측정 전에 읽은 점유·VRAM 으로 판정하면 방금 시작한 판의 카드에 겹쳐 올린다. 측정 뒤 다시 조회한다.
             gpus = read_gpus()
             late = [g for g in targets if g in gpus and gpus[g]["procs"] > 0 and g not in shared]
             if late:

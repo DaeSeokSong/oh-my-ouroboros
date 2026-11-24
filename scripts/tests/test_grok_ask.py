@@ -1,9 +1,10 @@
-"""grok-ask.sh 회귀 테스트 (2026-10-01 감사: 등호형 옵션·인라인 본문 사전검사). 실제 grok 은 부르지 않는다.
+"""grok-ask.sh 회귀 테스트. 실제 grok 은 부르지 않는다.
 
 실행: python3 ~/.claude/scripts/tests/test_grok_ask.py → 실패 0 이면 exit 0
 가짜 HOME 에 `.grok/bin/grok`(받은 인자를 파일에 적는 가짜)과 실제 사전검사 스크립트 링크를 둔다.
 기대값은 지적된 사고에서 만든다: 게이트가 읽은 `--model=값` 이 래퍼에서도 같은 값으로 전달되어야 하고,
 비밀이 든 인라인 본문은 grok 호출 전에 거부되어야 한다.
+REF: knowledge/harness/code-history/scripts__tests__test_grok_ask.py.md
 """
 import os
 import subprocess
@@ -13,14 +14,13 @@ from pathlib import Path
 
 WRAPPER = Path.home() / ".claude/tools/grok-exchange/grok-ask.sh"
 PREFLIGHT = Path.home() / ".claude/scripts/external_send_preflight.py"
-SECRET = "tok" + 'en="' + "Sk9w" + "Q2vL" + 'p7zzz"'      # 소스에 키 모양 리터럴을 두지 않는다
+SECRET = "tok" + 'en="' + "Sk9w" + "Q2vL" + 'p7zzz"'      # NEVER: 소스에 키 모양 리터럴을 두지 않는다
 
 fail = 0
 n = 0
 
 
 def run(args, with_preflight=True, file_bytes=None):
-    """가짜 HOME 에서 래퍼를 돌려 (rc, stderr, grok 이 받은 인자 or None) 을 돌려준다. file_bytes 면 그 크기의 --file 을 만들어 넘긴다."""
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
         if file_bytes is not None:
@@ -30,7 +30,7 @@ def run(args, with_preflight=True, file_bytes=None):
             args = [*args, "--file", str(big)]
         (home / ".grok/bin").mkdir(parents=True)
         fake = home / ".grok/bin/grok"
-        # 2026-10-25: 빈 응답(종료 코드 0)은 래퍼가 exit 75 로 바꾸므로 가짜도 답을 한 줄 낸다
+        # WHY: 2026-10-25: 빈 응답(종료 코드 0)은 래퍼가 exit 75 로 바꾸므로 가짜도 답을 한 줄 낸다
         fake.write_text(f'#!/bin/sh\necho "$@" > "{home}/argv.txt"\necho fake answer\n', encoding="utf-8")
         fake.chmod(0o755)
         (home / ".claude/scripts").mkdir(parents=True)
@@ -69,9 +69,7 @@ check("프롬프트 100KB 초과 → 표준에러 경고, 전송은 진행", rc 
 rc, err, argv = run([], file_bytes=50_000)
 check("프롬프트 100KB 이하 → 경고 없음", rc == 0 and argv is not None and "[grok-ask] 경고" not in err, f"rc={rc} argv={argv} err={err[-200:]}")
 
-# --- 2026-10-25: 세션 고정 폴더·직렬화·실패 드러내기 (실측: 두 번째 호출이 «so nothing ran» 인데 종료 코드 0) ---
 def make_home(td):
-    """가짜 HOME 을 만든다. 가짜 grok 은 인자·cwd·cwd 목록을 적고 FAKE_MODE(ok|empty|nothing)에 따라 답한다."""
     home = Path(td)
     (home / ".grok/bin").mkdir(parents=True)
     fake = home / ".grok/bin/grok"
@@ -88,7 +86,6 @@ def make_home(td):
 
 
 def call(home, args, mode="ok"):
-    """래퍼를 한 번 돌려 (CompletedProcess, argv, cwd, cwd 목록 줄들) 를 돌려준다. grok 이 안 불렸으면 None."""
     for name in ("argv.txt", "cwd.txt", "ls.txt"):
         (home / name).unlink(missing_ok=True)
     r = subprocess.run(["bash", str(WRAPPER), *args], capture_output=True, text=True,
@@ -150,7 +147,6 @@ with tempfile.TemporaryDirectory() as td:
           r.returncode == 0 and len(prompts) == 1 and prompts[0] != ".prompt-999999.md" and not stale.exists(),
           f"rc={r.returncode} ls={ls}")
 
-# --- 2026-10-26 main 검수: 판정 범위 좁히기 · 실패한 첫 호출은 .id 를 남기지 않음 ---
 with tempfile.TemporaryDirectory() as td:
     home = make_home(td)
     r, argv, cwd, ls = call(home, ["질문"], mode="quote")

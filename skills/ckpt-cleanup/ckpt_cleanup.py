@@ -19,6 +19,7 @@
     [--wandb-entity E --wandb-project P] [--assume-cleaned] \
     [--emit-plan] [--out-dir DIR] [--purge-run-dir]
 """
+# REF: knowledge/harness/code-history/skills__ckpt-cleanup__ckpt_cleanup.py.md
 
 import argparse
 import json
@@ -43,8 +44,7 @@ def human(nbytes: int) -> str:
 
 
 def discover(root: Path, exts: set):
-    """root 하위 ckpt 파일을 run 디렉토리 단위로 그룹핑."""
-    groups = defaultdict(list)  # run_dir(Path) -> [file Path]
+    groups = defaultdict(list)
     symlinks = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
@@ -64,9 +64,9 @@ def discover(root: Path, exts: set):
 
 
 def fetch_wandb_runs(entity: str, project: str):
-    """wandb run 목록 조회 (read-only). 실패 시 None — 전량 HOLD로 강등."""
+    # NEVER: 조회가 실패하면 None 말고 다른 값을 돌려주지 않는다(실패 시 None — 전량 HOLD 로 강등).
     try:
-        import wandb  # 지연 import — 미설치 환경에서도 인벤토리 모드는 동작
+        import wandb
 
         api = wandb.Api(timeout=60)
         runs = api.runs(f"{entity}/{project}", per_page=500)
@@ -74,13 +74,13 @@ def fetch_wandb_runs(entity: str, project: str):
             {"id": r.id, "name": r.name, "state": r.state, "tags": list(r.tags or [])}
             for r in runs
         ]
-    except Exception as e:  # noqa: BLE001 네트워크/인증/미설치 — 이유 불문 인벤토리 모드
+    except Exception as e:  # noqa: BLE001
         print(f"[warn] wandb 조회 실패 → 전량 HOLD(인벤토리 모드): {e}", file=sys.stderr)
         return None
 
 
 def match_run(dir_name: str, wandb_runs):
-    """정확 일치 → 부분 포함(양방향) 순. 다중 매치는 미매칭 취급(오분류 방지)."""
+    # NEVER: 다중 매치를 매칭으로 치지 않는다(미매칭 취급, 오분류 방지).
     exact = [r for r in wandb_runs if r["name"] == dir_name]
     if len(exact) == 1:
         return exact[0]

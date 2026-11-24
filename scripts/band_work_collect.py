@@ -1,18 +1,17 @@
 """띠 작업 줄 데이터: 이 Claude 세션이 띄운 Codex·Grok 작업의 모델·effort 와 현재 저장소의 학습 판.
 
-왜 자손 프로세스만인가: 프로세스 표와 Codex 기록에는 세션 구분이 없어, 서버 전체를 보면 다른 세션의 작업이
-모든 띠에 뜬다(검수 researcher 8). 그래서 세션 등록 파일에서 이 세션의 pid 를 찾고 그 자손만 본다.
+세션 등록 파일에서 이 세션의 pid 를 찾고 그 자손만 본다.
 Grok 은 grok 실행 파일의 인자 `-m`·`--reasoning-effort` 만 읽는다(bash 래퍼의 인자 글자는 제외).
 Codex 는 자손 codex 프로세스가 연 rollout 파일의 마지막 turn_context 를 읽는다.
-값은 ^[A-Za-z0-9._-]{1,40}$ 만 통과시킨다(검수 security 7).
+값은 ^[A-Za-z0-9._-]{1,40}$ 만 통과시킨다.
 학습 판: 상태 파일에 실행 여부 필드가 없어 train_pid 의 시작 시각과 boot_id 가 모두 맞을 때만 실행 중으로 본다.
-할 일(개정 22): 엔진이 세션마다 ~/.claude/tasks/session-<세션 id 앞 8자리>/<번호>.json 에 두는 할 일의 상태 개수와
+할 일: 엔진이 세션마다 ~/.claude/tasks/session-<세션 id 앞 8자리>/<번호>.json 에 두는 할 일의 상태 개수와
 진행·남은 항목 제목. 띠가 접고 펴는 «할 일» 묶음을 그린다(엔진의 할 일 목록은 mod 가 다시 그릴 자리가 없어 ctrl+t 로 숨긴다).
-정지 스위치·남은 자식 감지(2026-10-26, GPU 서버 실측: 갇힌 `pgrep` 약 63개로 부하 평균 65~70, 정본은 band_server_collect.py 헤더): 이 수집기의 `ps` 도 같은
-식으로 쌓일 수 있다(세션마다 5초, 잠금 없음). `_cache/band/off` 파일이 있으면 ps 를 부르지 않는다(codex·grok 은 None, todos·train 은 파일 읽기라 그대로).
+정지 스위치·남은 자식 감지: `_cache/band/off` 파일이 있으면 ps 를 부르지 않는다(codex·grok 은 None, todos·train 은 파일 읽기라 그대로).
 ps 자식은 Popen 으로 띄워 pid 를 `work_ps.inflight`(세션 공통 파일 하나)에 적고, 시작 시 그 pid 의 /proc/<pid>/comm 이 ps 면 ps 를 부르지 않는다.
-세션끼리 기록이 겹치면 한 회차 codex·grok 표시가 빠질 뿐이다. 출력 JSON 키는 그대로다.
+세션끼리 기록이 겹치면 한 회차 codex·grok 표시가 빠질 뿐이다.
 호출: python3 band_work_collect.py --session-id <uuid> --cwd <절대경로>
+REF: knowledge/harness/code-history/scripts__band_work_collect.py.md
 """
 import argparse
 import json
@@ -24,7 +23,7 @@ import subprocess
 import tempfile
 import time
 
-CACHE_DIR = pathlib.Path(os.environ.get("BAND_CACHE_DIR", os.path.expanduser("~/.claude/_cache/band")))   # server 수집기와 같은 규칙
+CACHE_DIR = pathlib.Path(os.environ.get("BAND_CACHE_DIR", os.path.expanduser("~/.claude/_cache/band")))   # NEVER: scripts/band_server_collect.py 의 규칙과 따로 바꾸지 않는다
 SESS_DIR = pathlib.Path(os.environ.get("BAND_SESSIONS_DIR", os.path.expanduser("~/.claude/sessions")))
 CODEX_SESSIONS = os.path.realpath(os.environ.get("BAND_CODEX_SESSIONS", os.path.expanduser("~/.codex/sessions")))
 TASKS_DIR = pathlib.Path(os.environ.get("BAND_TASKS_DIR", os.path.expanduser("~/.claude/tasks")))
@@ -33,9 +32,7 @@ MAX_TASK_BYTES = 1 << 16
 MAX_TASK_FILES = 500
 MAX_TODO_ITEMS = 12
 TODO_STATE = {"completed": "done", "in_progress": "doing", "pending": "open"}
-# 제목에서 지울 글자: 제어(C0·C1) · 줄/문단 구분 · 양방향 제어 · 폭 없는 글자 · 아랍 글자 표지(띠 model.js 의 정화와 같은 집합).
-# security 2026-10-23: 보이지 않는 글자(약한 하이픈 U+00AD · 수학 보이지 않는 연산자 U+2061~2064 · 낡은 서식 U+206A~206F ·
-# 글자 변형 선택자 U+FE00~FE0F · 태그 U+E0000~E007F · 한글 채움 U+3164)도 지운다. model.js 의 isStripped 와 같은 집합이다(시험이 대조).
+# NEVER: mods/harness-mod/hooks/band/model.js 의 isStripped 와 따로 바꾸지 않는다(같은 집합이다, 시험이 대조).
 _STRIP_RANGES = ((0x00, 0x1F), (0x7F, 0x9F), (0x2028, 0x202E), (0x2066, 0x2069), (0x200B, 0x200F), (0x2060, 0x2064), (0xFEFF, 0xFEFF), (0x061C, 0x061C),
                  (0x00AD, 0x00AD), (0x206A, 0x206F), (0xFE00, 0xFE0F), (0xE0000, 0xE007F), (0x3164, 0x3164))
 CODEX_EXE = re.compile(r"^codex-(x86_64|aarch64)")
@@ -45,12 +42,10 @@ LOG_KEYS = ("watcher_log", "train_log", "done_log")
 
 
 def safe(v):
-    """Return v only if it is a short token of safe characters."""
     return v if isinstance(v, str) and VAL.match(v) else None
 
 
 def parse_ps(text):
-    """Parse `ps -eo pid=,ppid=,args=` into {pid: (ppid, args)}."""
     table = {}
     for line in text.splitlines():
         f = line.split(None, 2)
@@ -60,7 +55,6 @@ def parse_ps(text):
 
 
 def descendants(table, root):
-    """Return all descendant pids of root."""
     kids = {}
     for pid, (ppid, _) in table.items():
         kids.setdefault(ppid, []).append(pid)
@@ -73,12 +67,10 @@ def descendants(table, root):
 
 
 def _exe(args):
-    """Return the basename of the first token of a command line."""
     return os.path.basename(args.split(" ", 1)[0]) if args else ""
 
 
 def _opt(tokens, name):
-    """Return the safe value following option `name`, or None."""
     if name in tokens:
         i = tokens.index(name)
         if i + 1 < len(tokens):
@@ -87,7 +79,6 @@ def _opt(tokens, name):
 
 
 def find_grok(table, pids):
-    """Find grok binaries among pids and read model/effort from their argv."""
     out = []
     for pid in pids:
         args = table[pid][1]
@@ -99,7 +90,6 @@ def find_grok(table, pids):
 
 
 def codex_from_rollout(path):
-    """Read model/effort from the last turn_context line of a Codex rollout file."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     except OSError:
@@ -129,14 +119,12 @@ def codex_from_rollout(path):
 
 
 def rollout_path(target, root=None):
-    """Return the real path of a rollout-*.jsonl under the Codex sessions root, else None."""
     real = os.path.realpath(target)
     root = root or CODEX_SESSIONS
     return real if real.startswith(root + os.sep) and os.path.basename(real).startswith("rollout-") else None
 
 
 def find_codex(table, pids):
-    """Find codex processes among pids and read model/effort from their open rollout file."""
     out = []
     for pid in pids:
         tokens = table[pid][1].split()
@@ -156,7 +144,6 @@ def find_codex(table, pids):
 
 
 def _start_of(pid):
-    """Return the process start time (clock ticks since boot) as a string, or None."""
     try:
         stat = pathlib.Path(f"/proc/{pid}/stat").read_text()
         return stat.rsplit(")", 1)[1].split()[19]
@@ -165,7 +152,6 @@ def _start_of(pid):
 
 
 def ended_at(obj, state_mtime):
-    """Latest mtime among the state's log files (regular, non-symlink); the state file mtime if none exist."""
     times = []
     for key in LOG_KEYS:
         p = obj.get(key)
@@ -180,7 +166,6 @@ def ended_at(obj, state_mtime):
 
 
 def train_states(repo, boot_id, start_of=_start_of, now=None):
-    """Classify launch-state files under repo/.scratch into running and recently ended runs."""
     now = now or time.time()
     repo = pathlib.Path(repo)
     files = sorted(set(repo.glob(".scratch/launch/launch-state-*.json")) | set(repo.glob(".scratch/*/launch/launch-state-*.json")))
@@ -206,12 +191,10 @@ def train_states(repo, boot_id, start_of=_start_of, now=None):
 
 
 def strip_text(s):
-    """Drop control, separator, bidi, zero-width and Arabic-letter-mark characters."""
     return "".join(c for c in s if not any(a <= ord(c) <= b for a, b in _STRIP_RANGES))
 
 
 def todos(session_id, root=None):
-    """Count this session's tasks by state and list the in-progress and pending subjects (None if it has no task folder)."""
     if not isinstance(session_id, str) or not re.match(r"^[0-9a-f]{8}-", session_id):
         return None
     folder = pathlib.Path(root or TASKS_DIR) / f"session-{session_id[:8]}"
@@ -243,13 +226,12 @@ def todos(session_id, root=None):
         subject = obj.get("subject")
         if state != "done" and isinstance(subject, str):
             items.append({"state": state, "subject": strip_text(subject)[:120]})
-    # 진행 먼저 · 번호 순으로 세운 뒤 자른다(앞 번호의 남은 항목이 많아도 진행 항목이 빠지지 않게, qa 2026-10-23).
+    # WHY: 진행 먼저 · 번호 순으로 세운 뒤 자른다(앞 번호의 남은 항목이 많아도 진행 항목이 빠지지 않게, qa 2026-10-23).
     items.sort(key=lambda x: 0 if x["state"] == "doing" else 1)
     return {**counts, "items": items[:MAX_TODO_ITEMS]}
 
 
 def own_pid(session_id):
-    """Find this session's pid from its registration file."""
     for p in SESS_DIR.glob("*.json"):
         if not re.match(r"^\d+\.json$", p.name):
             continue
@@ -266,7 +248,6 @@ def own_pid(session_id):
 
 
 def git_root(cwd):
-    """Return the nearest ancestor of cwd (max 40 levels) that contains .git, or None."""
     cur = os.path.normpath(cwd)
     for _ in range(40):
         if os.path.exists(os.path.join(cur, ".git")):
@@ -279,12 +260,10 @@ def git_root(cwd):
 
 
 def _inflight_path():
-    """Path of the ps child record shared by all sessions."""
     return CACHE_DIR / "work_ps.inflight"
 
 
 def ps_stuck():
-    """True if the ps child recorded in work_ps.inflight is still alive (/proc/<pid>/comm == recorded name, comm only)."""
     try:
         with open(_inflight_path()) as f:
             rec = json.loads(f.read(4096))
@@ -293,12 +272,11 @@ def ps_stuck():
             return False
         with open(f"/proc/{pid}/comm", "rb") as f:
             return f.read(32).decode("utf-8", "replace").strip() == comm
-    except (OSError, ValueError, KeyError, TypeError, RecursionError):  # 깊은 중첩 JSON 도 수집기를 죽이지 않게(security 낮음)
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return False
 
 
 def _set_inflight(pid):
-    """Record the ps child (atomic write; best effort, no cache folder -> not recorded)."""
     tmp = None
     try:
         fd, tmp = tempfile.mkstemp(dir=CACHE_DIR, prefix="work_ps.inflight.")
@@ -314,7 +292,6 @@ def _set_inflight(pid):
 
 
 def _clear_inflight(pid):
-    """Remove the record only if it still names our ps (another session may have replaced it)."""
     try:
         with open(_inflight_path()) as f:
             if json.loads(f.read(4096)).get("pid") == pid:
@@ -324,7 +301,6 @@ def _clear_inflight(pid):
 
 
 def run_ps():
-    """Run `ps -eo pid=,ppid=,args=` (3s) and return stdout, or None; a ps that survives kill (D state) stays recorded."""
     try:
         p = subprocess.Popen(["ps", "-eo", "pid=,ppid=,args="], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     except OSError:
@@ -348,7 +324,6 @@ def run_ps():
 
 
 def main():
-    """Print the work-line JSON for one session to stdout (ps is skipped while the `off` file exists or a previous ps is stuck)."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--session-id", required=True)
     ap.add_argument("--cwd", required=True)

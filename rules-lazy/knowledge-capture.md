@@ -40,6 +40,8 @@ vault(`graphify-out/obsidian/`)는 graphify export가 **재생성하는 파생�
 **프로젝트 폴더 규약 (2026-07-14 사용자 지시 — 프로젝트별 관리)**:
 - `harness/` — 하네스·Claude Code 운영 지식 (훅·타이머·권한·statusline·headless 등)
 - `<프로젝트-슬러그>/` — 해당 연구 프로젝트의 도메인 지식
+- `concepts/` — 프로젝트를 가리지 않는 개념 그림(`concepts/figures/`)과 그 그림 노트. 학습 계획서의 코드 이해용 그림을 보관한다(`skills/figure/SKILL.md` § 그림 보관과 재사용, 2026-11-21 사용자 지시)
+- `<프로젝트-슬러그>/figures/` — 그 프로젝트의 블록 예시 그림과 그림 노트. 그림 노트는 자리가 규칙으로 정해져 있어 프로젝트명 확인 게이트를 다시 거치지 않는다
 - 배정 기준 1줄: **"이 지식을 재사용할 세션이 어느 프로젝트에서 뜨는가"** — 애매하면(양쪽에서 재사용) `harness/`
 - `README.md`만 루트 유지. 신규 프로젝트 폴더는 첫 노트 작성 시 그냥 만들면 된다 (등록 절차 없음 — detect가 하위 폴더 재귀 수집, 실측 확인)
 - 폴더는 **사람 브라우징 + vault 노트의 `source_file` 메타데이터 그룹핑**용이다 — Obsidian Graph View는 링크 기반이라 폴더 무관, 서버별 폴더는 금지(서버는 주제가 아니라 출처 — frontmatter `source:` 소관, 폴더로 나누면 서버 간 동일 지식이 중복됨)
@@ -54,7 +56,7 @@ vault(`graphify-out/obsidian/`)는 graphify export가 **재생성하는 파생�
 ---
 title: 한 줄 제목
 date: YYYY-MM-DD
-type: finding | fact | rationale | adopted-knowledge
+type: finding | fact | rationale | adopted-knowledge | figure
 tags: [영역, 도구명, ...]
 source: 대화 | arXiv:NNNN.NNNNN | URL | 실측
 ---

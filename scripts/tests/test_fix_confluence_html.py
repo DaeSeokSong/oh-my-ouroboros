@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import fix_confluence_html as fx  # noqa: E402
+import fix_confluence_html as fx
 
 
 def wrap(body):

@@ -57,7 +57,6 @@ def make_home(tmp):
 
 
 def detect(prompts):
-    """임시 HOME 에 프롬프트 로그를 쓰고 감지기를 돌려 (후보 행 목록, 완료 코드)를 돌려준다."""
     with tempfile.TemporaryDirectory() as tmp:
         home = make_home(tmp)
         ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

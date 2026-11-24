@@ -1,11 +1,11 @@
-#!/usr/bin/env python3
-"""알림 본문 통제·시크릿 채널 회귀 시험 (2026-10-01 감사 묶음 D 신설).
+"""알림 본문 통제·시크릿 채널 회귀 시험.
 
 대상: claude-notify.sh(마스킹 한 곳·curl 인자 비노출·잠금 실패 spill), mem-watch.sh(claude-notify 경유),
       tavily-usage-fetch.sh(키 비노출), prompt-log.sh(600), t41-subagent-stop.sh(RESULT 우선·마스킹).
 실제 네트워크·실제 ~/.claude 를 쓰지 않는다: HOME 은 임시 폴더, PATH 앞에 가짜 curl(받은 인자·표준입력을 파일에 적는다).
 알림 주제·가짜 토큰은 시험용 값이며 실행 시 이어 붙여 만든다(파일 원문에 패턴이 있으면 시크릿 탐지가 막는다).
 실행: python3 scripts/tests/test_notify_secret_channels.py (pytest 로도 수집된다). D_SCRIPTS·D_TOOLS 로 대상 사본을 바꿀 수 있다.
+REF: knowledge/harness/code-history/scripts__tests__test_notify_secret_channels.py.md
 """
 
 import json
@@ -21,9 +21,8 @@ TOOLS = Path(os.environ.get("D_TOOLS", SCRIPTS.parent / "tools"))
 NOTIFY = SCRIPTS / "claude-notify.sh"
 FLUSH = SCRIPTS / "ntfy-flush.sh"
 DAY = "20261001"
-TOPIC = "topic-" + "zq81xk"  # 가짜 주제
+TOPIC = "topic-" + "zq81xk"
 
-# 가짜 토큰(이어 붙여 만든다)
 T_ANT = "sk-" + "ant-api03-" + "ABCDEFGHIJKLMNOP"
 T_PROJ = "sk-" + "proj-" + "abcdefghij1234567890"
 T_TAVILY = "tv" + "ly-" + "dev-ABCDEFGH12345678"
@@ -36,7 +35,6 @@ ALL_TOKENS = [T_ANT, T_PROJ, T_TAVILY, T_GH, T_SLACK, T_MEM0, T_ATLAS, UID]
 
 
 def make_root(tmp, topic=True):
-    """가짜 curl 이 든 임시 HOME 과 환경. curl 은 인자(argv.log)·표준입력(stdin.log)·본문(data.log)을 적는다."""
     root = Path(tmp)
     bindir = root / "bin"
     bindir.mkdir()
@@ -81,7 +79,7 @@ def log(root, name):
 
 def run(args, env, stdin=subprocess.DEVNULL, input_text=None, cwd="/"):
     kwargs = {"input": input_text} if input_text is not None else {"stdin": stdin}
-    return subprocess.run(args, env=env, cwd=cwd, capture_output=True, text=True, timeout=60, **kwargs)
+    return subprocess.run(args, env=env, cwd=cwd, capture_output=True, text=True, timeout=60, check=False, **kwargs)
 
 
 def direct(env, text):
@@ -93,7 +91,6 @@ def queue_path(root):
 
 
 def test_direct_path_masks_every_token_kind():
-    # 수정 전: 직접 호출 본문은 마스킹 없이 그대로 나갔다(표지 줄 경로만 마스킹).
     with tempfile.TemporaryDirectory() as tmp:
         root, env = make_root(tmp)
         direct(env, "점검 " + " / ".join(ALL_TOKENS) + " 끝")
@@ -114,7 +111,6 @@ def test_direct_path_truncates_and_single_line():
 
 
 def test_queued_and_flushed_text_is_masked_even_if_hand_written_raw():
-    # 큐 파일에 마스킹 없이 적힌 줄(옛 버전·수작업)도 재발송 직전 한 함수를 지난다.
     with tempfile.TemporaryDirectory() as tmp:
         root, env = make_root(tmp)
         row = "\t".join(("2026-09-30T00:00:00Z", "s", "final", "default", "tag", "[t: P]", "큐 " + T_ANT + " " + UID, "0"))
@@ -139,7 +135,6 @@ def test_marker_path_masks_new_token_kinds():
 
 
 def test_curl_argv_carries_no_topic_title_or_body():
-    # 수정 전: 주제 URL·헤더·본문이 curl 명령줄 인자였다(프로세스 목록에 보인다).
     with tempfile.TemporaryDirectory() as tmp:
         root, env = make_root(tmp)
         direct(env, "비밀스러운본문")
@@ -160,25 +155,23 @@ def test_body_starting_with_at_sign_is_not_a_file_read():
 
 
 def test_lock_failure_spills_and_next_holder_merges():
-    # 수정 전: 잠금 실패분이 큐 파일에 바로 append 돼 다른 프로세스의 큐 전체 교체에 덮일 수 있었다.
     with tempfile.TemporaryDirectory() as tmp:
         root, env = make_root(tmp)
         usage = root / ".claude" / "_usage"
         (usage / f"ntfy-{DAY}.halt").touch()
-        (usage / "ntfy-budget.lock").mkdir()  # 잠금 파일 자리를 디렉터리로 막아 잠금 실패를 만든다
+        (usage / "ntfy-budget.lock").mkdir()
         direct(env, "스필 대상")
         spill = usage / "ntfy-queue.tsv.spill"
         assert spill.exists() and "스필 대상" in spill.read_text(encoding="utf-8")
         assert not queue_path(root).exists()
         (usage / "ntfy-budget.lock").rmdir()
-        (usage / f"ntfy-{DAY}.halt").write_text("")  # halt 중이라 배송은 안 되고 병합만 일어난다
+        (usage / f"ntfy-{DAY}.halt").write_text("")
         direct(env, "다음 호출")
         merged = queue_path(root).read_text(encoding="utf-8")
         assert not spill.exists() and "스필 대상" in merged and "다음 호출" in merged, merged
 
 
 def test_mem_watch_goes_through_claude_notify_without_webhook_url():
-    # 수정 전: ALERT_WEBHOOK_URL 로 직접 curl(URL 이 인자). 이제 URL 변수는 쓰지 않고 claude-notify 를 지난다.
     with tempfile.TemporaryDirectory() as tmp:
         root, env = make_root(tmp)
         env.update({"CRIT_AVAIL_GB": "100000000", "MEMWATCH_LOG": str(root / "mw.log"),
@@ -194,7 +187,6 @@ def test_mem_watch_goes_through_claude_notify_without_webhook_url():
 
 
 def test_tavily_key_not_in_curl_argv():
-    # 수정 전: -H "Authorization: Bearer <키>" 인자.
     with tempfile.TemporaryDirectory() as tmp:
         root, env = make_root(tmp)
         key = "tv" + "ly-" + "KEYKEYKEY12345678"
@@ -214,7 +206,6 @@ def prompt_payload(text):
 
 
 def test_prompt_log_is_private_for_new_and_existing_files():
-    # 수정 전: 664 로 만들어지고 기존 664 파일은 그대로였다.
     with tempfile.TemporaryDirectory() as tmp:
         root, env = make_root(tmp)
         for key in ("CLAUDE_PROMPT_LOG_SKIP",):
@@ -247,13 +238,12 @@ def t41_rows(home, last_text):
     env = dict(os.environ, HOME=str(home))
     subprocess.run(["bash", str(SCRIPTS / "t41-subagent-stop.sh")], env=env, cwd=str(SCRIPTS.parent), text=True,
                    input=json.dumps({"hook_event_name": "SubagentStop", "name": "coder", "agent_transcript_path": str(tp)}),
-                   capture_output=True, timeout=60)
+                   capture_output=True, timeout=60, check=False)
     hist = (home / ".claude" / "_audit" / "history.md").read_text(encoding="utf-8")
     return [ln for ln in hist.splitlines() if "T41:" in ln]
 
 
 def test_t41_result_line_wins_and_zero_fail_is_not_a_signal():
-    # 수정 전: 행두 «FAIL 0건» 이 정규식에 맞아 약점 신호로 기록됐다.
     with tempfile.TemporaryDirectory() as tmp:
         assert t41_rows(t41_home(tmp), "검증 결과\nFAIL 0건\nRESULT: DONE") == []
     with tempfile.TemporaryDirectory() as tmp:
@@ -284,7 +274,7 @@ if __name__ == "__main__":
         try:
             fn()
             print(f"OK   {fn.__name__}")
-        except Exception as exc:  # noqa: BLE001 — 실패 사유를 그대로 보여 준다
+        except Exception as exc:  # noqa: BLE001
             failed += 1
             print(f"FAIL {fn.__name__}: {type(exc).__name__}: {str(exc)[:300]}")
     print(f"\n{'ALL PASS' if failed == 0 else f'FAIL {failed}'} ({len(TESTS)} cases)")

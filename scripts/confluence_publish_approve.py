@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
 # ruff: noqa: EXE001
-"""Confluence 게시 직전 «사용자 승인» 검사 도구 (2026-10-06 사용자 결정 «결정3. 2)», 2026-10-07 개정 1: 증거를 AskUserQuestion 답으로).
+"""Confluence 게시 직전 «사용자 승인» 검사 도구.
 
-■ 왜 필요한가
-`skills/confluence/SKILL.md` §3 은 기존 페이지를 고치기 전에 세 가지(업데이트 여부 · 관찰자 알림 · 버전 설명)를
-사용자에게 묻게 하지만 강제하는 장치가 없었다. 2026-10-05 한 프로젝트 페이지 두 개가 사용자의 «바꿔» 한 마디로
-세 가지 확인 없이 게시됐다. 그래서 게시 경로 두 곳이 이 검사를 요구한다:
+■ 쓰는 곳
+게시 경로 두 곳이 이 검사를 요구한다:
   · MCP `updateConfluencePage`·`createConfluencePage` → `scripts/skeleton-gate.sh` 가 `check` 를 부른다
   · `scripts/confluence_patch_page.py --apply` → 이 모듈의 `check_and_consume()` 을 부른다
+    (`--create --apply` 새 페이지 만들기는 `check_and_consume_new()`, 2026-11-22 개정 4. 새 페이지 승인 줄 · 판정은 MCP 생성 경로와 같다)
 검사 규칙의 정본은 이 파일 하나다(두 경로가 같은 함수를 쓴다).
-
-■ 왜 발화 인용이 아니라 질문·답인가 (2026-10-07 개정 1)
-처음 구현(6d099d930)은 사용자 발화를 인용하게 했다. security 검수가, 같은 저장소의 최근 1시간 발화라면 요청 발화
-(«이 내용으로 페이지 바꿔줘»)를 인용해 세 질문을 건너뛰어도 통과함을 재현했다. 증거가 질문 내용과 묶이지 않았기 때문이다.
-그래서 증거를 «main 이 AskUserQuestion 으로 띄운 질문(대상·알림·버전 설명이 승인 줄로 들어 있음)에 사용자가 `게시 승인` 보기를
-고른 기록» 으로 바꿨다. 질문 문자열과 답은 세션 기록(`~/.claude/projects/<프로젝트>/<세션id>.jsonl`)에서 읽는다.
 
 ■ 승인 질문 규약 (main 이 지키고 이 도구가 검사한다)
   · 질문 문자열에 아래 승인 줄이 정확히 한 줄 있다(앞뒤 설명은 자유). 형식은 `question` 하위명령이 출력한다.
       기존 페이지: `게시 승인 요청 · page=<ID>[,<ID>...] · 알림=<notify|quiet> · 버전 설명=«<버전 설명>»`
       새 페이지  : `게시 승인 요청 · new · space=<spaceId> · parent=<parentId 또는 없음> · 제목=«<제목>»`
+  · 제목 변경 · 이동(2026-11-22 개정 2, confluence_patch_page.py --title · --parent): 기존 페이지 줄 뒤에 값이 있을 때만
+    ` · 새 제목=«<새 제목>»` 그다음 ` · 새 부모=<부모 ID>` 를 이 순서로 붙인다. 둘 다 없으면 위 기존 꼴과 글자 하나 다르지 않다.
+      예: `게시 승인 요청 · page=123 · 알림=quiet · 버전 설명=«제목 정리» · 새 제목=«새 이름» · 새 부모=456`
+    판정은 해석한 필드끼리 비교한다(대상 · 알림 · 버전 설명 · 새 제목 · 새 부모가 전부 같아야 통과, 없는 것은 없는 것끼리).
+    그래서 새 필드가 든 승인은 치환만 하는 호출 · 제목 · 부모를 바꾸지 않는 MCP 수정에 통과하지 않고, 그 반대도 같다.
+    (MCP 경로: 2026-11-22 개정 3 부터 skeleton-gate.sh 가 updateConfluencePage 의 title · parentId 가 있으면 --set-title · --set-parent 로 넘기고,
+    spaceId 가 든 호출은 승인 검사 전에 막는다.)
+    새 필드가 든 줄의 대상은 페이지 하나여야 하고(`page=1,2` 와 함께면 무효) 새 부모는 숫자 ID 만 받는다. 사용 장부 키는 그대로 `page:<ID>`.
+    ★한 줄 = 한 해석: 버전 설명 `a» · 새 제목=«X` 와 «버전 설명 a + 새 제목 X» 는 같은 글자의 줄을 만든다. 그래서 버전 설명 · 새 제목에
+    `» · 새 제목=«` · `» · 새 부모=` 가 든 값은 호출에서도 승인 줄에서도 거부한다. 남는 해석은 «새 필드가 있다» 하나뿐이다(사용자가 본 글자대로).
+    한계: 표지는 글자 그대로만 본다. 버전 설명에 공백 두 칸 · 전각 구분점처럼 표지와 비슷해 보이는 글자를 쓰면 파서는 버전 설명 하나로 읽는다
+    (보이는 것보다 적게 실행되는 쪽이라 권한이 늘지는 않는다).
   · 보기에 라벨이 정확히 `게시 승인` 인 것이 있고, 사용자가 고른 답이 정확히 `게시 승인` 이다. 다른 보기·자유 입력은 승인이 아니다.
   · 한 AskUserQuestion 에 질문이 여럿이면 질문마다 따로 판정한다(answers 는 질문 문자열 → 답 dict 라 질문별로 결박된다).
 
@@ -55,7 +60,10 @@
       | --new --space S --parent P --title T)          # 승인 줄·권장 보기를 출력만 한다(쓰기 없음)
   python3 ~/.claude/scripts/confluence_publish_approve.py check [--consume] \\
       (--page <ID> --notify quiet|notify --message "<버전 설명>" | --new --space S --parent P --title T)
+  # 기존 페이지 제목 변경 · 이동: 위 기존 페이지 꼴(--page 1개)에 --set-title "<새 제목>" · --set-parent <부모 ID> 를 더한다.
+  #   (--new 의 --title · --parent 는 «새 페이지 만들기» 대상이고, --set-* 는 «기존 페이지의 제목 · 부모를 바꾸기» 다)
 check 출력은 JSON 한 줄 {"ok": bool, "reason": "..."}, ok 면 exit 0 아니면 exit 1. `stamp` 는 폐지돼 exit 2 와 안내를 낸다.
+REF: knowledge/harness/code-history/scripts__confluence_publish_approve.py.md
 """
 
 import argparse
@@ -66,6 +74,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 from datetime import datetime, timezone
 
 VALID_SECONDS = 3600
@@ -74,15 +83,17 @@ CHUNK = 1 << 20
 APPROVE_LABEL = "게시 승인"
 CANCEL_LABEL = "취소"
 LINE_HEAD = "게시 승인 요청"
-_PAGE_RE = re.compile(r"게시 승인 요청 · page=([0-9]+(?:,[0-9]+)*) · 알림=(notify|quiet) · 버전 설명=«(.*)»")
+_PAGE_RE = re.compile(r"게시 승인 요청 · page=([0-9]+(?:,[0-9]+)*) · 알림=(notify|quiet) · 버전 설명=«(.*?)»"
+                      r"(?: · 새 제목=«(.*)»)?(?: · 새 부모=([0-9]+))?")
+_FIELD_MARKS = ("» · 새 제목=«", "» · 새 부모=")
 _NEW_RE = re.compile(r"게시 승인 요청 · new · space=(\S+) · parent=(\S+) · 제목=«(.*)»")
-PASTE_PREFIX = "<pasted_content"   # a pasted human message; every other `<` start is an injection (external-model-gate.py treats it as non-user too)
-STALE_RUN = 3  # stop reading backwards after this many consecutive stale user/assistant lines
+PASTE_PREFIX = "<pasted_content"   # WHY: a pasted human message; every other `<` start is an injection (external-model-gate.py treats it as non-user too)
+STALE_RUN = 3
 _TS_RE = re.compile(rb'"timestamp"\s*:\s*"([^"]+)"')
 _KIND_RE = re.compile(rb'"type"\s*:\s*"(user|assistant)"')
-_TOOL_RESULT_RE = re.compile(rb'"type"\s*:\s*"tool_result"')   # an escaped copy inside a text string (\"type\") cannot match
+_TOOL_RESULT_RE = re.compile(rb'"type"\s*:\s*"tool_result"')
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f  \x85]")
-# 아래 두 상수와 _is_non_user 는 scripts/external-model-gate.py 의 같은 이름 규칙을 옮겨 적은 것이다(2026-10-07, 그 파일은 고치지 않는다).
+# WHY: 아래 두 상수와 _is_non_user 는 scripts/external-model-gate.py 의 같은 이름 규칙을 옮겨 적은 것이다(2026-10-07, 그 파일은 고치지 않는다).
 # 원본이 바뀌면 여기도 맞춘다. «사람이 친 글자가 아닌데 user 역할로 기록되는 항목» 의 판정 정본은 원본이다.
 NON_USER_PREFIXES = ("Base directory for this skill:", "[SYSTEM NOTIFICATION", "[Subagent hand-back]",
                      "This session is being continued from a previous conversation",
@@ -91,12 +102,10 @@ NON_USER_PREFIXES = ("Base directory for this skill:", "[SYSTEM NOTIFICATION", "
 
 
 def _approval_dir():
-    """Return the approval ledger directory under the current HOME."""
     return os.path.expanduser("~/.claude/_audit/publish-approval")
 
 
 def norm_page(page):
-    """Normalize a page ID to digits without leading zeros, or raise ValueError."""
     s = str(page).strip()
     if not re.fullmatch(r"[0-9]+", s) or not s.lstrip("0"):
         raise ValueError(f"페이지 ID «{s}» 는 숫자가 아님 — 숫자 페이지 ID 로 다시 지정할 것(tiny link·URL 불가)")
@@ -104,26 +113,60 @@ def norm_page(page):
 
 
 def page_key(page):
-    """Build the target key of an existing page (normalized ID)."""
     return f"page:{norm_page(page)}"
 
 
 def new_key(space, parent, title):
-    """Build the target key of a page to be created."""
-    return f"new:{str(space).strip()}:{str(parent or '').strip()}:{str(title).strip()}"
+    # WHY: 키는 `new:<공간>:<부모>:<제목>` 이다. 공간 · 부모에 `:` 가 있으면 서로 다른 (공간, 부모, 제목)이 같은 키가 된다
+    # (예: 부모 `5:판1` + 제목 `결과` = 부모 `5` + 제목 `판1:결과`, 2026-11-22 security). 공간 · 부모에 `:` 가 없으면
+    # 앞의 두 `:` 가 칸 경계로만 읽히므로 제목에 `:` 가 있어도 키는 한 가지로만 나뉜다. 그래서 제목의 `:` 는 허용한다.
+    # 호출 쪽(question · check · 스크립트 · MCP 훅)과 승인 줄 해석이 모두 이 함수를 지나므로 여기서 막으면 전부 fail-closed 다.
+    space, parent = str(space).strip(), str(parent or "").strip()
+    if ":" in space or ":" in parent:
+        raise ValueError("★새 페이지의 공간·부모 값에 «:» 가 있음 — 승인 대상 키가 두 가지로 읽혀 거부한다. 공간 ID · 부모 ID 로 다시 지정할 것")
+    return f"new:{space}:{parent}:{str(title).strip()}"
 
 
-def approval_line(keys, notify=None, message=None):
-    """Build the approval line main must put in the AskUserQuestion question for the given target keys."""
+def norm_change(title=None, parent=None):
+    if title is not None:
+        if _ctrl_error(title):
+            raise ValueError("★새 제목에 탭·개행 등 제어문자가 있음 — 한 줄 평문으로 다시 지정할 것")
+        # WHY: 방향 제어(U+202A~E · U+2066~9) · 폭 없는 글자(Cf)와 줄 · 문단 구분자(Zl · Zp)는 승인 줄에서 보이는 글자와 실제 값을 갈라놓는다(2026-11-22 security).
+        if any(unicodedata.category(c) in ("Cf", "Zl", "Zp") for c in str(title)):
+            raise ValueError("★새 제목에 보이지 않는 글자 · 방향 제어 글자가 있음 — 승인 줄에서 사용자가 본 글자와 실제 값이 달라질 수 있어 거부한다")
+        title = str(title).strip()
+        if not title:
+            raise ValueError("★새 제목이 비어 있음 — 바꿀 제목을 지정할 것")
+        if _mark_error(title):
+            raise ValueError(_mark_error(title))
+    if parent is not None:
+        try:
+            parent = norm_page(parent)
+        except ValueError as e:
+            raise ValueError(f"★새 부모: {e}") from None
+    return title, parent
+
+
+def _mark_error(*texts):
+    if any(m in str(t or "") for t in texts for m in _FIELD_MARKS):
+        return "★버전 설명·새 제목에 «» · 새 제목=«» 나 «» · 새 부모=» 가 들어 있음 — 승인 줄이 두 가지로 읽혀 거부한다. 문구를 바꿔 다시 지정할 것"
+    return None
+
+
+def approval_line(keys, notify=None, message=None, title=None, parent=None):
     if keys[0].startswith("page:"):
-        return (f"{LINE_HEAD} · page={','.join(k[5:] for k in keys)} · 알림={notify or '<notify|quiet>'}"
+        line = (f"{LINE_HEAD} · page={','.join(k[5:] for k in keys)} · 알림={notify or '<notify|quiet>'}"
                 f" · 버전 설명=«{(message or '<버전 설명>').strip()}»")
+        if title is not None:
+            line += f" · 새 제목=«{title}»"
+        if parent is not None:
+            line += f" · 새 부모={parent}"
+        return line
     _, space, parent, title = keys[0].split(":", 3)
     return f"{LINE_HEAD} · new · space={space} · parent={parent or '없음'} · 제목=«{title}»"
 
 
 def _parse_iso(s):
-    """Parse an ISO time with timezone into epoch seconds, or None."""
     if not isinstance(s, str) or not s:
         return None
     try:
@@ -134,19 +177,16 @@ def _parse_iso(s):
 
 
 def _fresh(epoch, now):
-    """True when epoch is not in the future and within the validity window."""
     return epoch is not None and 0 <= now - epoch <= VALID_SECONDS
 
 
 def _ctrl_error(*texts):
-    """Return a rejection reason when any text holds a control character (tab, newline, ...), else None."""
     if any(_CTRL_RE.search(str(t or "")) for t in texts):
         return "★대상(공간·부모·제목)·버전 설명에 탭·개행 등 제어문자가 있음 — 한 줄 평문으로 다시 지정할 것"
     return None
 
 
 def parse_approval_line(question):
-    """Parse the single approval line of a question into {keys, notify, message}, or None when absent or malformed."""
     lines = [ln.strip() for ln in str(question).splitlines() if ln.strip().startswith(LINE_HEAD)]
     if len(lines) != 1 or _ctrl_error(lines[0]):
         return None
@@ -157,19 +197,31 @@ def parse_approval_line(question):
         except ValueError:
             return None
         msg = m.group(3).strip()
-        return {"keys": keys, "notify": m.group(2), "message": msg} if msg else None
+        title, parent = m.group(4), m.group(5)
+        if not msg or _mark_error(msg, title):
+            return None
+        if title is not None or parent is not None:
+            if len(keys) != 1:
+                return None
+            try:
+                title, parent = norm_change(title, parent)
+            except ValueError:
+                return None
+        return {"keys": keys, "notify": m.group(2), "message": msg, "title": title, "parent": parent}
     m = _NEW_RE.fullmatch(lines[0])
     if m and m.group(3).strip():
         parent = "" if m.group(2) == "없음" else m.group(2)
-        return {"keys": [new_key(m.group(1), parent, m.group(3))], "notify": None, "message": None}
+        try:
+            return {"keys": [new_key(m.group(1), parent, m.group(3))], "notify": None, "message": None}
+        except ValueError:
+            return None
     return None
 
 
 def _reverse_lines(path):
-    """Yield the non-empty raw lines of a file from the end, reading in chunks (session logs reach hundreds of MB)."""
     with open(path, "rb") as f:
         pos = f.seek(0, 2)
-        held = []   # fragments of the line that continues to the left, in reading order (rightmost first)
+        held = []
         while pos > 0:
             step = min(CHUNK, pos)
             pos -= step
@@ -192,11 +244,6 @@ def _reverse_lines(path):
 
 
 def _line_meta(line):
-    """Return (kind, newest timestamp epoch) read from the head and tail of a raw line (key order varies).
-
-    kind is 'user' or 'assistant' when such a top-level type marker is found, else None. Only those lines are real conversation
-    turns; queue-operation or file-history-snapshot lines carry old timestamps among recent lines and must not stop the scan.
-    """
     kind, best = None, None
     for seg in (line[:2048], line[-2048:]):
         k = _KIND_RE.search(seg)
@@ -210,11 +257,6 @@ def _line_meta(line):
 
 
 def _is_non_user(d, t):
-    """True for an entry recorded with role user whose text a human did not type (rule copied from scripts/external-model-gate.py).
-
-    Skill bodies, compact summaries, automatic notices and peer or subagent hand-backs are marked by structure fields
-    (isMeta, isCompactSummary, origin other than human) and, as a fallback, by text prefixes.
-    """
     if d.get("isMeta") or d.get("isCompactSummary"):
         return True
     origin = d.get("origin")
@@ -224,19 +266,13 @@ def _is_non_user(d, t):
 
 
 def _is_human_message(d):
-    """True when a parsed entry is a message a human typed in the main conversation (rule of last_user_message in external-model-gate.py).
-
-    Two shapes: a `user` entry, and an `attachment` entry of attachment.type queued_command, which is the only record of a message
-    typed while a turn is running (origin human or absent, commandMode not task-notification). Text that starts with `<` is an
-    injection and not human, except a paste (`<pasted_content`), which a human typed in a gate context.
-    """
     if d.get("type") == "attachment" and not d.get("isSidechain"):
         a = d.get("attachment")
         if not (isinstance(a, dict) and a.get("type") == "queued_command") or a.get("commandMode") == "task-notification":
             return False
         origin = a.get("origin", d.get("origin"))
         t = a.get("prompt")
-        if isinstance(t, list):   # a message with an image arrives as content blocks; join the text blocks like the user branch (2026-10-07 review)
+        if isinstance(t, list):   # WHY: a message with an image arrives as content blocks; join the text blocks like the user branch (2026-10-07 review)
             t = " ".join(x.get("text", "") for x in t if isinstance(x, dict) and isinstance(x.get("text", ""), str) and x.get("type") == "text")
         if (origin is not None and not (isinstance(origin, dict) and origin.get("kind") == "human")) or not isinstance(t, str):
             return False
@@ -256,21 +292,15 @@ def _is_human_message(d):
     else:
         return False
     t = t.strip()
-    if t.startswith("<command-name>"):   # a slash command is recorded as <command-name>…<command-args>what the user typed</command-args>
+    if t.startswith("<command-name>"):
         a = re.search(r"<command-args>(.*?)</command-args>", t, re.DOTALL)
         t = a.group(1).strip() if a else ""
-    if not t or (t.startswith("<") and not t.startswith(PASTE_PREFIX)):   # system-reminder and local-command injections are not user text
+    if not t or (t.startswith("<") and not t.startswith(PASTE_PREFIX)):
         return False
     return not _is_non_user(d, t)
 
 
 def _scan(path, now):
-    """Yield (tool_use_id, answered_epoch, questions, answers) of fresh bound AskUserQuestion answers in one session file.
-
-    Reads from the end. Stops after STALE_RUN consecutive user/assistant lines older than the window (plus LOOKBACK_SLACK while an
-    answer waits for its question). An answer is dropped when a human-typed message comes after it in the file: the user may have
-    held or changed the request in chat, so the approval no longer stands.
-    """
     pending = {}
     human_after = False
     stale_run = 0
@@ -284,7 +314,7 @@ def _scan(path, now):
             else:
                 stale_run = 0
         has_ask = b"AskUserQuestion" in ln or b'"answers"' in ln
-        queued = b"queued_command" in ln   # a message typed during a running turn is recorded only as an attachment line
+        queued = b"queued_command" in ln
         if not has_ask and not queued and (kind == "assistant" or not _KIND_RE.search(ln) or _TOOL_RESULT_RE.search(ln)):
             continue
         try:
@@ -321,7 +351,6 @@ def _scan(path, now):
 
 
 def _session_files(now):
-    """Return main session logs (no subagents/) modified within the validity window, newest first."""
     files = []
     for p in glob.glob(os.path.expanduser("~/.claude/projects/*/*.jsonl")):
         try:
@@ -334,11 +363,7 @@ def _session_files(now):
 
 
 def is_approval_question(tool_input):
-    """True when an AskUserQuestion input holds a publish-approval question (the same condition find_approval applies, minus the answer).
-
-    A question counts when its text has exactly one valid approval line and its options include the «게시 승인» label.
-    scripts/handoff_check.py uses this to spot a review turn (2026-11-12); find_approval keeps its own inline copy of the condition.
-    """
+    # WHY: scripts/handoff_check.py uses this to spot a review turn (2026-11-12); find_approval keeps its own inline copy of the condition.
     qs = tool_input.get("questions") if isinstance(tool_input, dict) else None
     for q in qs if isinstance(qs, list) else []:
         text = q.get("question") if isinstance(q, dict) else None
@@ -349,8 +374,7 @@ def is_approval_question(tool_input):
     return False
 
 
-def find_approval(key, notify, message, now=None):
-    """Return approvals for a target as [(answered_epoch, tool_use_id)] newest first (empty when none match)."""
+def find_approval(key, notify, message, now=None, title=None, parent=None):
     now = time.time() if now is None else now
     found = []
     for path in _session_files(now):
@@ -365,7 +389,8 @@ def find_approval(key, notify, message, now=None):
                         continue
                     ap = parse_approval_line(qs)
                     if ap and key in ap["keys"] and (not key.startswith("page:") or (
-                            ap["notify"] == notify and ap["message"] == str(message or "").strip())):
+                            ap["notify"] == notify and ap["message"] == str(message or "").strip()
+                            and ap.get("title") == title and ap.get("parent") == parent)):
                         found.append((epoch, tuid))
                         break
         except OSError:
@@ -374,7 +399,6 @@ def find_approval(key, notify, message, now=None):
 
 
 def _used_pairs():
-    """Return the set of (tool_use_id, target key) pairs already consumed."""
     pairs = set()
     try:
         with open(os.path.join(_approval_dir(), "used.tsv"), encoding="utf-8") as f:
@@ -388,7 +412,6 @@ def _used_pairs():
 
 
 def _consume(tuid, key):
-    """Atomically add (tool_use_id, key) to the used ledger under flock; False when it is already there."""
     d = _approval_dir()
     os.makedirs(d, mode=0o700, exist_ok=True)
     with os.fdopen(os.open(os.path.join(d, "used.tsv"), os.O_RDWR | os.O_CREAT, 0o600), "r+", encoding="utf-8") as f:
@@ -396,18 +419,25 @@ def _consume(tuid, key):
         if any(ln.rstrip("\n").split("\t")[:2] == [tuid, key] for ln in f):
             return False
         f.seek(0, 2)
-        f.write(f"{tuid}\t{key}\t{datetime.now(timezone.utc).astimezone().isoformat()}\n")  # noqa: UP017 — system python3 3.10 has no datetime.UTC
+        # WHY: system python3 3.10 has no datetime.UTC
+        f.write(f"{tuid}\t{key}\t{datetime.now(timezone.utc).astimezone().isoformat()}\n")  # noqa: UP017
     return True
 
 
-def check(key, notify=None, message=None, consume=False, cwd=None):
-    """Check (and optionally consume) the AskUserQuestion approval of a target; return (ok, reason). cwd is ignored (compat)."""
-    bad = _ctrl_error(key, message)
+def check(key, notify=None, message=None, consume=False, cwd=None, title=None, parent=None):
+    bad = _ctrl_error(key, message, title) or _mark_error(message)
     if bad:
         return False, bad
+    if title is not None or parent is not None:
+        if not key.startswith("page:"):
+            return False, "★새 제목·새 부모는 기존 페이지 하나에만 쓴다(새 페이지 만들기는 space·parent·제목으로 지정)"
+        try:
+            title, parent = norm_change(title, parent)
+        except ValueError as e:
+            return False, str(e)
     redo = ("AskUserQuestion 으로 아래 승인 줄을 질문에 넣어 물을 것(보기: «게시 승인»·«취소», 사용자가 «게시 승인» 을 골라야 함). "
-            f"승인 줄:\n  {approval_line([key], notify, message)}")
-    found = find_approval(key, notify, message)
+            f"승인 줄:\n  {approval_line([key], notify, message, title, parent)}")
+    found = find_approval(key, notify, message, title=title, parent=parent)
     if not found:
         return False, (f"★게시 승인 기록 없음(최근 1시간 안에 사용자가 이 대상·알림·버전 설명의 승인 줄에 «{APPROVE_LABEL}» 을 고른 "
                        f"AskUserQuestion 답이 없음) — 게시 중단. {redo}")
@@ -420,19 +450,27 @@ def check(key, notify=None, message=None, consume=False, cwd=None):
     return True, "ok"
 
 
-def check_and_consume(page, notify, message):
-    """Consume the approval of an existing page for the script path; exit with the reason when it fails."""
+def check_and_consume(page, notify, message, title=None, parent=None):
     try:
         key = page_key(page)
     except ValueError as e:
         sys.exit(f"\n{e}")
-    ok, reason = check(key, notify, message, consume=True)
+    ok, reason = check(key, notify, message, consume=True, title=title, parent=parent)
+    if not ok:
+        sys.exit("\n" + reason)
+
+
+def check_and_consume_new(space, parent, title):
+    try:
+        key = new_key(space, parent, title)
+    except ValueError as e:
+        sys.exit(f"\n{e}")
+    ok, reason = check(key, consume=True)
     if not ok:
         sys.exit("\n" + reason)
 
 
 def main(argv=None):
-    """CLI entry: question or check (stamp is retired); check prints one JSON line and exits 0/1."""
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["stamp"]:
         print("stamp 는 폐지됐다. 승인은 AskUserQuestion 질문으로 받는다. 승인 줄 형식은 `question` 하위명령으로 확인할 것:\n"
@@ -449,6 +487,8 @@ def main(argv=None):
         p.add_argument("--title")
         p.add_argument("--notify", choices=("quiet", "notify"))
         p.add_argument("--message")
+        p.add_argument("--set-title", help="기존 페이지(--page 1개)의 새 제목. --new 의 --title(새 페이지 만들기)과 다르다")
+        p.add_argument("--set-parent", help="기존 페이지(--page 1개)를 옮길 새 부모 페이지 ID(숫자). --new 의 --parent 와 다르다")
         if name == "question":
             p.add_argument("--page", action="append", default=[])
         else:
@@ -457,15 +497,29 @@ def main(argv=None):
             p.add_argument("--cwd", help="하위 호환용(무시한다)")
     a = ap.parse_args(argv)
 
-    bad = _ctrl_error(a.space, a.parent, a.title, a.message)   # raw values: new_key() would strip a trailing newline silently
+    # NEVER: check stripped values here; new_key() would strip a trailing newline silently.
+    bad = _ctrl_error(a.space, a.parent, a.title, a.message)
     if bad:
         print(json.dumps({"ok": False, "reason": bad}, ensure_ascii=False))
         return 1
     pages = a.page if a.cmd == "question" else ([a.page] if a.page else [])
+    set_title, set_parent = a.set_title, a.set_parent
+    if set_title is not None or set_parent is not None:
+        if a.new or len(pages) != 1:
+            ap.error("--set-title·--set-parent 는 기존 페이지 하나(--page 1개)에만 쓴다(--new 의 --title·--parent 는 새 페이지 만들기)")
+        try:
+            set_title, set_parent = norm_change(set_title, set_parent)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "reason": str(e)}, ensure_ascii=False))
+            return 1
     if a.new:
         if pages or not a.space or not (a.title or "").strip():
             ap.error("--new 는 --space·--title 이 필요하고 --page 와 함께 쓸 수 없다")
-        keys = [new_key(a.space, a.parent, a.title)]
+        try:
+            keys = [new_key(a.space, a.parent, a.title)]
+        except ValueError as e:
+            print(json.dumps({"ok": False, "reason": str(e)}, ensure_ascii=False))
+            return 1
     else:
         if not pages or not a.notify or not (a.message or "").strip():
             ap.error("기존 페이지는 --page(1개+)·--notify·--message 가 모두 필요하다")
@@ -476,12 +530,16 @@ def main(argv=None):
             return 1
 
     if a.cmd == "question":
-        print(f"승인 줄(AskUserQuestion 질문 문자열에 정확히 한 줄로 넣을 것):\n{approval_line(keys, a.notify, a.message)}\n"
+        bad = _mark_error(a.message)
+        if bad:
+            print(json.dumps({"ok": False, "reason": bad}, ensure_ascii=False))
+            return 1
+        print(f"승인 줄(AskUserQuestion 질문 문자열에 정확히 한 줄로 넣을 것):\n{approval_line(keys, a.notify, a.message, set_title, set_parent)}\n"
               f"권장 보기: 라벨 «{APPROVE_LABEL}» · «{CANCEL_LABEL}»")
         return 0
     if len(keys) != 1:
         ap.error("check 는 대상 하나만 받는다")
-    ok, reason = check(keys[0], a.notify, a.message, a.consume)
+    ok, reason = check(keys[0], a.notify, a.message, a.consume, title=set_title, parent=set_parent)
     print(json.dumps({"ok": ok, "reason": reason}, ensure_ascii=False))
     return 0 if ok else 1
 

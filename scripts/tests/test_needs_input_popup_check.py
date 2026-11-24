@@ -29,7 +29,6 @@ def result(uid, text="ok", is_error=False):
 
 
 def run(tmp_path, entries, text=NI, **extra):
-    """Run the hook on a fake transcript and return its stdout."""
     tp = tmp_path / "t.jsonl"
     if entries is not None:
         tp.write_text("\n".join(e if isinstance(e, str) else json.dumps(e, ensure_ascii=False) for e in entries) + "\n",

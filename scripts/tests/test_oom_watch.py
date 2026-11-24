@@ -1,4 +1,6 @@
-"""tools/mem-guard/oom-watch.py 의 순수 판정(build_alerts·파서) 시험. 실제 cgroup·저널은 건드리지 않는다."""
+"""tools/mem-guard/oom-watch.py 의 순수 판정(build_alerts·파서) 시험. 실제 cgroup·저널은 건드리지 않는다.
+REF: knowledge/harness/code-history/scripts__tests__test_oom_watch.py.md
+"""
 import importlib.util
 from pathlib import Path
 
@@ -31,12 +33,11 @@ def test_individual_limit_kill_names_vanished_worker():
     (a,) = run(prev, cur)
     assert a.startswith("💀")
     assert "exp-demo-1c-x58t" in a and "개별 한도 초과" in a
-    assert "pid 11 python (" in a and "worker" not in a  # 명령줄 인자는 알림에 싣지 않는다(2026-10-01 감사 D5)
+    assert "pid 11 python (" in a and "worker" not in a
     assert "판 5.0/5.0GiB 상한 도달" in a and "전체 50%" in a
 
 
 def test_alert_names_program_only_not_command_line():
-    # 공개 서버로 나가는 알림에 경로·옵션이 실리면 안 된다(2026-10-01 감사 D5). 수정 전에는 앞 40자가 실렸다.
     cmd = "/opt/venv/bin/python /data/PRIVATE/train.py --token=abc123 --subject=홍길동"
     prev = {UNIT: scope(procs={"10": {"cmd": cmd, "rss_kb": 3 * G}})}
     cur = {UNIT: scope(oom=1, kill=1, procs={})}
@@ -75,11 +76,11 @@ def test_kernel_log_overrides_counters_and_names_victim():
     kev = ow.parse_kernel(lines)
     assert kev[0]["constraint"] == "CONSTRAINT_NONE" and kev[0]["rss_kb"] == 20 * G
     prev = {UNIT: scope()}
-    cur = {UNIT: scope(oom=1, kill=1)}                      # 카운터가 개별이라 해도 커널 줄이 정본
+    cur = {UNIT: scope(oom=1, kill=1)}
     seen = set()
     (a,) = run(prev, cur, kernel=kev, seen=seen)
     assert "호스트 전체" in a and "pid 10 python (RSS 20.0GiB, 커널 로그)" in a
-    assert run(prev, cur, kernel=kev, seen=seen)[0].count("커널 로그") == 0  # 같은 커널 사건 재알림 없음
+    assert run(prev, cur, kernel=kev, seen=seen)[0].count("커널 로그") == 0
 
 
 def test_oomd_pressure_kill():

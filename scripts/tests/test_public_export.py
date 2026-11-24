@@ -1,6 +1,7 @@
 """public-export.sh 회귀 테스트 (임시 HOME 의 가짜 하네스 저장소 — 실제 하네스·공개 미러는 건드리지 않는다).
 
 실행: uv run --with pytest python -m pytest scripts/tests/test_public_export.py -q
+REF: knowledge/harness/code-history/scripts__tests__test_public_export.py.md
 """
 import os
 import subprocess
@@ -47,7 +48,7 @@ def test_publish_refuses_non_mirror_nonempty_target_and_keeps_files(ex):
     (target / "mine.txt").write_text("소중한 파일")
     r = ex.run("--publish", str(target))
     assert r.returncode == 2 and "미러 표식" in r.stderr
-    assert (target / "mine.txt").read_text() == "소중한 파일"   # 수정 전에는 --delete 로 지워졌다
+    assert (target / "mine.txt").read_text() == "소중한 파일"
 
 
 def test_publish_ok_into_empty_dir_then_marker_allows_resync(ex):
@@ -55,7 +56,7 @@ def test_publish_ok_into_empty_dir_then_marker_allows_resync(ex):
     r = ex.run("--publish", str(target))
     assert r.returncode == 0, r.stdout + r.stderr
     assert (target / "docs/ok.md").exists() and (target / ".public-export-mirror").exists()
-    (target / "stale.txt").write_text("지워져야 하는 옛 파일")   # 미러 표식이 있으면 --delete 동기화 허용
+    (target / "stale.txt").write_text("지워져야 하는 옛 파일")
     assert ex.run("--publish", str(target)).returncode == 0
     assert not (target / "stale.txt").exists()
 
@@ -82,7 +83,7 @@ def test_forbidden_word_in_path_name_blocks(ex):
 
 
 def test_invalid_utf8_file_is_not_skipped_by_gate(ex):
-    (ex.h / "docs/bad.bin").write_bytes(b"\x00\xff\xfe FORBIDDENWORD \xff\n")   # 이진: grep -I 가 건너뛰던 형태
+    (ex.h / "docs/bad.bin").write_bytes(b"\x00\xff\xfe FORBIDDENWORD \xff\n")
     ex.commit()
     assert ex.run().returncode == 3
 
@@ -101,13 +102,12 @@ def test_untracked_public_files_are_not_staged(ex):
     assert (target / "README.md").exists() and not (target / "leak.txt").exists()
 
 
-# ---- --stage-out(2026-10-23, intent/2026-10-23-public-mirror-refresh.md): 정제본을 남기고 게이트 결과로 끝낸다 ----
 def test_stage_out_keeps_sanitized_copy_and_does_not_publish(ex):
     out = ex.tmp / "stage"
     r = ex.run("--stage-out", str(out))
     assert r.returncode == 0, r.stdout + r.stderr
     assert (out / "docs/ok.md").read_text() == "깨끗한 문서\n" and (out / "README.md").exists()
-    assert not (ex.tmp / "home/workspace/oh-my-ouroboros").exists()   # 발행 대상 폴더는 만들지 않는다
+    assert not (ex.tmp / "home/workspace/oh-my-ouroboros").exists()
 
 
 def test_stage_out_keeps_copy_even_when_gate_blocks(ex):
@@ -116,7 +116,7 @@ def test_stage_out_keeps_copy_even_when_gate_blocks(ex):
     out = ex.tmp / "stage2"
     r = ex.run("--stage-out", str(out))
     assert r.returncode == 3 and "금지 패턴" in r.stdout
-    assert (out / "docs/bad.md").exists()                                 # 막혀도 막힌 자리를 검사할 수 있게 남긴다
+    assert (out / "docs/bad.md").exists()
 
 
 def test_stage_out_refuses_nonempty_dir(ex):
@@ -128,16 +128,16 @@ def test_stage_out_refuses_nonempty_dir(ex):
 
 
 def test_stage_out_relative_path_is_resolved_from_caller_cwd(ex):
-    r = ex.run("--stage-out", "rel-stage")                              # 시험 러너의 cwd 는 ex.tmp
+    r = ex.run("--stage-out", "rel-stage")
     assert r.returncode == 0, r.stdout + r.stderr
     assert (ex.tmp / "rel-stage/docs/ok.md").exists()
-    assert not (ex.h / "rel-stage").exists()                            # 하네스 안에 만들지 않는다(qa 2026-10-23)
+    assert not (ex.h / "rel-stage").exists()
 
 
 def test_stage_out_refuses_tracked_place_inside_harness_and_symlink(ex):
     r = ex.run("--stage-out", str(ex.h / "docs-out"))
-    assert r.returncode == 2 and not (ex.h / "docs-out").exists()          # 하네스 안 추적 경로 거부
-    assert ex.run("--stage-out", str(ex.h / ".scratch/s1")).returncode == 0  # .scratch 아래는 허용
+    assert r.returncode == 2 and not (ex.h / "docs-out").exists()
+    assert ex.run("--stage-out", str(ex.h / ".scratch/s1")).returncode == 0
     real = ex.tmp / "real-out"
     real.mkdir()
     link = ex.tmp / "link-out"
@@ -146,7 +146,6 @@ def test_stage_out_refuses_tracked_place_inside_harness_and_symlink(ex):
     assert oct((ex.h / ".scratch/s1").stat().st_mode & 0o777) == "0o700"
 
 
-# ---- d|·r|·j| 규칙과 정제 뒤 문법 게이트(2026-10-23: 내부 언급은 가명 치환이 아니라 삭제) ----
 def rules(ex, body):
     (ex.h / "config/public-export-rules.txt").write_text("a|docs\na|settings.json\n" + body)
     ex.commit()
@@ -198,7 +197,7 @@ def test_j_rule_removes_hook_and_cleans_empty_groups(ex):
 
 
 def test_d_rule_breaking_python_blocks_with_exit_3_but_keeps_stage_copy(ex):
-    (ex.h / "docs/m.py").write_text("def f():\n    return 1\n")   # 본문 줄을 지우면 빈 함수 = 문법 오류
+    (ex.h / "docs/m.py").write_text("def f():\n    return 1\n")
     rules(ex, "d|docs/*.py|return 1\n")
     out = ex.tmp / "o4"
     r = ex.run("--stage-out", str(out))

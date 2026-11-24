@@ -49,6 +49,7 @@
 #   - reclaim · swap 은 확정된 원인(세션 스코프의 메모리 폭주)에 직접 듣지 않는다. 회수 정체 쪽 가설을 위한 보조 항목이다.
 #   - vm.overcommit_memory(지금 1)는 건드리지 않는다. 바꾸면 큰 프로세스의 fork 가 실패해 학습이 깨질 수 있다.
 set -euo pipefail
+# REF: knowledge/harness/code-history/tools__mem-guard__host-hardening.sh.md
 
 MODE=check ITEMS=all TARGET_USER="${SUDO_USER:-}" RESERVE_GB='' SWAP_GB='' WD_MIN='' SESSION_GB=''
 ALL_ITEMS="kernlog hungtask watchdog slicecap sesscap reclaim swap"
@@ -76,15 +77,15 @@ if [ "$ITEMS" = all ]; then
 fi
 ITEMS="${ITEMS//,/ }"
 [ -n "${ITEMS// /}" ] || usage
-# 앞자리 0(예: 010)은 $((…)) 가 8진수로 읽으므로 받지 않는다. 등록부를 읽기 전에 보아 어느 서버에서든 같은 판정이 나게 한다.
+# WHY: 앞자리 0(예: 010)은 $((…)) 가 8진수로 읽으므로 받지 않는다. 등록부를 읽기 전에 보아 어느 서버에서든 같은 판정이 나게 한다.
 for n in "$RESERVE_GB" "$SWAP_GB" "$WD_MIN" "$SESSION_GB"; do
   case "$n" in '') ;; *[!0-9]*|0?*) echo "숫자가 아닌 값(앞자리 0 불가): $n" >&2; exit 64 ;; esac
 done
-# Server values live in config/hosts/<hostname>.json under "hardening". A missing file means another or a new server,
-# so stop rather than reuse numbers measured elsewhere. This runs as root: values are never eval'd or used as
-# command strings, and each one must match a fixed shape before use.
+# WHY: a missing config/hosts/<hostname>.json ("hardening") means another or a new server,
+# so stop rather than reuse numbers measured elsewhere.
+# NEVER: eval a registry value or use it as a command string. This runs as root, and each value must match a fixed shape before use.
 REGISTRY="$(dirname "$(readlink -f "$0")")/../../scripts/harness_registry.py"
-reg() { # $1=key under hardening, $2=ERE the value must match -> prints the value
+reg() {
   local v
   v=$(python3 -I "$REGISTRY" host "hardening.$1") || return 1
   [[ $v =~ $2 ]] || { echo "등록부 값 hardening.$1 = '$v' 가 허용 꼴($2)이 아닙니다" >&2; return 1; }
@@ -101,7 +102,7 @@ RECLAIM_WSF=$(reg reclaim_watermark_scale_factor "$NUM") || exit 78
 RECLAIM_MINFREE=$(reg reclaim_min_free_kbytes "$NUM") || exit 78
 REVERT_WSF=$(reg revert_watermark_scale_factor "$NUM") || exit 78
 REVERT_MINFREE=$(reg revert_min_free_kbytes "$NUM") || exit 78
-# sesscap 을 고른 때만 범위를 본다(작은 서버에서 기본값 64 가 다른 항목까지 막지 않게). 자릿수 제한은 산술 넘침 방지.
+# WHY: sesscap 을 고른 때만 범위를 본다(작은 서버에서 기본값 64 가 다른 항목까지 막지 않게). 자릿수 제한은 산술 넘침 방지.
 case " $ITEMS " in *" sesscap "*)
   [ "${#SESSION_GB}" -le 6 ] || { echo "--session-gb 가 너무 큽니다: $SESSION_GB" >&2; exit 64; }
   SESSION_GB=$((10#$SESSION_GB))
@@ -131,13 +132,12 @@ FSTAB_BAK=/etc/fstab.bak-$TAG
 say() { printf '%s\n' "$*"; }
 head_line() { say ""; say "== $1 =="; }
 total_gb() { awk '/^MemTotal:/{printf "%d", $2/1048576}' /proc/meminfo; }
-need_user() { # $1=오류 문구 앞에 붙일 항목 이름
+need_user() {
   [ -n "$TARGET_USER" ] || { echo "$1: --user <이름> 이 필요합니다" >&2; return 1; }
   case "$TARGET_USER" in -*) echo "$1: 사용자 이름이 올바르지 않습니다" >&2; return 1 ;; esac
   id -- "$TARGET_USER" >/dev/null 2>&1 || { echo "$1: 없는 사용자: $TARGET_USER" >&2; return 1; }
 }
 
-# ---- kernlog ----
 kernlog_check() {
   head_line "kernlog (커널 로그 읽기 권한)"
   if [ -z "$TARGET_USER" ]; then say "대상 사용자 미정(--user 로 지정). 지금 사용자: $(id -un)"; return 0; fi
@@ -156,7 +156,6 @@ kernlog_revert() {
   gpasswd -d "$TARGET_USER" systemd-journal || true
 }
 
-# ---- hungtask ----
 hungtask_check() {
   head_line "hungtask (멈춘 작업 커널 기록)"
   say "지금: hung_task_timeout_secs=$(cat /proc/sys/kernel/hung_task_timeout_secs) hung_task_warnings=$(cat /proc/sys/kernel/hung_task_warnings) hung_task_panic=$(cat /proc/sys/kernel/hung_task_panic)"
@@ -169,7 +168,6 @@ hungtask_apply() {
 }
 hungtask_revert() { rm -f "$SYSCTL_HUNG"; sysctl -q -w kernel.hung_task_warnings=10 || true; say "hungtask: 되돌렸습니다."; }
 
-# ---- watchdog ----
 watchdog_check() {
   head_line "watchdog (멈추면 자동 재부팅)"
   say "지금: RuntimeWatchdogUSec(설정값)=$(systemctl show -p RuntimeWatchdogUSec --value 2>/dev/null || echo '?') · /dev/watchdog $([ -e /dev/watchdog ] && echo 있음 || echo 없음) · /dev/ipmi0 $([ -e /dev/ipmi0 ] && echo 있음 || echo 없음)"
@@ -196,7 +194,6 @@ watchdog_revert() {
   say "watchdog: 설정을 지웠습니다. 이미 걸려 있으면 재부팅 전까지 유지됩니다(바로 풀려면 sudo systemctl daemon-reexec, 미검증)."
 }
 
-# ---- slicecap ----
 slicecap_check() {
   head_line "slicecap (사용자 작업 전체 메모리 상한)"
   say "지금: user.slice MemoryMax=$(systemctl show user.slice -p MemoryMax --value 2>/dev/null || echo '?') · 전체 $(total_gb)G"
@@ -215,19 +212,15 @@ slicecap_revert() {
   say "slicecap: 되돌렸습니다. 지금 값(memory.max): $(cat /sys/fs/cgroup/user.slice/memory.max 2>/dev/null || echo '?')"
 }
 
-# ---- sesscap ----
-# 로그인 세션 스코프(/user.slice/user-UID.slice/session-N.scope)는 tmux 창 · Claude 의 Bash 가 띄운 프로세스가 들어가는 자리다.
-# 학습 판은 user@UID.service/app.slice/memguard-*.scope 라 이 스코프 밖이어서 상한의 영향을 받지 않는다.
-# MemorySwapMax=0 을 함께 건다: swap 이 켜져 있으면 상한에 닿은 뒤 같은 스코프의 다른 프로세스 메모리까지 디스크로 밀려 종료가 늦어진다.
-# 항목 함수는 set -e 서브셸에서 불리므로 grep 무매치 · 빈 목록이 죽음으로 번지지 않게 awk 와 if 로 쓴다.
-sesscap_ids() { # $1=uid → 그 사용자의 세션 id(숫자만, 한 줄에 하나)
+# NEVER: sesscap 함수에 grep 무매치 · 빈 목록으로 실패하는 꼴을 쓰지 않는다. 항목 함수는 set -e 서브셸에서 불려 그 실패가 죽음으로 번진다(awk 와 if 로 쓴다).
+sesscap_ids() {
   { loginctl list-sessions --no-legend 2>/dev/null || true; } | awk -v u="$1" '$2==u && $1 ~ /^[0-9]+$/ {print $1}'
 }
-sesscap_all() { # 모든 사용자의 세션을 uid:id 로(둘 다 숫자인 것만, 한 줄에 하나)
+sesscap_all() {
   { loginctl list-sessions --no-legend 2>/dev/null || true; } | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {print $2 ":" $1}'
 }
-sesscap_cg() { echo "/sys/fs/cgroup/user.slice/user-$1.slice/session-$2.scope"; } # $1=uid $2=세션 id
-sesscap_val() { # $1=cgroup 파일 → 바이트 수면 GiB, 아니면 원문(max 등), 못 읽으면 ?
+sesscap_cg() { echo "/sys/fs/cgroup/user.slice/user-$1.slice/session-$2.scope"; }
+sesscap_val() {
   local v; v=$(cat "$1" 2>/dev/null) || { printf '?'; return 0; }
   case "$v" in ''|*[!0-9]*) printf '%s' "${v:-?}" ;; *) awk -v b="$v" 'BEGIN{printf "%.1fGiB", b/1073741824}' ;; esac
 }
@@ -253,19 +246,16 @@ sesscap_apply() {
   local left="sesscap: drop-in 은 남아 있습니다. --revert sesscap 으로 지우거나 원인을 고친 뒤 다시 적용하십시오."
   uid=$(id -u -- "$TARGET_USER")
   ids=$(sesscap_ids "$uid")
-  # 검사는 «모든 사용자의» 세션이다(drop-in 이 daemon-reload 때 다른 사용자의 열린 세션에도 걸릴 수 있어 안전한 쪽으로).
-  # 상한을 지금 사용량 아래로 걸면 그 즉시 OOM 종료가 나고, swap 차단을 걸면 swap 의 페이지가 돌아와 상한을 넘길 수 있으므로
-  # current + swap.current 가 상한의 80% 이상이면 아무것도 바꾸지 않는다. 값을 못 읽은 세션도 0 으로 치지 않고 중단한다.
   for tok in $(sesscap_all); do
     cg=$(sesscap_cg "${tok%%:*}" "${tok##*:}")
-    [ -d "$cg" ] || continue # 세션이 끝나 폴더가 없어짐
+    [ -d "$cg" ] || continue
     cur=$(cat "$cg/memory.current" 2>/dev/null || true)
     sw=$(cat "$cg/memory.swap.current" 2>/dev/null || true)
     unread=0
     case "$cur" in ''|*[!0-9]*) unread=1 ;; esac
     case "$sw" in ''|*[!0-9]*) unread=1 ;; esac
     if [ "$unread" -eq 1 ]; then
-      [ -d "$cg" ] || continue # 읽는 사이 세션이 끝난 경우
+      [ -d "$cg" ] || continue
       echo "sesscap: session-${tok##*:}.scope(uid ${tok%%:*}) 값을 읽지 못해 적용하지 않습니다" >&2; bad=1; continue
     fi
     if [ $(( (cur + sw) * 100 )) -ge $(( cap_b * 80 )) ]; then
@@ -293,7 +283,7 @@ sesscap_apply() {
 }
 sesscap_revert() {
   local uid ids id cg fail=0
-  # drop-in 삭제를 먼저 한다: 사용자를 못 정해도(SUDO_USER 빈 값 등) 새 세션에 상한이 걸리는 원인은 지워져야 한다.
+  # NEVER: drop-in 삭제를 need_user 뒤로 옮기지 않는다. 사용자를 못 정해도(SUDO_USER 빈 값 등) 새 세션에 상한이 걸리는 원인은 지워져야 한다.
   rm -f "$SESS_DROPIN"
   rmdir "$SESS_DROPIN_DIR" 2>/dev/null || true
   systemctl daemon-reload || { echo "sesscap: daemon-reload 가 실패했습니다" >&2; return 1; }
@@ -316,7 +306,6 @@ sesscap_revert() {
   return "$fail"
 }
 
-# ---- reclaim ----
 reclaim_check() {
   head_line "reclaim (미리 회수)"
   say "지금: vm.watermark_scale_factor=$(cat /proc/sys/vm/watermark_scale_factor) vm.min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes)"
@@ -334,7 +323,6 @@ reclaim_revert() {
   say "reclaim: 되돌렸습니다(사고 당시 값 $REVERT_WSF · $REVERT_MINFREE)."
 }
 
-# ---- swap (all 에 포함되지 않는다) ----
 swap_check() {
   head_line "swap (swap 파일 추가 — all 에 포함되지 않음, 이름을 적어야 적용)"
   say "지금: $(swapon --noheadings --show=NAME,SIZE,USED 2>/dev/null | tr '\n' ';')"
@@ -366,7 +354,7 @@ swap_revert() {
   say "swap: 되돌렸습니다(fstab 사본: $FSTAB_BAK)."
 }
 
-# 항목 함수는 조건문 밖의 서브셸에서 부른다. `if ! f` 안에서는 set -e 가 꺼져 중간 실패 뒤에도 성공 문구가 나오기 때문이다.
+# NEVER: 항목 함수를 `if ! f` 안에서 부르지 않는다. 그 안에서는 set -e 가 꺼져 중간 실패 뒤에도 성공 문구가 나온다.
 rc=0
 for it in $ITEMS; do
   set +e

@@ -1,7 +1,7 @@
 # 코드 위치·프로젝트 경계 상세 (code-execution 보조)
 
 > **로드 시점**: 임시·최종 코드의 저장 위치를 정할 때, 또는 다른 저장소가 관련될 때
-> **성격**: `rules/code-execution.md` § 프로젝트 경계·§ 코드 저장 규칙·§ 폴더 사전 지정의 **정본 상세**. always-on 에는 골자만 남기고 절차·근거·실사고를 이 파일로 무손실 이관했다(2026-09-08 예산 다이어트, 내용 삭제 0). 날짜 붙은 사용자 지시는 그대로 보존한다.
+> **성격**: `rules/code-execution.md` § 프로젝트 경계·§ 코드 저장 규칙(폴더 사전 지정 괄호 포함)의 **정본 상세**. always-on 에는 골자만 남기고 절차·근거·실사고를 이 파일로 무손실 이관했다(2026-09-08 예산 다이어트, 내용 삭제 0). 날짜 붙은 사용자 지시는 그대로 보존한다.
 
 ## § 프로젝트 경계 (2026-09-07 사용자 지시, 예외 없음)
 
@@ -10,10 +10,11 @@
 - **다른 프로젝트 수정이 필요해 보일 때**: 현재 프로젝트 쪽에 같은 기능을 스크립트로 만들고, 다른 프로젝트에 필요한 변경은 «그 프로젝트를 열었을 때 할 일»로 보고에만 적는다.
 - **subagent 전파**: coder·qa·scout spawn prompt 의 task_boundary 에 «다른 저장소는 읽기만, 수정 금지»를 그대로 적는다. main 이 경계를 안 적어 subagent 가 넘어간 것도 main 의 위반이다.
 - **집행**: `scripts/scope-gate.sh` 가 Write·Edit 대상이 cwd 저장소 밖의 다른 git 저장소면 차단한다(scope 등록과 무관). Bash 경유 리다이렉션은 `bash-write-check.sh`가, `git checkout .`·`restore .`·`stash`(2026-09-14 추가)는 `git-guardrails.sh`가 막는다. 다만 두 훅 다 저장소 경계는 모르므로 저장소 밖 일반 파일을 포함한 **「저장소 밖 쓰기」**에 한해서는 always-on 의 문구가 유일한 통제다.
+- **같은 저장소의 워크트리**: cwd 저장소의 git 워크트리는 폴더가 저장소 밖(임시 디스크 등)에 있어도 같은 저장소로 보아 쓸 수 있다(2026-11-21 사용자 결정, `scripts/scope-gate.sh` 의 `same_repo_worktree`). 다른 저장소의 워크트리는 종전대로 읽기만 된다. 학습이 도는 워크트리의 코드는 고치지 않는다(훅이 구분하지 못한다).
 - **기록 정본 예외 (2026-09-08 사용자 결정)**: `~/.claude/projects/<프로젝트>/memory/` 아래는 하네스의 자기 기록이라 경계 대상이 아니다(훅 메타 예외). **임시 스크립트는 이 예외에 들지 않는다**(아래 § 임시 코드).
 - **하네스 홈 쓰기 (사실 그대로 기록, 2026-10-01 감사, 2026-10-17 현재 동작으로 개정)**: `~/.claude/` 아래 경로는 기본값이 `[Harness] Manager` 세션 전용이다(cwd 와 무관, 열거 목록이 아니라 기본 거부). 모든 세션이 쓸 수 있는 곳은 `projects/<프로젝트>/memory/`·`knowledge/`·`doc-formats/`·`_evolve/quiz/`·`.scratch/`·자기 `scope/<session_id>.json` 뿐이다. 그래서 `knowledge-capture.md`·`doc-format-registry.md` 가 시키는 `knowledge/<프로젝트>/` 노트·`doc-formats/` 양식 등록은 다른 프로젝트 cwd 에서도 쓴다. 매니저도 못 쓰는 항상 차단은 `sessions/`·`_usage/`·후보 대장 4파일(`_evolve/` 의 candidates.tsv·candidates.lock·crosscheck.tsv·prompts.jsonl)·`.git/`·남의 `scope/` 파일·`_audit/publish-approval/`·`projects/*/*.jsonl` 이다. `jobs/`·`teams/`·`daemon*`·`projects/` 의 memory 밖 경로는 아래 프로젝트 경계 검사로 간다. 전원 허용 폴더는 하네스 자기 기록용이므로 하네스의 룰·스킬·스크립트를 다른 프로젝트 작업의 부산물로 고치는 근거로 쓰지 않는다. 정본은 `scripts/scope-gate.sh` 헤더 주석이다.
 - **저장소 밖 cwd (2026-09-08 사용자 결정)**: cwd 가 git 저장소 안이 아니면 Write·Edit 를 전부 막는다. 저장소가 없으면 «어디까지가 이 작업의 범위인가»를 판정할 기준 자체가 없어서다. 열어 두는 길은 두 가지뿐이다. 하나는 위의 memory 메타 예외이고, 다른 하나는 허용 목록 파일이다.
-- **허용 목록 `~/.claude/config/scope-allow.txt`**: 한 줄에 절대 경로 접두 하나를 적고 그 아래는 쓰기가 허용된다. `#` 로 시작하는 줄은 주석이며 `~` 를 홈으로 푼다. **이 파일은 사용자만 편집한다**(Claude 가 스스로 경계를 넓히면 게이트가 무의미해진다). 저장소 밖 경로에 써야 하면 파일을 고치지 말고 사용자에게 추가를 요청한다. 서버마다 다른 경로는 gitignore 된 `config/scope-allow.local.txt`(같은 형식)에 그 서버에서만 적고, 게이트는 두 파일을 합쳐 읽는다(2026-10-02 사용자 결정).
+- **허용 목록 `~/.claude/config/scope-allow.txt`**: 한 줄에 절대 경로 접두 하나를 적고, 세션 cwd 가 git 저장소 밖일 때 그 아래는 쓰기가 허용된다(cwd 가 저장소 안이면 이 목록은 읽히지 않는다). `#` 로 시작하는 줄은 주석이며 `~` 를 홈으로 푼다. **이 파일은 사용자만 편집한다**(Claude 가 스스로 경계를 넓히면 게이트가 무의미해진다). 저장소 밖 경로에 써야 하면 파일을 고치지 말고 사용자에게 추가를 요청한다. 서버마다 다른 경로는 gitignore 된 `config/scope-allow.local.txt`(같은 형식)에 그 서버에서만 적고, 게이트는 두 파일을 합쳐 읽는다(2026-10-02 사용자 결정).
 - **실사고 2026-09-07**: 한 프로젝트 세션의 coder 가 다른 프로젝트 저장소의 3파일 수정·1파일 추가, 사용자 지시로 전량 원복(저장소 이름과 원문 위치: `knowledge/harness/rules-project-server-history-2026-11-10.md` § code-execution-detail).
 
 ## § 코드 저장 규칙
