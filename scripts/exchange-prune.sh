@@ -8,6 +8,7 @@
 #     `dbg.log`(사용자가 직접 지운다).
 #   · 지운 항목은 _audit/exchange-prune.log 에 `날짜<TAB>경로<TAB>mtime` 으로 append.
 #   · 뿌리가 없으면 조용히 통과. `--dry-run` 이면 지우지 않고 출력만.
+#   · 끝에서 ext_session_registry.py prune 으로 대장 등록 세션 7일 미사용을 지운다(EXCHANGE_PRUNE_ROOTS 를 주면 건너뜀).
 # 환경변수: EXCHANGE_PRUNE_DAYS(기본 14, 양의 정수만) · EXCHANGE_PRUNE_ROOTS(콜론 구분, 테스트용 — 두 교환 폴더 아래만 인정)
 # REF: knowledge/harness/code-history/scripts__exchange-prune.sh.md
 
@@ -57,5 +58,14 @@ for ROOT in "${ROOT_LIST[@]}"; do
         printf '%s\t%s\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$ITEM" "$MTIME_ISO" >> "$LOG"
     done < <(find "$ROOT" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
 done
+
+# WHY: 대장 등록 Grok · Codex 세션 7일 미사용 정리(intent/2026-11-26-ext-review-gate-sessions.md). 시험은 EXCHANGE_PRUNE_ROOTS 를
+#   지정하므로 그때는 부르지 않아 대장을 건드리지 않는다.
+if [ -z "${EXCHANGE_PRUNE_ROOTS:-}" ]; then
+    REGISTRY_PY="$(dirname "$(realpath "$0")")/ext_session_registry.py"
+    REG_ARGS=(prune)
+    [ "$DRY" = "1" ] && REG_ARGS+=(--dry-run)
+    [ -f "$REGISTRY_PY" ] && python3 -I "$REGISTRY_PY" "${REG_ARGS[@]}"
+fi
 
 exit 0

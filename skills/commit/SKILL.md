@@ -213,7 +213,9 @@ ABC-630 ABC-631 fix: Fix device inconsistency in inferencer
 2. **게시 전 승인**: 본문 미리보기를 사용자에게 보이고 승인받은 뒤 게시한다. 수정은 `notifyUsers=false` 로 알림을 끈다.
 3. **게시 후 대조**: 재조회(GET)해서 카드 수·문구를 기계 대조한다.
 4. **이미지가 든 댓글 수정**: GET 한 ADF 를 통째로 받아 해당 텍스트 노드만 치환하고 `mediaSingle`·`media` 노드는 건드리지 않는다. 수정 전후 media id 집합이 같은지 확인한다(실측: 8개 동일). 마크다운으로 갱신하면 이미지가 유실될 수 있다.
-5. **Confluence 페이지 링크**: URL 문자열이 아니라 인라인 카드로 건다. `{"type":"inlineCard","attrs":{"url":"<페이지 URL>"}}`
+5. **Confluence · Jira 링크 (2026-11-26 사용자 지시로 Jira 이슈까지 넓힘)**: Confluence 페이지와 Jira 이슈 링크는 모두 인라인 카드로 건다. `{"type":"inlineCard","attrs":{"url":"<URL>"}}`
+   - URL 문자열과 일반 텍스트 링크 마크는 쓰지 않는다. 카드 앞뒤에 공백 칸을 덧붙이지 않는다.
+   - `jira_comment.py` 는 같은 사이트의 `/wiki/` · `/browse/` URL 을 맨 URL 이든 `[글](URL)` 꼴이든 인라인 카드로 바꾼다. 다른 호스트 URL 은 일반 링크로 남는다.
 6. **회신(대댓글) = GraphQL** (2026-09-29 시험 성공): MCP `addCommentToJiraIssue` 에는 부모 인자가 없고 추가 인자도 받지 않는다. 공개 REST v3 명세에도 부모 필드가 없다. 회신은 GraphQL 게이트웨이(`https://<사이트>/gateway/api/graphql`, 같은 `~/.atlassian_token` Basic 인증)로 만든다.
    - 호출: `mutation <이름> { jira { addComment(input: {issueId: <이슈 ARI>, threadParentId: "<부모 댓글 숫자 id>", content: {version: 1, jsonValue: <ADF doc>}}) { success errors { message } comment { ... on JiraPlatformComment { commentId threadParentId webUrl } } } } }`
    - 이슈 ARI 는 `ari:cloud:jira:<cloudId>:issue/<이슈 숫자 id>` 이고, cloudId 는 `GET https://<사이트>/_edge/tenant_info` 로 얻는다. 오퍼레이션 이름이 없으면 게이트웨이가 거부한다.

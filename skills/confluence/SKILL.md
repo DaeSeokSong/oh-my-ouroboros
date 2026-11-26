@@ -156,6 +156,21 @@ model: sonnet
 </ac:structured-macro>
 ```
 
+## §2-1. 링크 꼴: 인라인 카드 (MANDATORY, 2026-11-26 사용자 지시)
+
+Confluence 페이지 링크는 URL 이 아니라 인라인 카드로 넣는다. 사용자가 15-3 System One 페이지 표에서 직접 고친 저장 형식이 기준이다.
+
+```xml
+<ac:link ac:card-appearance="inline"><ri:page ri:content-title="페이지 제목" /><ac:link-body>페이지 제목</ac:link-body></ac:link>
+```
+
+- 금지 1: `<a href="…/wiki/…/pages/<ID>">…</a>` 꼴의 URL 링크.
+- 금지 2: `ac:card-appearance="inline"` 이 없는 일반 `ac:link`(`ri:page` 를 담은 것).
+- 금지 3: 문단 · 표 칸 · 글머리의 첫머리나 끝에서 링크에 붙은 공백과 들여쓰기용 `&nbsp;`(표 칸 들여쓰기용 `&nbsp;` 4칸을 사용자가 지적함). 저장 형식의 줄바꿈 · 탭 들여쓰기는 해당하지 않습니다.
+- 범위: Confluence 페이지 링크에 한한다. 외부 사이트 URL 은 일반 링크로 둔다. Jira 댓글 · 설명의 링크는 `skills/commit/SKILL.md` 의 REST 절 5번(인라인 카드)을 따른다.
+- 왜: URL 링크는 긴 주소가 그대로 보이고 페이지마다 꼴이 달라지지만 인라인 카드는 페이지 제목으로 보이고 저장 형식이 한 꼴로 맞춰진다.
+- 기계 확인: `scripts/confluence_skeleton_check.py` 가 위 세 꼴을 경고(차단 아님)로 함께 낸다.
+
 ---
 
 ## §3. 페이지 수정 전 3단계 확인 (MANDATORY)

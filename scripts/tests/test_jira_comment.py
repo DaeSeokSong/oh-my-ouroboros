@@ -135,6 +135,26 @@ def test_md_urls_card_vs_link_and_plain_paragraph():
     assert adf["content"][1]["type"] == "paragraph"
 
 
+def test_md_same_site_wiki_and_browse_become_cards_other_host_keeps_mark(monkeypatch):
+    monkeypatch.setenv("JIRA_SITE", "https://example.atlassian.net")
+    adf = jc.md_to_adf("* 이슈 https://example.atlassian.net/browse/PROJ-1 페이지 [정리](https://example.atlassian.net/wiki/spaces/A/pages/2)"
+                       " 이슈2 [이슈](https://example.atlassian.net/browse/PROJ-2) 남의 [글](https://other.atlassian.net/wiki/x)\n")
+    nodes = adf["content"][0]["content"][0]["content"][0]["content"]
+    cards = [n["attrs"]["url"] for n in nodes if n["type"] == "inlineCard"]
+    assert cards == ["https://example.atlassian.net/browse/PROJ-1", "https://example.atlassian.net/wiki/spaces/A/pages/2",
+                     "https://example.atlassian.net/browse/PROJ-2"]
+    assert not any(n.get("text") in ("정리", "이슈") for n in nodes)
+    assert nodes[-1] == {"type": "text", "text": "글", "marks": [{"type": "link", "attrs": {"href": "https://other.atlassian.net/wiki/x"}}]}
+
+
+def test_md_wiki_in_middle_of_path_keeps_link_mark(monkeypatch):
+    monkeypatch.setenv("JIRA_SITE", "https://example.atlassian.net")
+    url = "https://example.atlassian.net/jira/wiki/x"
+    nodes = jc.md_to_adf(f"* [글]({url}) {url}\n")["content"][0]["content"][0]["content"][0]["content"]
+    assert not any(n["type"] == "inlineCard" for n in nodes)
+    assert [n["attrs"]["href"] for x in nodes for n in x.get("marks", []) if n["type"] == "link"] == [url, url]
+
+
 @pytest.mark.skipif(not SAMPLE.exists(), reason="sample ADF absent")
 def test_sample_adf_renders_three_numbered_items():
     adf = json.loads(SAMPLE.read_text(encoding="utf-8"))

@@ -330,6 +330,7 @@ CLAUDE.md 「파라미터 인과 설명」은 이 블록의 파라미터 특수�
   | `~/.claude/scripts/confluence_patch_page.py` | 적용 직전 **치환 전후 비교** — 새로 생긴 차단 위반이 있으면 중단 (`--allow-style-violation`으로만 강행) |
   | MCP `updateConfluencePage` · `createConfluencePage` | PreToolUse hook `scripts/korean-style-gate.sh` 가 body 를 검사해 deny |
 - **고칠 때**: 콤마로 기계 치환 금지. 산문 대시는 마침표로 문장 분리, 제목·캡션·범례 대시는 콜론, 쉼표 2+ 는 분할 또는 가운뎃점 나열.
+- **최종 보고 언어 (MANDATORY — 사용자 지시 2026-11-25)**: 최종 보고와 진행 한 줄은 예외 없이 한글 + «~습니다/~입니다» 존댓말로만 쓴다(영어·다른 언어로 쓰지 않고, 영문 용어는 첫 등장에 한글 뜻을 병기한다).
 - **채팅 보고**: 대시·쉼표·조사는 게이트가 없다. 전송 전 자가체크 항목으로 훑는다 (§ 결과·분석 보고 필수 구조의 17항목 자가체크에 포함). 오탈자 사전·조사 겹침은 최종 보고에서 Stop 훅(`scripts/korean_report_check.py`)이 막고 고칠 낱말을 사유로 돌려준다(2026-10-23).
 
 ## 원문자 금지 (MANDATORY — 2026-08-11 원문자 알파벳 · 2026-10-27 원문자 숫자로 확대, 사용자 지시)

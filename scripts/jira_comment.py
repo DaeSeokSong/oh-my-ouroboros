@@ -241,6 +241,11 @@ def inline(text, marks=()):
             ms = list(base) + list(extra)
             nodes.append({"type": "text", "text": s, **({"marks": ms} if ms else {})})
 
+    # WHY: 2026-11-26 사용자 지시: 같은 사이트의 Confluence(/wiki/) · Jira(/browse/) 링크는 맨 URL 이든 [글](URL) 이든 인라인 카드로 단다.
+    def card(u):
+        p = urllib.parse.urlparse(u)
+        return p.path.startswith(("/wiki/", "/browse/")) and p.hostname == urllib.parse.urlparse(site()).hostname
+
     for m in INLINE_RE.finditer(text):
         txt(text[pos:m.start()])
         pos = m.end()
@@ -248,12 +253,14 @@ def inline(text, marks=()):
             txt(m.group("code"), ({"type": "code"},), [x for x in marks if x["type"] == "link"])
         elif m.group("bold") is not None:
             nodes += inline(m.group("bold"), [*marks, {"type": "strong"}])
+        elif m.group("ltext") is not None and card(m.group("lurl")):
+            nodes.append({"type": "inlineCard", "attrs": {"url": m.group("lurl")}})
         elif m.group("ltext") is not None:
             nodes += inline(m.group("ltext"), [*marks, {"type": "link", "attrs": {"href": m.group("lurl")}}])
         else:
             url = m.group("url")
             core = url.rstrip(".,;:!?")
-            if "/wiki/" in core and urllib.parse.urlparse(core).hostname == urllib.parse.urlparse(site()).hostname:
+            if card(core):
                 nodes.append({"type": "inlineCard", "attrs": {"url": core}})
             else:
                 txt(core, ({"type": "link", "attrs": {"href": core}},))
